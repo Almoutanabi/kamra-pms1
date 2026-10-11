@@ -2333,11 +2333,11 @@ def t47d():
 	s = frappe.get_single("Kamra Connect Settings")
 	s.connect_key, s.linked = "eval-connect-key", 1
 	s.save(ignore_permissions=True)
-	client.TRANSPORT = hub
+	client.use_transport(hub)
 	try:
 		out = api.verify_tax_id(P, "29ABCDE1234F1Z5", "Eval")
 	finally:
-		client.TRANSPORT = None
+		client.use_transport()
 	assert out["legal_name"] == "Eval Pvt Ltd" and calls == [("verify_gstin", "eval-connect-key")], (out, calls)
 	# ID reading needs the guest to have been told
 	assert refused(lambda: loc.verify_guest_id(loc.pack_for(P), P, "x", "Aadhaar", 0))

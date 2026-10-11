@@ -20,9 +20,13 @@ HUB_API = "kamra_hub.api"
 KEY_HEADER = "X-Kamra-Connect-Key"
 SETTINGS = "Kamra Connect Settings"
 
-# Tests swap in an in-process hub: callable(name, key, json_body=None,
-# params=None, data=None) -> response body.
-TRANSPORT = None
+_transport = {"fn": None}
+
+
+def use_transport(fn=None):
+	"""Tests swap in an in-process hub: callable(name, key, json_body=None,
+	params=None, data=None) -> response body. None restores HTTP."""
+	_transport["fn"] = fn
 
 
 def _settings():
@@ -59,8 +63,8 @@ def call(name: str, s=None, *, key: str | None = None, json_body: dict | None = 
 		key = _key(s) if s.linked else ""
 	if not key:
 		frappe.throw("Link Kamra Connect first: Settings → Kamra Verify.")
-	if TRANSPORT:
-		return TRANSPORT(name, key, json_body=json_body, params=params, data=data)
+	if _transport["fn"]:
+		return _transport["fn"](name, key, json_body=json_body, params=params, data=data)
 
 	import requests
 
