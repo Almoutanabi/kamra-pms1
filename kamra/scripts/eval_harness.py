@@ -2230,6 +2230,119 @@ def t47c():
 	assert f.payments[-1].payment_kind == "Advance"
 
 
+@check("India pack: Razorpay/Cashfree links, GSTR-1 and Kamra Verify; other packs refuse")
+def t47d():
+	import hashlib
+	import hmac
+	import json
+
+	from frappe.utils import add_days, nowdate
+
+	from kamra import api, localization as loc, payments
+	from kamra.connect import client
+	from kamra.folio import open_folio
+	from kamra.localization.india import cashfree
+
+	# India (EVAL Hotel has no country, so it runs on the India pack)
+	assert loc.integrations(loc.pack_for(P)) == {
+		"payment_gateways": ["Razorpay", "Cashfree"], "tax_return": True,
+		"verify_tax_id": True, "verify_guest_id": True}, loc.integrations(loc.pack_for(P))
+
+	SA = "EVAL Riyadh Hotel"
+	if not frappe.db.exists("Property", SA):
+		frappe.get_doc({"doctype": "Property", "property_name": SA,
+		                "city": "Riyadh", "country": "Saudi Arabia",
+		                "currency": "SAR"}).insert(ignore_permissions=True)
+	saudi = loc.pack_for(SA)
+	assert loc.integrations(saudi) == {
+		"payment_gateways": [], "tax_return": False,
+		"verify_tax_id": False, "verify_guest_id": False}, loc.integrations(saudi)
+
+	def refused(fn, exc=frappe.ValidationError):
+		try:
+			fn()
+		except exc:
+			frappe.clear_messages()
+			return True
+		return False
+
+	assert refused(lambda: api.gstr1_rows(nowdate(), nowdate(), property=SA))
+	assert refused(lambda: loc.verify_tax_id(saudi, SA, "29ABCDE1234F1Z5"))
+	assert refused(lambda: loc.verify_guest_id(saudi, SA, "x", "Passport", 1))
+	assert refused(lambda: frappe.get_doc({
+		"doctype": "Payment Gateway Settings", "property": SA,
+		"gateway": "Razorpay", "enabled": 1}).insert(ignore_permissions=True))
+	# GSTR-1 across the chain leaves the Saudi hotel out
+	rows = api.gstr1_rows(add_days(nowdate(), -3650), nowdate())
+	assert all(frappe.db.get_value("Folio", r.name, "property") != SA for r in rows)
+
+	# India: a test-mode Razorpay link, settled once by a signed webhook
+	name = frappe.db.get_value("Payment Gateway Settings", {"property": P})
+	gw = frappe.get_doc("Payment Gateway Settings", name) if name \
+		else frappe.new_doc("Payment Gateway Settings")
+	gw.update({"property": P, "gateway": "Razorpay", "enabled": 1,
+	           "test_mode": 1, "webhook_secret": "eval-whsec",
+	           "key_secret": "eval-cfsec"})
+	gw.save(ignore_permissions=True)
+	b = api.create_booking(P, RT, add_days(nowdate(), 50), add_days(nowdate(), 51),
+	                       "EVAL Gateway Guest", phone="+919800011401")
+	folio = open_folio(frappe.get_doc("Reservation", b["reservation"]))
+	link = payments.create_payment_link(folio, amount=50, purpose="Booking deposit")
+	assert link["test_mode"] and link["url"].startswith("https://rzp.io/test/"), link
+
+	body = json.dumps({"event": "payment_link.paid", "payload": {"payment_link": {
+		"entity": {"id": link["link_id"], "amount_paid": 5000,
+		           "notes": {"folio": folio}}}}}).encode()
+	sig = hmac.new(b"eval-whsec", body, hashlib.sha256).hexdigest()
+	assert refused(lambda: payments.handle_webhook(
+		"Razorpay", body, {"x-razorpay-signature": "forged"}), frappe.PermissionError)
+	assert payments.handle_webhook("Razorpay", body, {"x-razorpay-signature": sig})["posted"]
+	assert not payments.handle_webhook("Razorpay", body, {"x-razorpay-signature": sig})["posted"]
+	# a Cashfree callback for a Razorpay property is refused
+	cf_body = json.dumps({"type": "PAYMENT_LINK_EVENT", "data": {
+		"link_status": "PAID", "link_id": "cf-eval-1", "link_amount_paid": 25,
+		"link_notes": {"folio": folio}}}).encode()
+	cf_headers = {"x-webhook-timestamp": "1700000000",
+	              "x-webhook-signature": cashfree.signature("eval-cfsec", "1700000000", cf_body)}
+	assert refused(lambda: payments.handle_webhook("Cashfree", cf_body, cf_headers),
+	               frappe.PermissionError)
+
+	# switched to Cashfree: its signed callback posts, a forged one does not
+	gw.reload()
+	gw.gateway = "Cashfree"
+	gw.save(ignore_permissions=True)
+	assert refused(lambda: payments.handle_webhook(
+		"Cashfree", cf_body, {**cf_headers, "x-webhook-signature": "forged"}),
+		frappe.PermissionError)
+	assert payments.handle_webhook("Cashfree", cf_body, cf_headers)["posted"]
+	paid = [p.amount for p in frappe.get_doc("Folio", folio).payments
+	        if p.mode == "Payment Link"]
+	assert sorted(paid) == [25, 50], paid
+	# an event that is not a payment is ignored, not an error
+	assert payments.handle_webhook("Razorpay", b'{"event": "payment_link.expired"}', {}) \
+		== {"ignored": True}
+
+	# Kamra Verify through the Connect hub (stubbed in-process)
+	calls = []
+
+	def hub(name, key, json_body=None, params=None, data=None):
+		calls.append((name, key))
+		return {"valid": True, "gstin": json_body["gstin"], "legal_name": "Eval Pvt Ltd",
+		        "status": "Active", "charged": 5}
+
+	s = frappe.get_single("Kamra Connect Settings")
+	s.connect_key, s.linked = "eval-connect-key", 1
+	s.save(ignore_permissions=True)
+	client.use_transport(hub)
+	try:
+		out = api.verify_tax_id(P, "29ABCDE1234F1Z5", "Eval")
+	finally:
+		client.use_transport()
+	assert out["legal_name"] == "Eval Pvt Ltd" and calls == [("verify_gstin", "eval-connect-key")], (out, calls)
+	# ID reading needs the guest to have been told
+	assert refused(lambda: loc.verify_guest_id(loc.pack_for(P), P, "x", "Aadhaar", 0))
+
+
 @check("WhatsApp: native Meta send, booking flow, inbound -> ticket")
 def t48():
 	# nosemgrep: frappe-monkey-patching-not-allowed -- offline eval harness stubs the outbound transport for tests; not a production code path
@@ -3519,7 +3632,7 @@ def execute():
 		for fn in (t1, t2, t3, t3b, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13,
 		           t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24,
 		           t25, t26, t27, t28, t29, t30, t31, t32, t33, t34, t35,
-		           t36, t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t48, t49, t50, t51, t53,
+		           t36, t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t83, t84, t85, t86):

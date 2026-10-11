@@ -51,7 +51,9 @@ def report() -> dict:
 	for g in frappe.get_all("Payment Gateway Settings", {"enabled": 1},
 	                        ["name", "property", "gateway"]):
 		doc = frappe.get_doc("Payment Gateway Settings", g.name)
-		if not doc.get_password("webhook_secret", raise_exception=False):
+		# Cashfree signs with the secret key; only Razorpay needs this one
+		if g.gateway == "Razorpay" and \
+				not doc.get_password("webhook_secret", raise_exception=False):
 			webhooks.append({**g, "fix": "set gateway webhook secret"})
 
 	out = {"properties": sorted(props), "users_losing_access": users,

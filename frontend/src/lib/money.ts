@@ -18,6 +18,16 @@ interface Locale {
   /** Ways to pay the desk offers - always canonical Folio Payment modes. */
   payment_modes: string[]
   default_nationality: string
+  /** Country integrations this property has - India: Razorpay/Cashfree,
+   *  GSTR-1, Kamra Verify. Off until the pack resolves. */
+  integrations: Integrations
+}
+
+export interface Integrations {
+  payment_gateways: string[]
+  tax_return: boolean
+  verify_tax_id: boolean
+  verify_guest_id: boolean
 }
 
 let cache: Locale = {
@@ -30,6 +40,12 @@ let cache: Locale = {
   id_types: ["Aadhaar", "Passport", "Driving License", "Voter ID", "PAN", "Other"],
   payment_modes: ["Cash", "Card", "UPI", "Bank Transfer"],
   default_nationality: "Indian",
+  integrations: {
+    payment_gateways: [],
+    tax_return: false,
+    verify_tax_id: false,
+    verify_guest_id: false,
+  },
 }
 
 const listeners = new Set<() => void>()

@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **265 endpoints**, generated from the source
+the UI and the AI use. **267 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -767,7 +767,9 @@ prints a bill - the folio screen, a PDF, an email - agrees.
 **GET/POST**
 
 Invoice-level rows for a GSTR-1 style export (v0: B2C summary).
-Filter by property - each GSTIN files its own return.
+Filter by property - each GSTIN files its own return. The return is the
+India pack's: a property elsewhere is refused, and without a property
+only the user's India properties are included.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1639,11 +1641,40 @@ can offer one-tap paths to billing and editing. One endpoint, all types.
 
 Currency, number locale and tax vocabulary for this property, from its
 localization pack. Drives the frontend's money formatting and tax dropdowns
-so no screen hardcodes ₹ or GST %.
+so no screen hardcodes ₹ or GST %. `integrations` says which country
+integrations (gateways, tax return, ID checks) this property has.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
+
+### `kamra.api.verify_tax_id`
+
+**POST** · roles: `Front Desk`, `Finance`
+
+Check a buyer's tax ID before the invoice goes out, where the
+property's country pack offers it (India: GSTIN via Kamra Verify).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `tax_id` | yes |  |
+| `business_name` | no | `''` |
+
+### `kamra.api.verify_guest_id`
+
+**POST** · roles: `Front Desk`
+
+Read the guest's ID document on file into the profile, where the
+property's country pack offers it (India: Aadhaar and others via Kamra
+Verify). consent: the desk confirms the guest was told.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `guest` | yes |  |
+| `id_type` | yes |  |
+| `consent` | no | `0` |
 
 ### `kamra.api.zatca_settings`
 

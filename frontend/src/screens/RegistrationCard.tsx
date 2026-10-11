@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import {
   Camera, ArrowLeft, BedDouble, Plus, Printer, Receipt, Trash2 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
-import { call } from "../lib/api"
+import { call, getCurrentProperty } from "../lib/api"
 import EditableNationality from "../components/EditableNationality"
 import { Button } from "../components/ui/button"
 import { cur, locale, moneyLocale, taxLabel, useLocale } from "../lib/money"
@@ -409,9 +409,65 @@ function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
+/** Kamra Verify: read the captured ID and fill the guest profile. Offered
+ *  where the country pack has it (India); paid per read from the Kamra
+ *  Connect wallet. */
+function ReadIdButton({ guest, idType, idTypes, onDone }: {
+  guest: string
+  idType: string | null
+  idTypes: string[]
+  onDone: () => void
+}) {
+  const { t } = useT()
+  const [type, setType] = useState(idType && idTypes.includes(idType) ? idType : idTypes[0] ?? "")
+  const [busy, setBusy] = useState(false)
+  const [told, setTold] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-xs print:hidden">
+      <label className="flex basis-full items-start gap-1.5 text-zinc-500"
+        title={t("The guest must know their ID is read by Kamra's verification partner")}>
+        <input type="checkbox" className="mt-0.5" checked={told} onChange={(e) => setTold(e.target.checked)} />
+        {t("Guest told their ID is read by our verification partner")}
+      </label>
+      <select value={type} onChange={(e) => setType(e.target.value)}
+        className="rounded border border-zinc-200 px-1 py-0.5 text-xs" aria-label={t("ID type to read")}>
+        {idTypes.map((x) => <option key={x} value={x}>{t(x)}</option>)}
+      </select>
+      <button type="button" disabled={busy || !told}
+        className="font-medium text-brand-700 hover:underline disabled:opacity-50"
+        title={t("Kamra Verify reads the ID and fills the profile. Charged per read to your Kamra Connect wallet.")}
+        onClick={async () => {
+          setBusy(true); setMsg(null)
+          try {
+            const r = await call<{ filled: Record<string, string>; charged: number }>(
+              "kamra.api.verify_guest_id",
+              { property: getCurrentProperty(), guest, id_type: type, consent: 1 })
+            const n = Object.keys(r.filled).length
+            setMsg({
+              ok: true,
+              text: n
+                ? t("Filled {n} field(s) · {amt}", { n, amt: `${cur()}${r.charged}` })
+                : t("Nothing new on the ID · {amt}", { amt: `${cur()}${r.charged}` }),
+            })
+            onDone()
+          } catch (e) {
+            setMsg({ ok: false, text: serverError(e) })
+          } finally {
+            setBusy(false)
+          }
+        }}>
+        {busy ? t("Reading…") : t("Read details")}
+      </button>
+      {msg && <span className={msg.ok ? "text-emerald-700" : "text-red-700"}>{msg.text}</span>}
+    </div>
+  )
+}
+
 export default function RegistrationCard() {
   const { name } = useParams()
   const { t } = useT()
+  const loc = useLocale()
   const [d, setD] = useState<Grc | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [changingRoom, setChangingRoom] = useState(false)
@@ -756,6 +812,10 @@ export default function RegistrationCard() {
                   />
                 </label>
               ))}
+              {d.guest.id_file && d.guest.guest_id && loc.integrations.verify_guest_id && (
+                <ReadIdButton guest={d.guest.guest_id} idType={d.guest.id_type}
+                              idTypes={loc.id_types} onDone={load} />
+              )}
             </div>
           </div>
 

@@ -498,25 +498,137 @@ const POLICY_SPECS: Spec[] = [
   },
 ]
 
-const GATEWAY_SPECS: Spec[] = [
-  { field: "enabled", label: "Enabled", type: "check" },
-  {
-    field: "test_mode",
-    label: "Test mode",
-    type: "check",
-    hint: "generates fake payment links for demos",
-  },
-  {
-    field: "gateway",
-    label: "Gateway",
-    type: "select",
-    options: ["Razorpay"],
-    hint: "more gateways via the Frappe payments app",
-  },
-  { field: "key_id", label: "Key ID" },
-  { field: "key_secret", label: "Key secret", type: "password" },
-  { field: "webhook_secret", label: "Webhook secret", type: "password" },
-]
+/** The gateways on offer come from the property's country pack. */
+function gatewaySpecs(gateways: string[]): Spec[] {
+  return [
+    { field: "enabled", label: "Enabled", type: "check" },
+    {
+      field: "test_mode",
+      label: "Test mode",
+      type: "check",
+      hint: "generates fake payment links for demos",
+    },
+    {
+      field: "gateway",
+      label: "Gateway",
+      type: "select",
+      options: gateways,
+      hint: "money goes straight to this property's own gateway account",
+    },
+    {
+      field: "key_id",
+      label: "Key ID / App ID",
+      hint: "Razorpay: Account & Settings → API Keys. Cashfree: Developers → API Keys (App ID)",
+    },
+    { field: "key_secret", label: "Key secret / Secret key", type: "password" },
+    {
+      field: "webhook_secret",
+      label: "Webhook secret",
+      type: "password",
+      hint: "Razorpay only: set the same secret on the Razorpay webhook. Cashfree signs with the secret key",
+    },
+  ]
+}
+
+type GatewayInfo = {
+  gateway: string
+  webhook_url: string
+  signup_url: string
+  needs_webhook: boolean
+}
+
+/** Setup help under the Payments card: where the gateway should send
+ *  payment events, and a way to open an account if the property has none. */
+function GatewayHelp({ property, gateway, hasKeys }: {
+  property: string
+  gateway: string
+  hasKeys: boolean
+}) {
+  const { t } = useT()
+  const [info, setInfo] = useState<GatewayInfo | null>(null)
+  useEffect(() => {
+    call<GatewayInfo>("kamra.payments.gateway_info", { property, gateway })
+      .then(setInfo).catch(() => setInfo(null))
+  }, [property, gateway])
+  if (!info) return null
+  return (
+    <div className="-mt-2 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
+      {!hasKeys && (
+        <p>
+          {t("No {gateway} account yet?", { gateway: info.gateway })}{" "}
+          <a className="font-medium text-brand-700 underline" href={info.signup_url}
+             target="_blank" rel="noopener">{t("Create one free")}</a>
+          {" "}{t("and take UPI, cards and netbanking for advances and bills.")}
+        </p>
+      )}
+      {info.needs_webhook ? (
+        <p>
+          {t("In Razorpay, add a webhook for the payment_link.paid event pointing to")}{" "}
+          <code className="select-all break-all rounded bg-white px-1 py-0.5 text-xs">{info.webhook_url}</code>
+        </p>
+      ) : (
+        <p>
+          {t("Nothing to set up in Cashfree: every link reports back to")}{" "}
+          <code className="select-all break-all rounded bg-white px-1 py-0.5 text-xs">{info.webhook_url}</code>
+          . {t("Guests need a mobile number on their profile to receive a Cashfree link.")}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Kamra Verify (GSTIN lookup, reading a guest's ID) runs on the Kamra
+ *  Connect hub and is charged to its wallet - this links the install. */
+function KamraVerifyCard() {
+  const { t } = useT()
+  const [linked, setLinked] = useState<boolean | null>(null)
+  const [key, setKey] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  useEffect(() => {
+    call<{ linked: boolean }>("kamra.connect.client.status")
+      .then((s) => setLinked(s.linked)).catch(() => setLinked(false))
+  }, [])
+  async function run(method: "link" | "unlink") {
+    setBusy(true); setErr(null)
+    try {
+      const s = await call<{ linked: boolean }>(`kamra.connect.client.${method}`,
+        method === "link" ? { connect_key: key } : {})
+      setLinked(s.linked); setKey("")
+    } catch (e) {
+      setErr(serverError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>{t("Kamra Verify")}</CardTitle>
+          <p className="mt-1 text-sm text-zinc-500">
+            {t("Check a company's GSTIN and read a guest's Aadhaar, passport or licence into the profile. Charged per check to your Kamra Connect wallet.")}
+          </p>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {linked ? (
+          <div className="flex items-center gap-3">
+            <span className="text-emerald-700">{t("Linked to Kamra Connect.")}</span>
+            <Button variant="ghost" disabled={busy} onClick={() => run("unlink")}>{t("Unlink")}</Button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <input className={inputCls} type="password" value={key} placeholder={t("Connect key")}
+                   onChange={(e) => setKey(e.target.value)} />
+            <Button disabled={busy || !key.trim()} onClick={() => run("link")}>{t("Link")}</Button>
+          </div>
+        )}
+        {err && <p className="text-rose-600">{err}</p>}
+      </CardContent>
+    </Card>
+  )
+}
 
 function CashierPinResetCard() {
   const [user, setUser] = useState("")
@@ -929,6 +1041,7 @@ export default function Settings() {
 
   if (!prop || !gateway || !ai)
     return <p className="py-10 text-center text-zinc-400">{t("Loading…")}</p>
+  const gateways = loc.integrations.payment_gateways
 
   return (
     <div className="space-y-4">
@@ -976,11 +1089,13 @@ export default function Settings() {
           load()
         }}
       />
+      {gateways.length > 0 ? (
+      <>
       <SettingsCard
         title="Payments"
         description="Payment-link gateway for advances and folio settlement. Secrets are write-only."
-        specs={GATEWAY_SPECS}
-        doc={gateway}
+        specs={gatewaySpecs(gateways)}
+        doc={{ ...gateway, gateway: gateway.gateway || gateways[0] }}
         onSave={async (changes) => {
           // never send empty secrets - blank means "unchanged"
           const payload = Object.fromEntries(
@@ -997,6 +1112,7 @@ export default function Settings() {
             )
           } else {
             await createResource("Payment Gateway Settings", {
+              gateway: gateways[0],
               ...payload,
               property,
             })
@@ -1004,6 +1120,22 @@ export default function Settings() {
           load()
         }}
       />
+      <GatewayHelp property={property}
+                   gateway={gateways.includes(String(gateway.gateway)) ? String(gateway.gateway) : gateways[0]}
+                   hasKeys={!!gateway.key_id} />
+      </>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("Payments")}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-zinc-500">
+            {t("Online payment links are not available for this country yet. Take payments at the desk.")}
+          </CardContent>
+        </Card>
+      )}
+
+      {(loc.integrations.verify_tax_id || loc.integrations.verify_guest_id) && <KamraVerifyCard />}
 
       <AiAssistantCard property={property} doc={ai} onSaved={load} />
 
