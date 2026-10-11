@@ -3,6 +3,8 @@ are sent to an external LLM provider (DPDP s.8 / s.16 — issue #88)."""
 
 from __future__ import annotations
 
+import re
+
 _CONTACT_KEY_TOKENS = (
 	"phone",
 	"mobile",
@@ -19,9 +21,16 @@ _CONTACT_KEY_TOKENS = (
 )
 
 
+# Whole snake_case tokens only: a bare substring test would redact
+# "occupancy" / "company" (pan) and "paid_now" (id_no).
+_CONTACT_KEY_RE = re.compile(
+	r"(?:^|_)(?:" + "|".join(_CONTACT_KEY_TOKENS) + r")s?(?:_|$)"
+)
+
+
 def is_contact_field(key: str) -> bool:
 	k = (key or "").lower().replace("-", "_")
-	return any(t in k for t in _CONTACT_KEY_TOKENS)
+	return bool(_CONTACT_KEY_RE.search(k))
 
 
 def mask_contact_value(value, *, strict: bool):
@@ -42,16 +51,21 @@ def mask_contact_value(value, *, strict: bool):
 	return "***"
 
 
+def _mask_all(data, *, strict: bool):
+	if isinstance(data, dict):
+		return {k: _mask_all(v, strict=strict) for k, v in data.items()}
+	if isinstance(data, list):
+		return [_mask_all(v, strict=strict) for v in data]
+	return mask_contact_value(data, strict=strict)
+
+
 def scrub_for_llm(data, *, strict: bool):
 	"""Recursively mask contact-like fields in tool JSON sent to providers."""
 	if isinstance(data, dict):
 		out = {}
 		for key, val in data.items():
 			if is_contact_field(key):
-				if isinstance(val, (dict, list)):
-					out[key] = scrub_for_llm(val, strict=True if strict else strict)
-				else:
-					out[key] = mask_contact_value(val, strict=strict)
+				out[key] = _mask_all(val, strict=strict)
 			else:
 				out[key] = scrub_for_llm(val, strict=strict)
 		return out

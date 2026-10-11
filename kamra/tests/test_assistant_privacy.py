@@ -27,6 +27,21 @@ class TestAssistantPrivacy(unittest.TestCase):
 		self.assertEqual(out["mobile"], "[redacted]")
 		self.assertEqual(out["notes"], "VIP")
 
+	def test_keeps_lookalike_keys(self):
+		payload = {
+			"occupancy_pct": 82.5,
+			"company": "Acme 2024 Ltd",
+			"max_occupants": 3,
+			"paid_now": 1200,
+			"quote_emailed_on": "2026-10-01",
+		}
+		self.assertEqual(scrub_for_llm(payload, strict=True), payload)
+
+	def test_masks_lists_under_contact_keys(self):
+		out = scrub_for_llm({"phones": ["9876543210"], "guest_email": "ada@x.in"}, strict=False)
+		self.assertEqual(out["phones"], ["***3210"])
+		self.assertEqual(out["guest_email"], "a***@x.in")
+
 
 if __name__ == "__main__":
 	unittest.main()
