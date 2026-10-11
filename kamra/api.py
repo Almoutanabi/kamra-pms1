@@ -5,6 +5,7 @@ surface serves the React console today and the MCP layer next.
 """
 
 import json
+import math
 
 import frappe
 from frappe import _
@@ -1260,6 +1261,22 @@ def add_folio_charge(folio: str, charge_type: str, description: str,
                      amount: float, gst_rate: float = 0,
                      posting_date: str | None = None, is_alcohol: int = 0,
                      reservation: str | None = None):
+	# check what the caller sent, before the hotel's own rules pick a rate
+	_check_charge_amount_and_tax(
+		frappe.db.get_value("Folio", folio, "property"), amount, gst_rate)
+	return _post_folio_charge(folio, charge_type, description, amount,
+	                          gst_rate, posting_date, is_alcohol, reservation)
+
+
+def _post_folio_charge(folio: str, charge_type: str, description: str,
+                       amount: float, gst_rate: float = 0,
+                       posting_date: str | None = None, is_alcohol: int = 0,
+                       reservation: str | None = None):
+	"""Put one charge on a bill. Not whitelisted and does no amount or rate
+	check: a caller that takes an amount or rate from outside calls
+	_check_charge_amount_and_tax on it first. Code that posts rates the
+	hotel itself decided (the agent's post_stay_charge, banquet billing)
+	calls this directly."""
 	doc = frappe.get_doc("Folio", folio)
 	if doc.status == "Closed":
 		frappe.throw("Folio is closed.")
@@ -1444,6 +1461,27 @@ _FNB_WORDS = ("food", "dinner", "lunch", "breakfast", "meal", "restaurant",
               "kitchen", "buffet", "minibar", "mini bar")
 
 
+def _check_charge_amount_and_tax(property: str, amount, gst_rate):
+	"""A posted charge is a positive amount taxed at one of the country
+	pack's rates. Reductions go through allowances and voids, not through a
+	minus charge, and an unknown rate would put made-up tax on the bill."""
+	try:
+		amount = float(amount)
+	except (TypeError, ValueError):
+		frappe.throw("Charge amount must be a number.")
+	if not math.isfinite(amount):
+		frappe.throw("Charge amount must be a number.")
+	if not amount > 0:
+		frappe.throw("Charge amount must be more than zero. To reduce a "
+		             "bill, post an allowance or void the charge.")
+	from kamra.localization import pack_for
+	allowed = [float(r) for r in pack_for(property).tax_rate_options(property)]
+	if float(gst_rate or 0) not in allowed:
+		frappe.throw("Tax rate {0}% is not allowed. Use one of: {1}.".format(
+			f"{float(gst_rate or 0):g}",
+			", ".join(f"{r:g}" for r in allowed)))
+
+
 def _resolve_charge_gst(property: str, charge_type: str, description: str,
                         is_alcohol: int, provided: float) -> float:
 	"""The tax rate a charge actually carries, decided server-side so a caller
@@ -1493,14 +1531,16 @@ def post_stay_charge(reservation: str, charge_type: str, description: str,
 		frappe.throw("Reservation is not active.")
 	from kamra.folio import target_folio
 	is_alcohol = 1 if int(is_alcohol or 0) else 0
+	# check what the caller sent, not the rate the hotel picks below
+	_check_charge_amount_and_tax(res.property, amount, gst_rate)
 	# GST is decided by the hotel's tax rules, not by the caller's guess:
 	# food & beverage carries the F&B rate (5% in India), not 12/18.
 	gst_rate = _resolve_charge_gst(res.property, charge_type, description,
 	                               is_alcohol, gst_rate)
 	folio_name = target_folio(res, charge_type, is_alcohol)
-	out = add_folio_charge(folio_name, charge_type, description, amount,
-	                       gst_rate, is_alcohol=is_alcohol,
-	                       reservation=res.name)
+	out = _post_folio_charge(folio_name, charge_type, description, amount,
+	                         gst_rate, is_alcohol=is_alcohol,
+	                         reservation=res.name)
 	return {"folio": folio_name, "folio_type": out.get("folio_type"),
 	        "balance": out.get("balance")}
 
@@ -1534,12 +1574,15 @@ def get_billing_rules(company: str):
 @require_roles("Front Desk", "Kamra Agent")
 def update_occupants(reservation: str, occupants):
 	"""Replace the stay's occupant register.
-	occupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]"""
+	occupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]
+	A child keeps name and age only: no phone, and ID details only where the
+	country's register needs them (see localization.minor_id_kept)."""
 	if isinstance(occupants, str):
 		occupants = frappe.parse_json(occupants)
 	doc = frappe.get_doc("Reservation", reservation)
-	from kamra.localization import pack_for, validate_id_type
-	default_nat = getattr(pack_for(doc.property), "DEFAULT_NATIONALITY", "")
+	from kamra.localization import is_minor, minor_id_kept, pack_for, validate_id_type
+	pack = pack_for(doc.property)
+	default_nat = getattr(pack, "DEFAULT_NATIONALITY", "")
 	# scans survive edits even when the client sends stale rows: carry the
 	# stored id_file for any row that comes back without one
 	existing_scans = {o.name: o.get("id_file")
@@ -1547,25 +1590,42 @@ def update_occupants(reservation: str, occupants):
 	existing_types = {o.name: o.get("id_type")
 	                  for o in (doc.get("occupants") or [])}
 	doc.set("occupants", [])
+	stale_scans, minors_trimmed = [], 0
 	for o in occupants or []:
 		if not (o.get("full_name") or "").strip():
 			continue
-		if o.get("id_type") and o.get("id_type") != existing_types.get(o.get("row")):
-			validate_id_type(doc.property, o["id_type"])
-		doc.append("occupants", {
+		nationality = o.get("nationality") or default_nat
+		row = {
 			"full_name": o["full_name"].strip(),
 			"age": o.get("age") or None,
 			"gender": o.get("gender") or "",
-			"nationality": o.get("nationality") or default_nat,
+			"nationality": nationality,
 			"id_type": o.get("id_type") or "",
 			"id_number": (o.get("id_number") or "").strip(),
 			"phone": o.get("phone") or "",
 			# an uploaded ID survives a register edit
 			"id_file": o.get("id_file")
 			           or existing_scans.get(o.get("row")) or None,
-		})
+		}
+		if is_minor(pack, row["age"]):
+			# a child's phone is never needed; ID only where the register asks
+			trim = {"phone": ""} if minor_id_kept(pack, nationality) else \
+			       {"phone": "", "id_type": "", "id_number": "", "id_file": None}
+			if any(row[k] for k in trim):
+				minors_trimmed += 1
+				if row["id_file"] and "id_file" in trim:
+					stale_scans.append(row["id_file"])
+			row.update(trim)
+		if row["id_type"] and row["id_type"] != existing_types.get(o.get("row")):
+			validate_id_type(doc.property, row["id_type"])
+		doc.append("occupants", row)
 	doc.save()
+	if stale_scans:
+		from kamra.privacy import _delete_files
+		for url in stale_scans:
+			_delete_files("Reservation", reservation, url=url)
 	return {"reservation": reservation, "occupants": len(doc.occupants),
+	        "minors_trimmed": minors_trimmed,
 	        "rows": [
 	            {"row": o.name, "full_name": o.full_name, "age": o.age,
 	             "gender": o.gender, "nationality": o.nationality,
@@ -1923,22 +1983,18 @@ def run_night_audit(property: str, business_date: str | None = None):
 @require_roles()
 def gstr1_rows(from_date: str, to_date: str, property: str | None = None):
 	"""Invoice-level rows for a GSTR-1 style export (v0: B2C summary).
-	Filter by property - each GSTIN files its own return."""
-	filters = {
-		"status": "Closed",
-		"closed_on": ("between", [from_date, to_date]),
-	}
-	scope = property or _property_scope()
-	if scope:
-		filters["property"] = scope
-	folios = frappe.get_all(
-		"Folio",
-		filters=filters,
-		fields=["name", "invoice_number", "guest_name", "closed_on",
-		        "charges_total", "tax_total", "grand_total"],
-		order_by="closed_on asc",
-	)
-	return folios
+	Filter by property - each GSTIN files its own return. The return is the
+	India pack's: a property elsewhere is refused, and without a property
+	only the user's India properties are included."""
+	from kamra import localization as loc
+	if property:
+		return loc.tax_return_rows(loc.pack_for(property), property,
+		                           from_date, to_date)
+	scope = _property_scope()
+	names = scope[1] if scope else frappe.get_all("Property", pluck="name")
+	india = loc.pack_for_country("India")
+	return loc.tax_return_rows(india, [p for p in names if loc.pack_for(p) is india],
+	                           from_date, to_date)
 
 
 @frappe.whitelist()
@@ -2746,6 +2802,11 @@ def upload_occupant_id(reservation: str, row: str, image: str):
 	if not match:
 		frappe.throw("No such occupant row on this stay.")
 	occ = match[0]
+	from kamra.localization import adult_age, is_minor, minor_id_kept, pack_for
+	pack = pack_for(res.property)
+	if is_minor(pack, occ.age) and not minor_id_kept(pack, occ.nationality):
+		frappe.throw(f"Registration law needs only the name and age of a guest under "
+		             f"{adult_age(pack)}; their ID is not kept.")
 	content = _sanitise(_decode(image))
 	fdoc = frappe.get_doc({
 		"doctype": "File",
@@ -4658,11 +4719,34 @@ def linked_records(doctype: str, name: str):
 def property_locale(property: str):
 	"""Currency, number locale and tax vocabulary for this property, from its
 	localization pack. Drives the frontend's money formatting and tax dropdowns
-	so no screen hardcodes ₹ or GST %."""
-	from kamra.localization import front_desk_vocabulary, pack_for
+	so no screen hardcodes ₹ or GST %. `integrations` says which country
+	integrations (gateways, tax return, ID checks) this property has."""
+	from kamra.localization import front_desk_vocabulary, integrations, pack_for
 	prop = frappe.get_cached_doc("Property", property)
 	pack = pack_for(property)
-	return {**pack.locale(prop), **front_desk_vocabulary(pack)}
+	return {**pack.locale(prop), **front_desk_vocabulary(pack),
+	        "integrations": integrations(pack)}
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", "Finance")
+def verify_tax_id(property: str, tax_id: str, business_name: str = ""):
+	"""Check a buyer's tax ID before the invoice goes out, where the
+	property's country pack offers it (India: GSTIN via Kamra Verify)."""
+	from kamra import localization as loc
+	return loc.verify_tax_id(loc.pack_for(property), property, tax_id,
+	                         business_name)
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", scope={"guest": "Guest"})
+def verify_guest_id(property: str, guest: str, id_type: str, consent: int = 0):
+	"""Read the guest's ID document on file into the profile, where the
+	property's country pack offers it (India: Aadhaar and others via Kamra
+	Verify). consent: the desk confirms the guest was told."""
+	from kamra import localization as loc
+	return loc.verify_guest_id(loc.pack_for(property), property, guest,
+	                           id_type, consent)
 
 
 @frappe.whitelist()

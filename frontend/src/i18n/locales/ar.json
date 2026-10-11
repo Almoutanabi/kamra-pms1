@@ -1149,6 +1149,8 @@
   "Your profile is erased {months} months after your last stay. Bills are kept as tax law requires.": "يُحذف ملفك بعد {months} شهرًا من آخر إقامة. وتُحفظ الفواتير وفق ما يتطلبه النظام الضريبي.",
   "Your profile is kept for future stays until you ask for it to be erased. Bills are kept as tax law requires.": "يُحفظ ملفك لإقاماتك القادمة حتى تطلب حذفه. وتُحفظ الفواتير وفق ما يتطلبه النظام الضريبي.",
   "Your rights:": "حقوقك:",
+  "Children:": "الأطفال:",
+  "for guests under {age} the hotel records only what registration law requires, usually name and age, and never uses it for marketing.": "للنزلاء دون {age} عامًا يسجّل الفندق فقط ما يتطلبه نظام التسجيل، وعادةً الاسم والعمر، ولا يستخدمه أبدًا للتسويق.",
   "ZATCA Phase 1 ready - QR and XML on every invoice.": "جاهز للمرحلة الأولى من زاتكا - رمز QR وملف XML على كل فاتورة.",
   "ZATCA: still needed for valid e-invoices - {fields}.": "زاتكا: مطلوب لإصدار فواتير إلكترونية صحيحة - {fields}.",
   "the Saudi Data & AI Authority (SDAIA)": "الهيئة السعودية للبيانات والذكاء الاصطناعي (سدايا)",

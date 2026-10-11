@@ -49,6 +49,9 @@ scheduler_events = {
 		# 03:30 - storage limitation (DPDP s.8(7)): erase guests idle past
 		# their property's retention period
 		"30 3 * * *": ["kamra.privacy.apply_retention"],
+		# 03:40 - the same for conversations: WhatsApp message text and AI
+		# assistant chats past the property's message retention period
+		"40 3 * * *": ["kamra.privacy.apply_message_retention"],
 		# 04:45 - drop old kamrapms.com Hosting Enquiry leads (default 24 months;
 		# Won / converted stays; site_config hosting_enquiry_retention_months)
 		"45 4 * * *": ["kamra.hosting_enquiry_retention.purge_expired_hosting_enquiries"],

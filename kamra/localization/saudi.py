@@ -29,6 +29,8 @@ DEFAULT_NATIONALITY = "Saudi"
 # named in the guest privacy notice (PDPL; hotels register guests in Shomoos)
 PRIVACY_AUTHORITY = "the Saudi Data & AI Authority (SDAIA)"
 GUEST_REPORT = "guest registration with the Shomoos security system"
+# Shomoos registers every guest, children included
+MINOR_IDS = "all"
 # what the front desk records at check-in: citizens carry the National ID,
 # residents the Iqama, GCC visitors their own national card
 ID_TYPES = ["National ID", "Iqama", "Passport", "GCC ID", "Other"]

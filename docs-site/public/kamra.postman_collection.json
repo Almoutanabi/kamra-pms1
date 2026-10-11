@@ -1709,7 +1709,7 @@
         "kamra.api.update_occupants"
        ]
       },
-      "description": "Replace the stay's occupant register.\noccupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]",
+      "description": "Replace the stay's occupant register.\noccupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]\nA child keeps name and age only: no phone, and ID details only where the\ncountry's register needs them (see localization.minor_id_kept).",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"occupants\": \"<occupants>\"\n}",
@@ -2264,7 +2264,7 @@
         "kamra.api.gstr1_rows"
        ]
       },
-      "description": "Invoice-level rows for a GSTR-1 style export (v0: B2C summary).\nFilter by property - each GSTIN files its own return.",
+      "description": "Invoice-level rows for a GSTR-1 style export (v0: B2C summary).\nFilter by property - each GSTIN files its own return. The return is the\nIndia pack's: a property elsewhere is refused, and without a property\nonly the user's India properties are included.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"from_date\": \"2026-08-01\",\n  \"to_date\": \"2026-08-31\",\n  \"property\": \"Your Property\"\n}",
@@ -4540,10 +4540,84 @@
         "kamra.api.property_locale"
        ]
       },
-      "description": "Currency, number locale and tax vocabulary for this property, from its\nlocalization pack. Drives the frontend's money formatting and tax dropdowns\nso no screen hardcodes \u20b9 or GST %.",
+      "description": "Currency, number locale and tax vocabulary for this property, from its\nlocalization pack. Drives the frontend's money formatting and tax dropdowns\nso no screen hardcodes \u20b9 or GST %. `integrations` says which country\nintegrations (gateways, tax return, ID checks) this property has.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "verify_tax_id",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.verify_tax_id",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.verify_tax_id"
+       ]
+      },
+      "description": "Check a buyer's tax ID before the invoice goes out, where the\nproperty's country pack offers it (India: GSTIN via Kamra Verify).",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"tax_id\": \"<tax_id>\",\n  \"business_name\": \"\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "verify_guest_id",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.verify_guest_id",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.verify_guest_id"
+       ]
+      },
+      "description": "Read the guest's ID document on file into the profile, where the\nproperty's country pack offers it (India: Aadhaar and others via Kamra\nVerify). consent: the desk confirms the guest was told.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"guest\": \"G-00001\",\n  \"id_type\": \"<id_type>\",\n  \"consent\": 0\n}",
        "options": {
         "raw": {
          "language": "json"

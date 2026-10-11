@@ -2230,6 +2230,119 @@ def t47c():
 	assert f.payments[-1].payment_kind == "Advance"
 
 
+@check("India pack: Razorpay/Cashfree links, GSTR-1 and Kamra Verify; other packs refuse")
+def t47d():
+	import hashlib
+	import hmac
+	import json
+
+	from frappe.utils import add_days, nowdate
+
+	from kamra import api, localization as loc, payments
+	from kamra.connect import client
+	from kamra.folio import open_folio
+	from kamra.localization.india import cashfree
+
+	# India (EVAL Hotel has no country, so it runs on the India pack)
+	assert loc.integrations(loc.pack_for(P)) == {
+		"payment_gateways": ["Razorpay", "Cashfree"], "tax_return": True,
+		"verify_tax_id": True, "verify_guest_id": True}, loc.integrations(loc.pack_for(P))
+
+	SA = "EVAL Riyadh Hotel"
+	if not frappe.db.exists("Property", SA):
+		frappe.get_doc({"doctype": "Property", "property_name": SA,
+		                "city": "Riyadh", "country": "Saudi Arabia",
+		                "currency": "SAR"}).insert(ignore_permissions=True)
+	saudi = loc.pack_for(SA)
+	assert loc.integrations(saudi) == {
+		"payment_gateways": [], "tax_return": False,
+		"verify_tax_id": False, "verify_guest_id": False}, loc.integrations(saudi)
+
+	def refused(fn, exc=frappe.ValidationError):
+		try:
+			fn()
+		except exc:
+			frappe.clear_messages()
+			return True
+		return False
+
+	assert refused(lambda: api.gstr1_rows(nowdate(), nowdate(), property=SA))
+	assert refused(lambda: loc.verify_tax_id(saudi, SA, "29ABCDE1234F1Z5"))
+	assert refused(lambda: loc.verify_guest_id(saudi, SA, "x", "Passport", 1))
+	assert refused(lambda: frappe.get_doc({
+		"doctype": "Payment Gateway Settings", "property": SA,
+		"gateway": "Razorpay", "enabled": 1}).insert(ignore_permissions=True))
+	# GSTR-1 across the chain leaves the Saudi hotel out
+	rows = api.gstr1_rows(add_days(nowdate(), -3650), nowdate())
+	assert all(frappe.db.get_value("Folio", r.name, "property") != SA for r in rows)
+
+	# India: a test-mode Razorpay link, settled once by a signed webhook
+	name = frappe.db.get_value("Payment Gateway Settings", {"property": P})
+	gw = frappe.get_doc("Payment Gateway Settings", name) if name \
+		else frappe.new_doc("Payment Gateway Settings")
+	gw.update({"property": P, "gateway": "Razorpay", "enabled": 1,
+	           "test_mode": 1, "webhook_secret": "eval-whsec",
+	           "key_secret": "eval-cfsec"})
+	gw.save(ignore_permissions=True)
+	b = api.create_booking(P, RT, add_days(nowdate(), 50), add_days(nowdate(), 51),
+	                       "EVAL Gateway Guest", phone="+919800011401")
+	folio = open_folio(frappe.get_doc("Reservation", b["reservation"]))
+	link = payments.create_payment_link(folio, amount=50, purpose="Booking deposit")
+	assert link["test_mode"] and link["url"].startswith("https://rzp.io/test/"), link
+
+	body = json.dumps({"event": "payment_link.paid", "payload": {"payment_link": {
+		"entity": {"id": link["link_id"], "amount_paid": 5000,
+		           "notes": {"folio": folio}}}}}).encode()
+	sig = hmac.new(b"eval-whsec", body, hashlib.sha256).hexdigest()
+	assert refused(lambda: payments.handle_webhook(
+		"Razorpay", body, {"x-razorpay-signature": "forged"}), frappe.PermissionError)
+	assert payments.handle_webhook("Razorpay", body, {"x-razorpay-signature": sig})["posted"]
+	assert not payments.handle_webhook("Razorpay", body, {"x-razorpay-signature": sig})["posted"]
+	# a Cashfree callback for a Razorpay property is refused
+	cf_body = json.dumps({"type": "PAYMENT_LINK_EVENT", "data": {
+		"link_status": "PAID", "link_id": "cf-eval-1", "link_amount_paid": 25,
+		"link_notes": {"folio": folio}}}).encode()
+	cf_headers = {"x-webhook-timestamp": "1700000000",
+	              "x-webhook-signature": cashfree.signature("eval-cfsec", "1700000000", cf_body)}
+	assert refused(lambda: payments.handle_webhook("Cashfree", cf_body, cf_headers),
+	               frappe.PermissionError)
+
+	# switched to Cashfree: its signed callback posts, a forged one does not
+	gw.reload()
+	gw.gateway = "Cashfree"
+	gw.save(ignore_permissions=True)
+	assert refused(lambda: payments.handle_webhook(
+		"Cashfree", cf_body, {**cf_headers, "x-webhook-signature": "forged"}),
+		frappe.PermissionError)
+	assert payments.handle_webhook("Cashfree", cf_body, cf_headers)["posted"]
+	paid = [p.amount for p in frappe.get_doc("Folio", folio).payments
+	        if p.mode == "Payment Link"]
+	assert sorted(paid) == [25, 50], paid
+	# an event that is not a payment is ignored, not an error
+	assert payments.handle_webhook("Razorpay", b'{"event": "payment_link.expired"}', {}) \
+		== {"ignored": True}
+
+	# Kamra Verify through the Connect hub (stubbed in-process)
+	calls = []
+
+	def hub(name, key, json_body=None, params=None, data=None):
+		calls.append((name, key))
+		return {"valid": True, "gstin": json_body["gstin"], "legal_name": "Eval Pvt Ltd",
+		        "status": "Active", "charged": 5}
+
+	s = frappe.get_single("Kamra Connect Settings")
+	s.connect_key, s.linked = "eval-connect-key", 1
+	s.save(ignore_permissions=True)
+	client.use_transport(hub)
+	try:
+		out = api.verify_tax_id(P, "29ABCDE1234F1Z5", "Eval")
+	finally:
+		client.use_transport()
+	assert out["legal_name"] == "Eval Pvt Ltd" and calls == [("verify_gstin", "eval-connect-key")], (out, calls)
+	# ID reading needs the guest to have been told
+	assert refused(lambda: loc.verify_guest_id(loc.pack_for(P), P, "x", "Aadhaar", 0))
+
+
 @check("WhatsApp: native Meta send, booking flow, inbound -> ticket")
 def t48():
 	# nosemgrep: frappe-monkey-patching-not-allowed -- offline eval harness stubs the outbound transport for tests; not a production code path
@@ -3324,6 +3437,92 @@ def t82():
 	assert days.get("Access Log", 0) >= 365 and days.get("Activity Log", 0) >= 365, days
 
 
+@check("privacy: message retention clears old WhatsApp text and chats, keeps the rows")
+def t82b():
+	from frappe.utils import add_days, now_datetime
+
+	from kamra import privacy
+
+	def msg(content, age_days):
+		name = frappe.get_doc({"doctype": "WhatsApp Message", "property": P, "direction": "Outbound",
+		                       "status": "Sent", "content": content}).insert(ignore_permissions=True).name
+		frappe.db.sql("update `tabWhatsApp Message` set creation=%s where name=%s",
+		              (add_days(now_datetime(), -age_days), name))
+		return name
+
+	def chat(age_days):
+		name = frappe.get_doc({"doctype": "Copilot Conversation", "property": P, "title": "Evalchat Ravi",
+		                       "messages": '[{"role": "user", "content": "Ravi 98450 12345"}]'}
+		                      ).insert(ignore_permissions=True).name
+		frappe.db.sql("update `tabCopilot Conversation` set modified=%s where name=%s",
+		              (add_days(now_datetime(), -age_days), name))
+		return name
+
+	old, fresh = msg("Your room 204 is ready, Ravi", 120), msg("See you soon", 10)
+	old_chat, fresh_chat = chat(120), chat(10)
+	frappe.db.set_value("Property", P, "message_retention_days", 0)
+	privacy.apply_message_retention()
+	assert frappe.db.get_value("WhatsApp Message", old, "content"), "retention off still cleared"
+
+	frappe.db.set_value("Property", P, "message_retention_days", 90)
+	privacy.apply_message_retention()
+	row = frappe.db.get_value("WhatsApp Message", old, ["content", "status", "direction"], as_dict=True)
+	assert row and not row.content and row.status == "Sent" and row.direction == "Outbound", row
+	assert frappe.db.get_value("WhatsApp Message", fresh, "content") == "See you soon", "fresh message cleared"
+	c = frappe.db.get_value("Copilot Conversation", old_chat, ["messages", "title"], as_dict=True)
+	assert c.messages == "[]" and c.title == privacy.CLEARED_CHAT_TITLE, c
+	assert "Ravi" in frappe.db.get_value("Copilot Conversation", fresh_chat, "messages"), "fresh chat cleared"
+	frappe.db.set_value("Property", P, "message_retention_days", 0)
+
+	# an upgraded site keeps its history until the hotel chooses a period
+	from kamra.patches.v38 import keep_existing_messages
+	frappe.db.set_value("Property", P, "message_retention_days", 90)
+	keep_existing_messages.execute()
+	assert not frappe.db.get_value("Property", P, "message_retention_days")
+
+
+@check("privacy: a child on the stay register keeps name and age only, unless the register needs the ID")
+def t82c():
+	from frappe.utils import add_days
+
+	from kamra import api
+	from kamra import localization as loc
+
+	def refused(fn):
+		try:
+			fn()
+		except frappe.ValidationError:
+			frappe.clear_messages()
+			return True
+		return False
+
+	g = _guest("Evalfam Parent", "+91 70000 08301")
+	r = _res(g, add_days(nowdate(), 40), add_days(nowdate(), 42)).name
+	out = api.update_occupants(r, [
+		{"full_name": "Evalfam Parent", "age": 38, "nationality": "Indian",
+		 "id_type": "Aadhaar", "id_number": "987654321012", "phone": "+917000008301"},
+		{"full_name": "Evalfam Child", "age": 9, "nationality": "Indian",
+		 "id_type": "Aadhaar", "id_number": "123412341234", "phone": "+917000008302"},
+		{"full_name": "Evalfam Visitor", "age": 9, "nationality": "French",
+		 "id_type": "Passport", "id_number": "19FR12345", "phone": "+33600000000"},
+	])
+	rows = {o["full_name"]: o for o in out["rows"]}
+	adult, child, visitor = rows["Evalfam Parent"], rows["Evalfam Child"], rows["Evalfam Visitor"]
+	assert adult["id_number"] == "987654321012" and adult["phone"], adult
+	assert child["age"] == 9 and not (child["id_type"] or child["id_number"] or child["phone"]), child
+	# Form C: a foreign child's passport is part of the register; a phone is not
+	assert visitor["id_number"] == "19FR12345" and not visitor["phone"], visitor
+	assert out["minors_trimmed"] == 2, out
+	assert refused(lambda: api.upload_occupant_id(r, child["row"], "data:image/jpeg;base64,AAAA"))
+
+	india, saudi = loc.pack_for(P), loc.pack_for_country("Saudi Arabia")
+	assert loc.minor_id_kept(saudi, "Saudi") and not loc.minor_id_kept(india, "Indian")
+	assert not loc.is_minor(india, None) and not loc.is_minor(india, "abc") and loc.is_minor(india, 17)
+	terms = loc.privacy_terms(india)
+	assert terms["adult_age"] == 18 and "hi" in terms["notice_languages"], terms
+	assert loc.privacy_terms(loc.pack_for_country("Thailand"))["notice_languages"] == []
+
+
 @check("public booking: a guest books through the governed agent the install created")
 def t83():
 	from kamra import public_api
@@ -3519,10 +3718,10 @@ def execute():
 		for fn in (t1, t2, t3, t3b, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13,
 		           t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24,
 		           t25, t26, t27, t28, t29, t30, t31, t32, t33, t34, t35,
-		           t36, t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t48, t49, t50, t51, t53,
+		           t36, t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t83, t84, t85, t86):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

@@ -40,6 +40,9 @@ links to the deeper guide.
   do a test invoice and check the format before real money
 - [ ] **ID retention mode**: Store, or Verify & Discard (scans and ID
   numbers auto-scrubbed at checkout — the DPDP-friendly setting)
+- [ ] **Clear message text after (days)**: WhatsApp message text and AI
+  assistant chats older than this are cleared nightly (new properties: 90;
+  properties that existed before this setting start at 0 = keep)
 
 ## 3 — Staff
 

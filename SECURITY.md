@@ -24,7 +24,7 @@ role-permission, and data-exposure reports as highest priority.
   gating is in scope and high severity.
 - Guest-reachable (`allow_guest`) surfaces are `public_api.py` (booking
   engine, pre-check-in, QR menu) and the inbound webhooks: `payments.razorpay_webhook`,
-  `channel_manager.webhook`, `channels.aiosell.reservation_webhook`,
+  `payments.cashfree_webhook`, `channel_manager.webhook`, `channels.aiosell.reservation_webhook`,
   `agents_channels.voice_webhook` / `messaging_webhook` and `whatsapp.webhook`.
   Every webhook must authenticate against a configured secret and refuse the
   call when none is set. Anything else reachable without a session is a bug.

@@ -34,8 +34,12 @@ def registry(property: str):
 	"""Everything on offer, grouped, with this property's live status."""
 	ai = frappe.db.get_value(
 		"AI Assistant Settings", {"property": property}, "enabled")
+	from kamra import localization as loc
+
 	pay = frappe.db.get_value(
-		"Payment Gateway Settings", {"property": property}, "enabled")
+		"Payment Gateway Settings", {"property": property},
+		["enabled", "gateway"], as_dict=True) or {}
+	gateways = loc.payment_gateways(loc.pack_for(property))
 	me = frappe.session.user
 	has_key = bool(frappe.db.get_value("User", me, "api_key"))
 
@@ -140,12 +144,20 @@ def registry(property: str):
 		},
 		{
 			"category": "Payments",
-			"blurb": "Take deposits and settle bills online.",
+			"blurb": "Take deposits and settle bills online. The gateways on "
+			         "offer come with your country pack.",
 			"cards": [
-				_connector("Razorpay", "razorpay",
-				           "Payment links for balances and advances.",
+				_connector(g, g.lower(),
+				           f"Payment links for balances and advances, paid "
+				           f"into your own {g} account.",
 				           action="route", route="/settings",
-				           status="connected" if pay else "configure"),
+				           status="connected" if pay.get("enabled")
+				           and pay.get("gateway") == g else "configure")
+				for g in gateways
+			] or [
+				_module("Online payment links",
+				        "No gateway in your country pack yet - take "
+				        "payments at the desk.", planned=True),
 			],
 		},
 		{
@@ -169,7 +181,9 @@ def registry(property: str):
 			"blurb": "Tax, invoicing and government filing for where you "
 			         "operate. Install the pack for your country.",
 			"cards": [
-				_module("India", "GST slabs, SAC, GSTIN, GSTR-1, e-invoice.",
+				_module("India", "GST slabs, SAC, GSTIN, GSTR-1, e-invoice. "
+				        "Razorpay and Cashfree payment links; Kamra Verify "
+				        "(GSTIN lookup, Aadhaar / ID reading).",
 				        detail="Included"),
 				_module("Indonesia",
 				        "PB1/PBJT regional hotel tax (flat, per-region rate), "
