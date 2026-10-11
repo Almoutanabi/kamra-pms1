@@ -45,6 +45,10 @@ upgrade-breaking changes (removed doctypes / API contracts).
 
 * **readme:** bring What's new, features and credits up to 2.6.9 ([#153](https://github.com/Kamra-PMS/kamra-pms/issues/153)) ([27aa6fe](https://github.com/Kamra-PMS/kamra-pms/commit/27aa6fef7776867644f370dd81d50fd1ad2b023d))
 
+### Credits
+
+* README contributors list now credits [@ShaikhAmerPasha](https://github.com/ShaikhAmerPasha) for the voucher redemption fix ([#143](https://github.com/Kamra-PMS/kamra-pms/pull/143)) and charge validation ([#147](https://github.com/Kamra-PMS/kamra-pms/pull/147)), both shipped in 2.6.9.
+
 ## [2.6.9](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.8...v2.6.9) (2026-10-11)
 
 
