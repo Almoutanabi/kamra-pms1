@@ -1268,6 +1268,9 @@ def add_folio_charge(folio: str, charge_type: str, description: str,
 		             "post it to the guest folio.")
 	# tax is the hotel's rule, not the caller's guess - without this an
 	# F&B/minibar charge posted without a rate lands on the bill untaxed
+	# check what the caller sent: the rate the hotel's own rules pick below
+	# (F&B, alcohol default) is trusted
+	_check_charge_amount_and_tax(doc.property, amount, gst_rate)
 	gst_rate = _resolve_charge_gst(doc.property, charge_type, description,
 	                               int(is_alcohol or 0), float(gst_rate or 0))
 	from kamra.business_date import get_business_date
@@ -1442,6 +1445,25 @@ def set_actual_times(reservation: str, actual_check_in: str | None = None,
 _FNB_WORDS = ("food", "dinner", "lunch", "breakfast", "meal", "restaurant",
               "f&b", "fnb", "beverage", "snack", "room service", "cafe",
               "kitchen", "buffet", "minibar", "mini bar")
+
+
+def _check_charge_amount_and_tax(property: str, amount, gst_rate):
+	"""A posted charge is a positive amount taxed at one of the country
+	pack's rates. Reductions go through allowances and voids, not through a
+	minus charge, and an unknown rate would put made-up tax on the bill."""
+	try:
+		amount = float(amount)
+	except (TypeError, ValueError):
+		frappe.throw("Charge amount must be a number.")
+	if not amount > 0:
+		frappe.throw("Charge amount must be more than zero. To reduce a "
+		             "bill, post an allowance or void the charge.")
+	from kamra.localization import pack_for
+	allowed = [float(r) for r in pack_for(property).tax_rate_options(property)]
+	if float(gst_rate or 0) not in allowed:
+		frappe.throw("Tax rate {0}% is not allowed. Use one of: {1}.".format(
+			f"{float(gst_rate or 0):g}",
+			", ".join(f"{r:g}" for r in allowed)))
 
 
 def _resolve_charge_gst(property: str, charge_type: str, description: str,
