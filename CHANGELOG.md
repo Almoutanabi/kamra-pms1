@@ -37,6 +37,21 @@ upgrade-breaking changes (removed doctypes / API contracts).
 * **banquet:** Phase 1 enterprise ops (issue #67) — email/WhatsApp send
   quotation, desk-led guest response, department checklists + notify on
   Confirm (Sales/Finance/HK/F&B), and quote no-response chase reminders
+## [2.6.9](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.8...v2.6.9) (2026-10-11)
+
+
+### Features
+
+* **localization:** move India-only integrations behind the India pack ([#144](https://github.com/Kamra-PMS/kamra-pms/issues/144)) ([0b289e7](https://github.com/Kamra-PMS/kamra-pms/commit/0b289e7bc0042a9834fba11119e4eab9f89660fa))
+* **privacy:** message retention, children on the register, notice in Indian languages ([#145](https://github.com/Kamra-PMS/kamra-pms/issues/145)) ([ed2afb7](https://github.com/Kamra-PMS/kamra-pms/commit/ed2afb7b092fff2942e74a9e2c6e475846134a88))
+* **privacy:** redact guest contact in AI tool results ([#141](https://github.com/Kamra-PMS/kamra-pms/issues/141)) ([e38a96f](https://github.com/Kamra-PMS/kamra-pms/commit/e38a96fb221f56b6be416dd978f6308f32e06ea0))
+
+
+### Bug Fixes
+
+* keep voucher on saved bookings when it expires or hits its limit ([#143](https://github.com/Kamra-PMS/kamra-pms/issues/143)) ([18e23ca](https://github.com/Kamra-PMS/kamra-pms/commit/18e23caa1c86b90a534f0a1f726a183f219d58f8))
+* reject zero or minus charge amounts and tax rates outside the co… ([#147](https://github.com/Kamra-PMS/kamra-pms/issues/147)) ([7b0e8c6](https://github.com/Kamra-PMS/kamra-pms/commit/7b0e8c6c9c573f5dee4e385f449533bb67141abc))
+
 ## [2.6.8](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.7...v2.6.8) (2026-10-05)
 
 
