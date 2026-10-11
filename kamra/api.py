@@ -5,6 +5,7 @@ surface serves the React console today and the MCP layer next.
 """
 
 import json
+import math
 
 import frappe
 from frappe import _
@@ -1260,6 +1261,22 @@ def add_folio_charge(folio: str, charge_type: str, description: str,
                      amount: float, gst_rate: float = 0,
                      posting_date: str | None = None, is_alcohol: int = 0,
                      reservation: str | None = None):
+	# check what the caller sent, before the hotel's own rules pick a rate
+	_check_charge_amount_and_tax(
+		frappe.db.get_value("Folio", folio, "property"), amount, gst_rate)
+	return _post_folio_charge(folio, charge_type, description, amount,
+	                          gst_rate, posting_date, is_alcohol, reservation)
+
+
+def _post_folio_charge(folio: str, charge_type: str, description: str,
+                       amount: float, gst_rate: float = 0,
+                       posting_date: str | None = None, is_alcohol: int = 0,
+                       reservation: str | None = None):
+	"""Put one charge on a bill. Not whitelisted and does no amount or rate
+	check: a caller that takes an amount or rate from outside calls
+	_check_charge_amount_and_tax on it first. Code that posts rates the
+	hotel itself decided (the agent's post_stay_charge, banquet billing)
+	calls this directly."""
 	doc = frappe.get_doc("Folio", folio)
 	if doc.status == "Closed":
 		frappe.throw("Folio is closed.")
@@ -1268,9 +1285,6 @@ def add_folio_charge(folio: str, charge_type: str, description: str,
 		             "post it to the guest folio.")
 	# tax is the hotel's rule, not the caller's guess - without this an
 	# F&B/minibar charge posted without a rate lands on the bill untaxed
-	# check what the caller sent: the rate the hotel's own rules pick below
-	# (F&B, alcohol default) is trusted
-	_check_charge_amount_and_tax(doc.property, amount, gst_rate)
 	gst_rate = _resolve_charge_gst(doc.property, charge_type, description,
 	                               int(is_alcohol or 0), float(gst_rate or 0))
 	from kamra.business_date import get_business_date
@@ -1455,6 +1469,8 @@ def _check_charge_amount_and_tax(property: str, amount, gst_rate):
 		amount = float(amount)
 	except (TypeError, ValueError):
 		frappe.throw("Charge amount must be a number.")
+	if not math.isfinite(amount):
+		frappe.throw("Charge amount must be a number.")
 	if not amount > 0:
 		frappe.throw("Charge amount must be more than zero. To reduce a "
 		             "bill, post an allowance or void the charge.")
@@ -1515,14 +1531,16 @@ def post_stay_charge(reservation: str, charge_type: str, description: str,
 		frappe.throw("Reservation is not active.")
 	from kamra.folio import target_folio
 	is_alcohol = 1 if int(is_alcohol or 0) else 0
+	# check what the caller sent, not the rate the hotel picks below
+	_check_charge_amount_and_tax(res.property, amount, gst_rate)
 	# GST is decided by the hotel's tax rules, not by the caller's guess:
 	# food & beverage carries the F&B rate (5% in India), not 12/18.
 	gst_rate = _resolve_charge_gst(res.property, charge_type, description,
 	                               is_alcohol, gst_rate)
 	folio_name = target_folio(res, charge_type, is_alcohol)
-	out = add_folio_charge(folio_name, charge_type, description, amount,
-	                       gst_rate, is_alcohol=is_alcohol,
-	                       reservation=res.name)
+	out = _post_folio_charge(folio_name, charge_type, description, amount,
+	                         gst_rate, is_alcohol=is_alcohol,
+	                         reservation=res.name)
 	return {"folio": folio_name, "folio_type": out.get("folio_type"),
 	        "balance": out.get("balance")}
 

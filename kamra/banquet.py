@@ -1423,7 +1423,7 @@ def post_to_folio(function: str, folio: str | None = None):
 	Alcohol is reported back rather than posted when the bill is a company
 	or group folio - the same rule the folio itself enforces - so it can be
 	settled separately instead of failing the whole post."""
-	from kamra.api import add_folio_charge
+	from kamra.api import _post_folio_charge
 
 	doc = _fn(function)
 	if doc.posted_to_folio:
@@ -1453,7 +1453,7 @@ def post_to_folio(function: str, folio: str | None = None):
 			deferred.append({"item_name": r.item_name,
 			                 "amount": float(r.total or 0)})
 			continue
-		add_folio_charge(
+		_post_folio_charge(
 			target,
 			_FOLIO_CHARGE_TYPE.get(r.item_type, "Misc"),
 			f"{doc.name} · {r.item_name}"
