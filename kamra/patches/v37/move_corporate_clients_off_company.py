@@ -84,8 +84,8 @@ def _repoint_references(names):
 	for doctype, dt_col, name_col in REFERENCES:
 		if not frappe.db.table_exists(doctype) or not frappe.db.has_column(doctype, dt_col):
 			continue
-		frappe.db.sql(
-			f"UPDATE `tab{doctype}` SET `{dt_col}` = %s WHERE `{dt_col}` = %s AND `{name_col}` IN %s",  # nosemgrep: frappe-sql-format-injection -- identifiers come from the constant REFERENCES
+		frappe.db.sql(  # nosemgrep: frappe-sql-format-injection -- identifiers come from the constant REFERENCES
+			f"UPDATE `tab{doctype}` SET `{dt_col}` = %s WHERE `{dt_col}` = %s AND `{name_col}` IN %s",
 			(NEW, OLD, tuple(names)),
 		)
 
