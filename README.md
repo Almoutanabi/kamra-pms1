@@ -51,15 +51,22 @@
 
 ## What's new
 
-On **`develop`** (nightly) the product is the **2.6.2** train plus Unreleased
-work. The `v2.6.2` GitHub tag is still pending — latest published release is
-[v2.6.0](https://github.com/Kamra-PMS/kamra-pms/releases/tag/v2.6.0).
+Latest release: **[v2.6.9](https://github.com/Kamra-PMS/kamra-pms/releases/tag/v2.6.9)**
+(`develop` ships nightly).
 
-- **Unreleased** — System Health, property time zone, **85 MCP tools** (role +
-  module gated), AI provider presets, local-build `deploy/install.sh`,
-  banquet Phase 1 (send quote, guest response, Sales/Finance/HK/F&B checklists)
-- **2.6.2** (in the changelog; not tagged yet) — Opera-style cashier till,
-  folio ledger, cashier PIN, POS full-screen till
+- **2.6.9** — India-only integrations live in the India pack (Razorpay and
+  Cashfree payment links, GSTR-1, **Kamra Verify** GSTIN and guest ID checks);
+  privacy: guest contact details hidden from the AI provider, nightly clearing
+  of old WhatsApp text and AI chats, children recorded by name and age only,
+  and the guest privacy notice in **Hindi, Kannada, Tamil, Telugu, Malayalam,
+  Marathi and Bengali**; vouchers stay on saved bookings; folio charges refuse
+  zero, minus and unknown tax rates
+- **2.6.5 – 2.6.8** — security fixes (property scope, webhooks, Guest on
+  REST/Desk), deposits before arrival, room change from the GRC, checkout only
+  once every bill is settled, ERPNext Company and stock working alongside Kamra
+- **2.6.2 – 2.6.4** — Opera-style cashier till, folio ledger, cashier PIN,
+  System Health, property time zone, AI provider presets, DPDP by design
+  (erasure, access export, retention, notices)
 
 Notes live in [`CHANGELOG.md`](CHANGELOG.md) — this list is a pointer, not a
 second release note. How we cut stables: [`RELEASING.md`](RELEASING.md).
@@ -77,18 +84,20 @@ Kamra is the alternative we wanted:
 | Per-room / per-module pricing | **Free forever** (AGPL) — cost doesn't scale with rooms |
 | Data lock-in | **You host it** — on-prem, VPS, or Frappe Cloud |
 | AI as a marketing slide | **MCP tools** — Claude (or any agent) books and audits with RBAC |
-| Opaque pricing & tax | **Deterministic engine** — GST / SST / VAT packs in code + CI evals |
+| Opaque pricing & tax | **Deterministic engine** — GST / SST / VAT / PB1 country packs in code + CI evals |
 | New-hire training hell | Front desk UI a clerk can learn the same day |
 
 ---
 
 ## What makes it different
 
-- **Agent-ready, not agent-locked.** [MCP server](https://kamrapms.com/docs/ai-and-mcp) with **85** governed tools — role-scoped, module-gated, permission-checked, fully logged. Connect Claude; no bundled agent to trust.
+- **Agent-ready, not agent-locked.** [MCP server](https://kamrapms.com/docs/ai-and-mcp) with **86** governed tools — role-scoped, module-gated, permission-checked, fully logged. Connect Claude; no bundled agent to trust.
 - **Bring your own key.** No AI markup or model lock-in. Optional [HeyKoala](https://heykoala.ai) for voice / WhatsApp concierge.
 - **Deterministic money.** Rates, tax slabs, availability, and no-overbooking guards come from code — never from a language model.
 - **Full audit trail.** Every human or AI action: who, what, why.
-- **Built on Frappe.** RBAC, multi-tenancy, Desk escape hatch, [frappe/payments](https://github.com/frappe/payments) gateways, ERPNext-adjacent ecosystem.
+- **Privacy by design.** DPDP / GDPR-friendly defaults: ID verify-and-discard, erasure and access export, retention for guests and messages, children's data kept to name and age, and guest contact details kept out of AI prompts.
+- **Country packs.** Tax, invoices, ID types, payment gateways and statutory reports per country — India's Razorpay, Cashfree, GSTR-1 and Kamra Verify never reach a Saudi hotel, which gets ZATCA instead.
+- **Built on Frappe.** RBAC, multi-tenancy, Desk escape hatch, ERPNext-adjacent ecosystem (Company and stock work alongside Kamra).
 
 ---
 
@@ -141,12 +150,13 @@ Live example: [demo.kamrapms.com/book](https://demo.kamrapms.com/book).
 | **Short-term rentals** | Hotel vs STR property kind, sellable units, per-villa locations, Instant / Request-to-book |
 | **Booking** | Multi-room / group / corporate, returning guests, add-ons, vouchers, travel agents, day-use |
 | **Revenue** | Seasons, rate plans, guardrails, hurdle rates, overbooking allowance, cancellation & no-show policy in code |
-| **Billing** | Folios, corporate routing, group masters, charge splits, night audit, tax invoices, GSTR-1, payment links, cashier till (FO+POS cash, PIN pad), folio ledger |
+| **Billing** | Folios, corporate routing, group masters, charge splits, deposits, night audit, tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
 | **F&B** | POS table map, full-screen till and kitchen pass, split bills, thermal KOT, kitchen display, inventory & recipes, QR ordering, room posting |
 | **Operations** | Tickets + SLA, housekeeping `/hk`, guest laundry end-to-end, lost & found, banquet / events (send quote, guest response, dept checklists) |
-| **Guests** | Online pre-check-in, GRC + occupant register, **editable nationality**, ID retention modes |
+| **Guests** | Online pre-check-in, GRC + occupant register, **editable nationality**, ID retention modes, Kamra Verify (India: GSTIN and guest ID checks) |
+| **Privacy** | Erasure, access export, guest and message retention, children's data minimised, AI-prompt redaction, privacy notice in English, Arabic and seven Indian languages |
 | **Messaging** | WhatsApp (Meta Cloud API) — confirmations, check-in links, inbox, desk tickets |
-| **Localization** | India GST, Indonesia PB1, Thailand VAT, Malaysia SST, UAE VAT — currency & locales follow the pack |
+| **Localization** | India GST, Indonesia PB1, Thailand VAT, Malaysia SST, UAE VAT, Saudi VAT + ZATCA e-invoicing — currency, ID types, payment modes and integrations follow the pack; English / العربية UI |
 | **Platform** | Multi-property RBAC, dark mode, property time zone, System Health, AI provider presets, CSV migration (eZee / Cloudbeds presets), eval harness in CI |
 
 ---
@@ -259,6 +269,7 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The full list 
 - [@Kruthikagowda12](https://github.com/Kruthikagowda12): the AioSell channel-manager adapter and its fixes ([#40](https://github.com/Kamra-PMS/kamra-pms/pull/40), [#46](https://github.com/Kamra-PMS/kamra-pms/pull/46), [#52](https://github.com/Kamra-PMS/kamra-pms/pull/52)), housekeeping proof media and room swap / upgrade ([#74](https://github.com/Kamra-PMS/kamra-pms/pull/74)), phone validation ([#69](https://github.com/Kamra-PMS/kamra-pms/pull/69)), season scoping ([#80](https://github.com/Kamra-PMS/kamra-pms/pull/80)) and property / booking flow work ([#22](https://github.com/Kamra-PMS/kamra-pms/pull/22))
 - [@Mohammed-Muneef](https://github.com/Mohammed-Muneef): laundry, kitchen display v2, inventory & recipes, menu import, ID-document hardening
 - [@faresalslahi-collab](https://github.com/faresalslahi-collab): booking guest and room summary ([#83](https://github.com/Kamra-PMS/kamra-pms/pull/83))
+- [@ShaikhAmerPasha](https://github.com/ShaikhAmerPasha): saved bookings keep their voucher after it expires or hits its limit ([#142](https://github.com/Kamra-PMS/kamra-pms/issues/142), [#143](https://github.com/Kamra-PMS/kamra-pms/pull/143)), and folio charges refuse zero or minus amounts and unknown tax rates ([#146](https://github.com/Kamra-PMS/kamra-pms/issues/146), [#147](https://github.com/Kamra-PMS/kamra-pms/pull/147))
 
 **Hotels and users who shaped it through issues**
 
