@@ -1574,12 +1574,15 @@ def get_billing_rules(company: str):
 @require_roles("Front Desk", "Kamra Agent")
 def update_occupants(reservation: str, occupants):
 	"""Replace the stay's occupant register.
-	occupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]"""
+	occupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]
+	A child keeps name and age only: no phone, and ID details only where the
+	country's register needs them (see localization.minor_id_kept)."""
 	if isinstance(occupants, str):
 		occupants = frappe.parse_json(occupants)
 	doc = frappe.get_doc("Reservation", reservation)
-	from kamra.localization import pack_for, validate_id_type
-	default_nat = getattr(pack_for(doc.property), "DEFAULT_NATIONALITY", "")
+	from kamra.localization import is_minor, minor_id_kept, pack_for, validate_id_type
+	pack = pack_for(doc.property)
+	default_nat = getattr(pack, "DEFAULT_NATIONALITY", "")
 	# scans survive edits even when the client sends stale rows: carry the
 	# stored id_file for any row that comes back without one
 	existing_scans = {o.name: o.get("id_file")
@@ -1587,25 +1590,42 @@ def update_occupants(reservation: str, occupants):
 	existing_types = {o.name: o.get("id_type")
 	                  for o in (doc.get("occupants") or [])}
 	doc.set("occupants", [])
+	stale_scans, minors_trimmed = [], 0
 	for o in occupants or []:
 		if not (o.get("full_name") or "").strip():
 			continue
-		if o.get("id_type") and o.get("id_type") != existing_types.get(o.get("row")):
-			validate_id_type(doc.property, o["id_type"])
-		doc.append("occupants", {
+		nationality = o.get("nationality") or default_nat
+		row = {
 			"full_name": o["full_name"].strip(),
 			"age": o.get("age") or None,
 			"gender": o.get("gender") or "",
-			"nationality": o.get("nationality") or default_nat,
+			"nationality": nationality,
 			"id_type": o.get("id_type") or "",
 			"id_number": (o.get("id_number") or "").strip(),
 			"phone": o.get("phone") or "",
 			# an uploaded ID survives a register edit
 			"id_file": o.get("id_file")
 			           or existing_scans.get(o.get("row")) or None,
-		})
+		}
+		if is_minor(pack, row["age"]):
+			# a child's phone is never needed; ID only where the register asks
+			trim = {"phone": ""} if minor_id_kept(pack, nationality) else \
+			       {"phone": "", "id_type": "", "id_number": "", "id_file": None}
+			if any(row[k] for k in trim):
+				minors_trimmed += 1
+				if row["id_file"] and "id_file" in trim:
+					stale_scans.append(row["id_file"])
+			row.update(trim)
+		if row["id_type"] and row["id_type"] != existing_types.get(o.get("row")):
+			validate_id_type(doc.property, row["id_type"])
+		doc.append("occupants", row)
 	doc.save()
+	if stale_scans:
+		from kamra.privacy import _delete_files
+		for url in stale_scans:
+			_delete_files("Reservation", reservation, url=url)
 	return {"reservation": reservation, "occupants": len(doc.occupants),
+	        "minors_trimmed": minors_trimmed,
 	        "rows": [
 	            {"row": o.name, "full_name": o.full_name, "age": o.age,
 	             "gender": o.gender, "nationality": o.nationality,
@@ -2782,6 +2802,11 @@ def upload_occupant_id(reservation: str, row: str, image: str):
 	if not match:
 		frappe.throw("No such occupant row on this stay.")
 	occ = match[0]
+	from kamra.localization import adult_age, is_minor, minor_id_kept, pack_for
+	pack = pack_for(res.property)
+	if is_minor(pack, occ.age) and not minor_id_kept(pack, occ.nationality):
+		frappe.throw(f"Registration law needs only the name and age of a guest under "
+		             f"{adult_age(pack)}; their ID is not kept.")
 	content = _sanitise(_decode(image))
 	fdoc = frappe.get_doc({
 		"doctype": "File",

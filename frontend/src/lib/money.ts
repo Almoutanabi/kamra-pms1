@@ -18,6 +18,11 @@ interface Locale {
   /** Ways to pay the desk offers - always canonical Folio Payment modes. */
   payment_modes: string[]
   default_nationality: string
+  /** Under this age an occupant is a minor: name and age only. */
+  adult_age: number
+  /** "foreign": a minor's ID is kept only for foreign nationals;
+   *  "all": the country's register covers every guest. */
+  minor_ids: "foreign" | "all"
   /** Country integrations this property has - India: Razorpay/Cashfree,
    *  GSTR-1, Kamra Verify. Off until the pack resolves. */
   integrations: Integrations
@@ -40,6 +45,8 @@ let cache: Locale = {
   id_types: ["Aadhaar", "Passport", "Driving License", "Voter ID", "PAN", "Other"],
   payment_modes: ["Cash", "Card", "UPI", "Bank Transfer"],
   default_nationality: "Indian",
+  adult_age: 18,
+  minor_ids: "foreign",
   integrations: {
     payment_gateways: [],
     tax_return: false,

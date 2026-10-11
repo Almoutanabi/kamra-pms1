@@ -1709,7 +1709,7 @@
         "kamra.api.update_occupants"
        ]
       },
-      "description": "Replace the stay's occupant register.\noccupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]",
+      "description": "Replace the stay's occupant register.\noccupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]\nA child keeps name and age only: no phone, and ID details only where the\ncountry's register needs them (see localization.minor_id_kept).",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"occupants\": \"<occupants>\"\n}",

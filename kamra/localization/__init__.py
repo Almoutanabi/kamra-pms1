@@ -112,7 +112,39 @@ def front_desk_vocabulary(pack) -> dict:
 		"id_types": id_types(pack),
 		"payment_modes": payment_modes(pack),
 		"default_nationality": getattr(pack, "DEFAULT_NATIONALITY", "") or "",
+		"adult_age": adult_age(pack),
+		"minor_ids": minor_ids(pack),
 	}
+
+
+# ── children on the stay register (India DPDP s.9 and alike) ─────────────
+# A minor is recorded with name and age only. ID details are kept only where
+# registration law asks for them: by default for foreign nationals (Form C,
+# TM30 and the like); a pack whose register covers every guest sets
+# MINOR_IDS = "all".
+
+def adult_age(pack) -> int:
+	return int(getattr(pack, "ADULT_AGE", 18))
+
+
+def minor_ids(pack) -> str:
+	return getattr(pack, "MINOR_IDS", "foreign")
+
+
+def is_minor(pack, age) -> bool:
+	try:
+		return age not in (None, "") and int(age) < adult_age(pack)
+	except (TypeError, ValueError):
+		return False
+
+
+def minor_id_kept(pack, nationality: str | None) -> bool:
+	"""May ID details be recorded for a minor of this nationality?"""
+	if minor_ids(pack) == "all":
+		return True
+	home = (getattr(pack, "DEFAULT_NATIONALITY", "") or "").strip().casefold()
+	nat = (nationality or "").strip().casefold()
+	return bool(nat) and nat != home
 
 
 def privacy_terms(pack) -> dict:
@@ -122,6 +154,9 @@ def privacy_terms(pack) -> dict:
 		"privacy_authority": getattr(pack, "PRIVACY_AUTHORITY", None)
 		                     or "your local data protection authority",
 		"guest_report": getattr(pack, "GUEST_REPORT", None),
+		"adult_age": adult_age(pack),
+		# languages a guest may read the notice in besides the page's own
+		"notice_languages": list(getattr(pack, "NOTICE_LANGUAGES", None) or []),
 	}
 
 

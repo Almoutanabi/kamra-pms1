@@ -127,7 +127,13 @@ function OccupantsEditor(props: {
   occupants: Occupant[]
   onSaved: () => void
 }) {
-  const idTypes = useLocale().id_types
+  const loc = useLocale()
+  const idTypes = loc.id_types
+  /** A minor is recorded by name and age; ID only where the register needs it. */
+  const noMinorId = (o: Occupant) =>
+    o.age !== null && o.age < loc.adult_age && loc.minor_ids !== "all" &&
+    (!o.nationality ||
+      o.nationality.trim().toLowerCase() === loc.default_nationality.trim().toLowerCase())
   const [rows, setRows] = useState<Occupant[]>(
     props.occupants.length ? props.occupants : [emptyOccupant()],
   )
@@ -195,6 +201,14 @@ function OccupantsEditor(props: {
               value={o.nationality ?? ""}
               onChange={(e) => set(i, { nationality: e.target.value })}
             />
+            {noMinorId(o) ? (
+              <span
+                className="text-xs text-zinc-400"
+                title="Children's data: the register needs only name and age, so no ID is kept"
+              >
+                Under {loc.adult_age}: name and age only
+              </span>
+            ) : (<>
             <select
               className={editInputCls}
               value={o.id_type ?? ""}
@@ -252,6 +266,7 @@ function OccupantsEditor(props: {
                 save row → ID
               </span>
             )}
+            </>)}
             <button
               className="rounded p-1 text-zinc-400 hover:text-rose-500"
               aria-label="Remove occupant"

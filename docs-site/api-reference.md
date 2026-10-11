@@ -592,6 +592,8 @@ Replace a company's billing rules. rules = [{charge_type, pay_by}].
 
 Replace the stay's occupant register.
 occupants = [{full_name, age, gender, nationality, id_type, id_number, phone}]
+A child keeps name and age only: no phone, and ID details only where the
+country's register needs them (see localization.minor_id_kept).
 
 | Param | Required | Default |
 | --- | --- | --- |

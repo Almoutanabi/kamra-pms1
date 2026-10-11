@@ -8,7 +8,7 @@ create the property selects its *localization pack*, and the pack decides:
 | Money | currency, number format, tax name (GST, VAT, SST, PB1…) and the tax-ID label on invoices |
 | Front desk | the **ID documents** the desk and guest self check-in accept, the **ways to pay** offered at the counter, POS and till |
 | Levies | the name of the per-night room levy (e.g. *Municipality fee*) |
-| Guests | the default nationality, and the data-protection authority named in the privacy notice |
+| Guests | the default nationality, the data-protection authority named in the privacy notice, the languages that notice is offered in (India: Hindi, Kannada, Tamil, Telugu, Malayalam, Marathi, Bengali), and whether a child's ID is kept (by default only for foreign nationals; Saudi Arabia: always, for Shomoos) |
 | Invoices | the invoice title and, where the law requires it, e-invoicing (Saudi Arabia: ZATCA) |
 
 Packs today: **India, Indonesia, Malaysia, Saudi Arabia, Thailand, United

@@ -10,7 +10,12 @@ right thing the default and the lawful thing one click:
   apply_retention    storage limitation (s.8(7)): guests with no stay for
                      Property.guest_retention_months are erased by the daily
                      scheduler. Guests on the blacklist are kept (security is
-                     the stated purpose) until the flag is lifted.
+                     the stated purpose) until                      the flag is lifted.
+  apply_message_retention
+                     storage limitation for conversations: WhatsApp message
+                     text and AI assistant chats older than
+                     Property.message_retention_days are cleared nightly;
+                     who, when and delivery status stay for audit.
 
 What is deliberately kept after erasure: amounts, dates, rooms and invoice
 numbers (GST law needs them), an ID masked to its last 4 digits in the stay
@@ -19,7 +24,7 @@ register, and one audit line saying the erasure happened (without the name).
 
 
 import frappe
-from frappe.utils import add_months, cint, getdate, nowdate
+from frappe.utils import add_days, add_months, cint, getdate, now_datetime, nowdate
 
 from kamra.authz import require_roles
 
@@ -176,3 +181,45 @@ def apply_retention(limit: int = 500) -> dict:
 			erased += 1
 			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduler: one guest's erasure must not roll back another's
 	return {"erased": erased}
+
+
+CLEARED_CHAT_TITLE = "Chat cleared (retention period ended)"
+
+
+def apply_message_retention() -> dict:
+	"""Daily: clear WhatsApp message text and AI assistant chats older than
+	their property's message_retention_days. Rows stay, so delivery status,
+	direction, template and timestamps remain for audit. A chat with no
+	property follows the shortest period set on any property."""
+	days = {p.name: cint(p.message_retention_days)
+	        for p in frappe.get_all("Property", fields=["name", "message_retention_days"])}
+	set_days = [d for d in days.values() if d > 0]
+	if not set_days:
+		return {"messages": 0, "chats": 0}
+	now = now_datetime()
+	messages = chats = 0
+	for prop, d in days.items():
+		if d <= 0:
+			continue
+		cutoff = add_days(now, -d)
+		names = frappe.get_all("WhatsApp Message", pluck="name", filters={
+			"property": prop, "creation": ("<", cutoff), "content": ("not in", ("", "[erased]"))})
+		for name in names:
+			frappe.db.set_value("WhatsApp Message", name, "content", "", update_modified=False)
+		messages += len(names)
+		chats += _clear_chats({"property": prop, "modified": ("<", cutoff)})
+	chats += _clear_chats({"property": ("is", "not set"),
+	                       "modified": ("<", add_days(now, -min(set_days)))})
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduler: persist the nightly clean-up
+	return {"messages": messages, "chats": chats}
+
+
+def _clear_chats(filters: dict) -> int:
+	names = frappe.get_all("Copilot Conversation", pluck="name",
+	                       filters={**filters, "messages": ("!=", "[]")})
+	for name in names:
+		# modified is the last activity; keep it so the chat is not
+		# picked up again as fresh
+		frappe.db.set_value("Copilot Conversation", name,
+		                    {"messages": "[]", "title": CLEARED_CHAT_TITLE}, update_modified=False)
+	return len(names)
