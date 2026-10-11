@@ -70,6 +70,7 @@
   "brand_accent",
   "id_retention",
   "guest_retention_months",
+  "message_retention_days",
   "privacy_contact",
   "sell_message",
   "free_cancel_days",
@@ -471,6 +472,14 @@
    "description": "Guests with no stay for this long are erased automatically (bills stay for the books). 0 keeps them indefinitely. Blacklisted guests are kept."
   },
   {
+   "fieldname": "message_retention_days",
+   "fieldtype": "Int",
+   "label": "Clear message text after (days)",
+   "default": "90",
+   "non_negative": 1,
+   "description": "WhatsApp message text and AI assistant chats older than this are cleared every night. Who, when and delivery status stay for audit. 0 keeps them."
+  },
+  {
    "fieldname": "privacy_contact",
    "fieldtype": "Data",
    "label": "Privacy contact (Grievance Officer)",
@@ -588,7 +597,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-28 17:00:00.000000",
+ "modified": "2026-10-11 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kamra",
  "name": "Property",

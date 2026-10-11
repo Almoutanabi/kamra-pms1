@@ -71,6 +71,10 @@ deposits, refunds (reason required, capped at what was collected).
 Under Verify & Discard retention, every scan and full ID number is
 masked and deleted at checkout.
 
+**Children** (under 18) are recorded by name and age only: no phone, and
+no ID unless the register needs it. In India that means foreign nationals
+(Form C); in Saudi Arabia, Shomoos registers every guest, so IDs stay.
+
 ### Walk-ins — one screen
 
 For a guest standing at the counter, use **Walk-in** (top bar, or the

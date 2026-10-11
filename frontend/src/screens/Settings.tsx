@@ -374,6 +374,12 @@ const STAY_TAX_SPECS: Spec[] = [
     hint: "guests with no stay for this long are erased automatically; bills stay for the books. 0 keeps them",
   },
   {
+    field: "message_retention_days",
+    label: "Clear message text after (days)",
+    type: "number",
+    hint: "WhatsApp message text and AI assistant chats older than this are cleared nightly; who, when and delivery status stay. 0 keeps them",
+  },
+  {
     field: "privacy_contact",
     label: "Privacy contact (Grievance Officer)",
     hint: "email or phone guests use for access, correction or erasure requests; shown on booking and check-in pages",

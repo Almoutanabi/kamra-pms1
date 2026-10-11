@@ -19,6 +19,9 @@ DEFAULT_NATIONALITY = "Indian"
 # named in the guest privacy notice
 PRIVACY_AUTHORITY = "the Data Protection Board of India"
 GUEST_REPORT = "for foreign nationals, Form C to the immigration authorities"
+# DPDP Rules: a guest may ask for the notice in English or any Eighth
+# Schedule language; each code needs frontend/src/i18n/notice/<code>.json
+NOTICE_LANGUAGES = ["hi", "kn", "ta", "te", "ml", "mr", "bn"]
 # Form C / the guest register accept any of these for Indian nationals
 ID_TYPES = ["Aadhaar", "Passport", "Driving License", "Voter ID", "PAN", "Other"]
 PAYMENT_MODES = ["Cash", "Card", "UPI", "Bank Transfer"]

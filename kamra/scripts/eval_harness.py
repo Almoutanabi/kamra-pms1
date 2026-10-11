@@ -3437,6 +3437,92 @@ def t82():
 	assert days.get("Access Log", 0) >= 365 and days.get("Activity Log", 0) >= 365, days
 
 
+@check("privacy: message retention clears old WhatsApp text and chats, keeps the rows")
+def t82b():
+	from frappe.utils import add_days, now_datetime
+
+	from kamra import privacy
+
+	def msg(content, age_days):
+		name = frappe.get_doc({"doctype": "WhatsApp Message", "property": P, "direction": "Outbound",
+		                       "status": "Sent", "content": content}).insert(ignore_permissions=True).name
+		frappe.db.sql("update `tabWhatsApp Message` set creation=%s where name=%s",
+		              (add_days(now_datetime(), -age_days), name))
+		return name
+
+	def chat(age_days):
+		name = frappe.get_doc({"doctype": "Copilot Conversation", "property": P, "title": "Evalchat Ravi",
+		                       "messages": '[{"role": "user", "content": "Ravi 98450 12345"}]'}
+		                      ).insert(ignore_permissions=True).name
+		frappe.db.sql("update `tabCopilot Conversation` set modified=%s where name=%s",
+		              (add_days(now_datetime(), -age_days), name))
+		return name
+
+	old, fresh = msg("Your room 204 is ready, Ravi", 120), msg("See you soon", 10)
+	old_chat, fresh_chat = chat(120), chat(10)
+	frappe.db.set_value("Property", P, "message_retention_days", 0)
+	privacy.apply_message_retention()
+	assert frappe.db.get_value("WhatsApp Message", old, "content"), "retention off still cleared"
+
+	frappe.db.set_value("Property", P, "message_retention_days", 90)
+	privacy.apply_message_retention()
+	row = frappe.db.get_value("WhatsApp Message", old, ["content", "status", "direction"], as_dict=True)
+	assert row and not row.content and row.status == "Sent" and row.direction == "Outbound", row
+	assert frappe.db.get_value("WhatsApp Message", fresh, "content") == "See you soon", "fresh message cleared"
+	c = frappe.db.get_value("Copilot Conversation", old_chat, ["messages", "title"], as_dict=True)
+	assert c.messages == "[]" and c.title == privacy.CLEARED_CHAT_TITLE, c
+	assert "Ravi" in frappe.db.get_value("Copilot Conversation", fresh_chat, "messages"), "fresh chat cleared"
+	frappe.db.set_value("Property", P, "message_retention_days", 0)
+
+	# an upgraded site keeps its history until the hotel chooses a period
+	from kamra.patches.v38 import keep_existing_messages
+	frappe.db.set_value("Property", P, "message_retention_days", 90)
+	keep_existing_messages.execute()
+	assert not frappe.db.get_value("Property", P, "message_retention_days")
+
+
+@check("privacy: a child on the stay register keeps name and age only, unless the register needs the ID")
+def t82c():
+	from frappe.utils import add_days
+
+	from kamra import api
+	from kamra import localization as loc
+
+	def refused(fn):
+		try:
+			fn()
+		except frappe.ValidationError:
+			frappe.clear_messages()
+			return True
+		return False
+
+	g = _guest("Evalfam Parent", "+91 70000 08301")
+	r = _res(g, add_days(nowdate(), 40), add_days(nowdate(), 42)).name
+	out = api.update_occupants(r, [
+		{"full_name": "Evalfam Parent", "age": 38, "nationality": "Indian",
+		 "id_type": "Aadhaar", "id_number": "987654321012", "phone": "+917000008301"},
+		{"full_name": "Evalfam Child", "age": 9, "nationality": "Indian",
+		 "id_type": "Aadhaar", "id_number": "123412341234", "phone": "+917000008302"},
+		{"full_name": "Evalfam Visitor", "age": 9, "nationality": "French",
+		 "id_type": "Passport", "id_number": "19FR12345", "phone": "+33600000000"},
+	])
+	rows = {o["full_name"]: o for o in out["rows"]}
+	adult, child, visitor = rows["Evalfam Parent"], rows["Evalfam Child"], rows["Evalfam Visitor"]
+	assert adult["id_number"] == "987654321012" and adult["phone"], adult
+	assert child["age"] == 9 and not (child["id_type"] or child["id_number"] or child["phone"]), child
+	# Form C: a foreign child's passport is part of the register; a phone is not
+	assert visitor["id_number"] == "19FR12345" and not visitor["phone"], visitor
+	assert out["minors_trimmed"] == 2, out
+	assert refused(lambda: api.upload_occupant_id(r, child["row"], "data:image/jpeg;base64,AAAA"))
+
+	india, saudi = loc.pack_for(P), loc.pack_for_country("Saudi Arabia")
+	assert loc.minor_id_kept(saudi, "Saudi") and not loc.minor_id_kept(india, "Indian")
+	assert not loc.is_minor(india, None) and not loc.is_minor(india, "abc") and loc.is_minor(india, 17)
+	terms = loc.privacy_terms(india)
+	assert terms["adult_age"] == 18 and "hi" in terms["notice_languages"], terms
+	assert loc.privacy_terms(loc.pack_for_country("Thailand"))["notice_languages"] == []
+
+
 @check("public booking: a guest books through the governed agent the install created")
 def t83():
 	from kamra import public_api
@@ -3635,7 +3721,7 @@ def execute():
 		           t36, t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t83, t84, t85, t86):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
