@@ -37,16 +37,6 @@ upgrade-breaking changes (removed doctypes / API contracts).
 * **banquet:** Phase 1 enterprise ops (issue #67) — email/WhatsApp send
   quotation, desk-led guest response, department checklists + notify on
   Confirm (Sales/Finance/HK/F&B), and quote no-response chase reminders
-
-### Bug Fixes
-
-* **pricing:** a saved booking keeps its voucher when the voucher later
-  expires, is switched off or reaches its use limit; limits are checked
-  only when a voucher is first applied
-  ([#142](https://github.com/Kamra-PMS/kamra-pms/issues/142),
-  [#143](https://github.com/Kamra-PMS/kamra-pms/pull/143)) — thanks
-  [@ShaikhAmerPasha](https://github.com/ShaikhAmerPasha)
-
 ## [2.6.8](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.7...v2.6.8) (2026-10-05)
 
 
