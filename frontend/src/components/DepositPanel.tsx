@@ -187,10 +187,12 @@ export default function DepositPanel(props: {
           <Button variant="outline" onClick={() => open("record")}>
             {t("Record payment")}
           </Button>
-          <Button variant="outline" onClick={() => open("link")}>
-            <Link2 className="size-4" aria-hidden />
-            {t("Send payment link")}
-          </Button>
+          {loc.integrations.payment_gateways.length > 0 && (
+            <Button variant="outline" onClick={() => open("link")}>
+              <Link2 className="size-4" aria-hidden />
+              {t("Send payment link")}
+            </Button>
+          )}
         </div>
       )}
 

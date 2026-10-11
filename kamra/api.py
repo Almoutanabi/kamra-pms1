@@ -1923,22 +1923,18 @@ def run_night_audit(property: str, business_date: str | None = None):
 @require_roles()
 def gstr1_rows(from_date: str, to_date: str, property: str | None = None):
 	"""Invoice-level rows for a GSTR-1 style export (v0: B2C summary).
-	Filter by property - each GSTIN files its own return."""
-	filters = {
-		"status": "Closed",
-		"closed_on": ("between", [from_date, to_date]),
-	}
-	scope = property or _property_scope()
-	if scope:
-		filters["property"] = scope
-	folios = frappe.get_all(
-		"Folio",
-		filters=filters,
-		fields=["name", "invoice_number", "guest_name", "closed_on",
-		        "charges_total", "tax_total", "grand_total"],
-		order_by="closed_on asc",
-	)
-	return folios
+	Filter by property - each GSTIN files its own return. The return is the
+	India pack's: a property elsewhere is refused, and without a property
+	only the user's India properties are included."""
+	from kamra import localization as loc
+	if property:
+		return loc.tax_return_rows(loc.pack_for(property), property,
+		                           from_date, to_date)
+	scope = _property_scope()
+	names = scope[1] if scope else frappe.get_all("Property", pluck="name")
+	india = loc.pack_for_country("India")
+	return loc.tax_return_rows(india, [p for p in names if loc.pack_for(p) is india],
+	                           from_date, to_date)
 
 
 @frappe.whitelist()
@@ -4658,11 +4654,34 @@ def linked_records(doctype: str, name: str):
 def property_locale(property: str):
 	"""Currency, number locale and tax vocabulary for this property, from its
 	localization pack. Drives the frontend's money formatting and tax dropdowns
-	so no screen hardcodes ₹ or GST %."""
-	from kamra.localization import front_desk_vocabulary, pack_for
+	so no screen hardcodes ₹ or GST %. `integrations` says which country
+	integrations (gateways, tax return, ID checks) this property has."""
+	from kamra.localization import front_desk_vocabulary, integrations, pack_for
 	prop = frappe.get_cached_doc("Property", property)
 	pack = pack_for(property)
-	return {**pack.locale(prop), **front_desk_vocabulary(pack)}
+	return {**pack.locale(prop), **front_desk_vocabulary(pack),
+	        "integrations": integrations(pack)}
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", "Finance")
+def verify_tax_id(property: str, tax_id: str, business_name: str = ""):
+	"""Check a buyer's tax ID before the invoice goes out, where the
+	property's country pack offers it (India: GSTIN via Kamra Verify)."""
+	from kamra import localization as loc
+	return loc.verify_tax_id(loc.pack_for(property), property, tax_id,
+	                         business_name)
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", scope={"guest": "Guest"})
+def verify_guest_id(property: str, guest: str, id_type: str, consent: int = 0):
+	"""Read the guest's ID document on file into the profile, where the
+	property's country pack offers it (India: Aadhaar and others via Kamra
+	Verify). consent: the desk confirms the guest was told."""
+	from kamra import localization as loc
+	return loc.verify_guest_id(loc.pack_for(property), property, guest,
+	                           id_type, consent)
 
 
 @frappe.whitelist()

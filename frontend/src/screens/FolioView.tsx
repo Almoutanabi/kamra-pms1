@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react"
 import { ArrowLeft, ArrowRightLeft, Printer, Trash2, X } from "lucide-react"
 import { Link, useNavigate, useParams } from "react-router-dom"
-import { call } from "../lib/api"
+import { call, getCurrentProperty } from "../lib/api"
 import EditableNationality from "../components/EditableNationality"
 import LinkedRecords from "../components/LinkedRecords"
 import { loadLocale, taxRates } from "../lib/money"
@@ -191,6 +191,42 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   )
 }
 
+/** Kamra Verify: check the bill-to tax ID before the invoice goes out.
+ *  Offered where the country pack has it (India: GSTIN); paid per check
+ *  from the Kamra Connect wallet. */
+function VerifyTaxId({ taxId, name }: { taxId: string; name: string }) {
+  const { t } = useT()
+  const [busy, setBusy] = useState(false)
+  const [res, setRes] = useState<{ ok: boolean; text: string } | null>(null)
+  return (
+    <span className="print:hidden">
+      {" "}
+      <button type="button" disabled={busy}
+        className="text-xs font-medium text-brand-700 hover:underline disabled:opacity-50"
+        title={t("Kamra Verify checks this tax ID with the tax network. Charged per check to your Kamra Connect wallet.")}
+        onClick={async () => {
+          setBusy(true); setRes(null)
+          try {
+            const r = await call<{ valid: boolean; legal_name: string; status: string; charged: number }>(
+              "kamra.api.verify_tax_id",
+              { property: getCurrentProperty(), tax_id: taxId, business_name: name })
+            setRes({
+              ok: r.valid && (r.status || "").toLowerCase() === "active",
+              text: `${r.valid ? r.legal_name || t("Valid") : t("Not a valid tax ID")}${r.status ? ` · ${r.status}` : ""} · ${cur()}${r.charged}`,
+            })
+          } catch (e) {
+            setRes({ ok: false, text: serverError(e) })
+          } finally {
+            setBusy(false)
+          }
+        }}>
+        {busy ? t("Checking…") : t("Verify")}
+      </button>
+      {res && <span className={`ml-1 text-xs ${res.ok ? "text-emerald-700" : "text-red-700"}`}>{res.text}</span>}
+    </span>
+  )
+}
+
 export default function FolioView() {
   const { t } = useT()
   const { name } = useParams()
@@ -344,7 +380,7 @@ export default function FolioView() {
               })}
             </div>
           )}
-          {open && folio.balance > 0 && (
+          {open && folio.balance > 0 && loc.integrations.payment_gateways.length > 0 && (
             <Button
               variant="outline"
               disabled={busy}
@@ -631,6 +667,9 @@ export default function FolioView() {
               <span className="font-medium">{data.bill_to.name}</span>
               {data.bill_to.gstin && (
                 <span className="text-zinc-500"> · GSTIN {data.bill_to.gstin}</span>
+              )}
+              {data.bill_to.gstin && loc.integrations.verify_tax_id && (
+                <VerifyTaxId taxId={data.bill_to.gstin} name={data.bill_to.name} />
               )}
             </div>
           )}

@@ -34,6 +34,49 @@ currency you enter.
 | Malaysia | MyKad, Passport, Driving License | Cash, Card, Bank Transfer |
 | Other | Passport, National ID, Driving License | Cash, Card, Bank Transfer |
 
+## Integrations each pack brings
+
+Some integrations only make sense in one country, so they come with that
+country's pack. A property in another country does not see them: the
+buttons are hidden and the API refuses the call.
+
+| Country | Online payment links | Tax return export | ID and tax-ID checks | Statutory reporting |
+| --- | --- | --- | --- | --- |
+| India | Razorpay, Cashfree | GSTR-1 (`gstr1_rows`) | Kamra Verify: GSTIN lookup, reading Aadhaar / Passport / Driving License / Voter ID | Form C for foreign nationals (named in the privacy notice) |
+| Saudi Arabia | — | — | — | ZATCA e-invoicing (below); Shomoos guest registration (named in the privacy notice) |
+| Indonesia, Malaysia, Thailand, UAE, Other | — | — | — | — |
+
+### India: payment links
+
+*Settings → Payments*. Pick **Razorpay** or **Cashfree** and enter that
+gateway's keys from your own account, so money is paid straight to the
+property. *Test mode* creates links that charge nothing, for training.
+
+- **Razorpay**: add a webhook for the `payment_link.paid` event pointing to
+  `https://<your-site>/api/method/kamra.payments.razorpay_webhook`, and enter
+  the same webhook secret in Kamra.
+- **Cashfree**: nothing to set up in Cashfree. Every link tells Cashfree to
+  report back to `https://<your-site>/api/method/kamra.payments.cashfree_webhook`,
+  signed with your secret key. The guest needs a mobile number on their
+  profile to receive a Cashfree link.
+
+Every payment confirmation is signature-checked, in test mode too. A paid
+link posts to the bill once, however often the gateway retries.
+
+### India: Kamra Verify
+
+*Settings → Kamra Verify*: link the install with a Kamra Connect key. Then:
+
+- on a bill addressed to a company, **Verify** next to the GSTIN checks it
+  is active and whose it is;
+- on the registration card, once the guest's ID is captured, **Read details**
+  fills the profile from the ID. The desk ticks that the guest was told their
+  ID is read by Kamra's verification partner first. An Aadhaar number is
+  masked to its last 4 digits before it reaches Kamra.
+
+Each successful check is charged to the Kamra Connect wallet. A failed check
+costs nothing.
+
 ## Room levy (municipality fee, city tax)
 
 *Settings → Stay, tax & privacy*: **Room levy name**, **Room levy %** and
