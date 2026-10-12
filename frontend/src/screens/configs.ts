@@ -56,6 +56,9 @@ export const roomTypesConfig: ScreenConfig = {
     { field: "base_occupancy", label: "Adults included in base price", type: "int" },
     { field: "single_occupancy_price", label: "Single occupancy price", type: "currency", dependsOn: (d) => d.room_category !== "Villa" },
     { field: "extra_adult_price", label: "Extra adult / night", type: "currency" },
+    { field: "small_group_max_adults", label: "Small-group threshold (adults)", type: "int", hint: "Below this many adults, price per person instead of the house rate. Blank or 0 = off" },
+    { field: "small_group_price_per_adult", label: "Small-group price / adult", type: "currency", dependsOn: (d) => Number(d.small_group_max_adults) > 0 },
+    { field: "small_group_days", label: "Small-group days (e.g. sun, mon, tue, wed, thu)", type: "data", hint: "Blank = every day", dependsOn: (d) => Number(d.small_group_max_adults) > 0 },
     { field: "child_price", label: "Child / night", type: "currency" },
     { field: "adults_capacity", label: "Max adults", type: "int" },
     { field: "children_capacity", label: "Max children", type: "int" },
@@ -434,11 +437,13 @@ export const guardrailsConfig: ScreenConfig = {
     { field: "room_type", label: "Room type (blank = all)" },
     { field: "floor_price", label: `Floor ${cur()}` },
     { field: "ceiling_price", label: `Ceiling ${cur()}` },
+    { field: "days_of_week", label: "Days" },
   ],
   form: [
     { field: "room_type", label: "Room type (blank = all)", type: "link", linkDoctype: "Room Type" },
     { field: "floor_price", label: "Floor price / night", type: "currency", required: true },
     { field: "ceiling_price", label: "Ceiling price / night", type: "currency", required: true },
+    { field: "days_of_week", label: "Days of week (e.g. fri, sat)", type: "data", hint: "Blank = every day. Lets a weekend floor sit above the midweek one" },
     { field: "disabled", label: "Disabled", type: "check" },
   ],
 }

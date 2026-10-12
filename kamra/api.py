@@ -9,7 +9,7 @@ import math
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, get_datetime, now_datetime, nowdate
+from frappe.utils import add_days, get_datetime, getdate, now_datetime, nowdate
 
 from kamra.authz import require_it_admin, require_roles
 
@@ -117,6 +117,58 @@ def upload_room_image():
 	return {"file_url": saved.file_url}
 
 
+def _assert_within_guardrails(guardrails, room_type, rate: float,
+                              start_date, end_date) -> list:
+	"""Refuse a rate that breaks the owner's rails on any day in the range,
+	and return the rails that were actually applied.
+
+	Rails can be scoped to days of the week, so a property can hold a hard
+	weekend floor while still allowing a midweek discount. The most specific
+	rail wins for each day: room-type + days, then room-type, then
+	property-wide + days, then property-wide.
+	"""
+	applied: list = []
+	if not guardrails:
+		return applied
+	from frappe.utils import add_days, date_diff
+
+	from kamra.pricing import days_cover
+
+	def _rank(g, day_abbr):
+		if not days_cover(g.days_of_week, day_abbr):
+			return None
+		return (1 if g.room_type == room_type else 0,
+		        1 if g.days_of_week else 0)
+
+	span = min(int(date_diff(end_date, start_date)) + 1, 92)
+	checked: set = set()
+	for i in range(span):
+		day = add_days(start_date, i)
+		day_abbr = getdate(day).strftime("%a").lower()
+		if day_abbr in checked:
+			continue  # the rails repeat weekly; one check per weekday is enough
+		checked.add(day_abbr)
+		ranked = [(r, g) for g in guardrails
+		          if (r := _rank(g, day_abbr)) is not None]
+		if not ranked:
+			continue
+		rail = max(ranked, key=lambda x: x[0])[1]
+		if rail.name not in applied:
+			applied.append(rail.name)
+		scope = f" on {day_abbr.title()}" if rail.days_of_week else ""
+		if rate < float(rail.floor_price):
+			frappe.throw(
+				f"Blocked by guardrail {rail.name}: \u20b9{rate:,.0f} is below "
+				f"the floor of \u20b9{float(rail.floor_price):,.0f}{scope}."
+			)
+		if rate > float(rail.ceiling_price):
+			frappe.throw(
+				f"Blocked by guardrail {rail.name}: \u20b9{rate:,.0f} is above "
+				f"the ceiling of \u20b9{float(rail.ceiling_price):,.0f}{scope}."
+			)
+	return applied
+
+
 @frappe.whitelist()
 @require_roles("Revenue Manager", "Kamra Agent")
 def set_room_rate(property: str, room_type: str, start_date: str,
@@ -134,22 +186,11 @@ def set_room_rate(property: str, room_type: str, start_date: str,
 		"Rate Guardrail",
 		filters={"property": property, "disabled": 0,
 		         "room_type": ("in", [room_type, "", None])},
-		fields=["name", "room_type", "floor_price", "ceiling_price"],
+		fields=["name", "room_type", "floor_price", "ceiling_price",
+		        "days_of_week"],
 	)
-	# most specific rail wins (room-type-specific over property-wide)
-	rail = next((g for g in guardrails if g.room_type == room_type),
-	            guardrails[0] if guardrails else None)
-	if rail:
-		if rate < float(rail.floor_price):
-			frappe.throw(
-				f"Blocked by guardrail {rail.name}: ₹{rate:,.0f} is below "
-				f"the floor of ₹{float(rail.floor_price):,.0f}."
-			)
-		if rate > float(rail.ceiling_price):
-			frappe.throw(
-				f"Blocked by guardrail {rail.name}: ₹{rate:,.0f} is above "
-				f"the ceiling of ₹{float(rail.ceiling_price):,.0f}."
-			)
+	rails_applied = _assert_within_guardrails(guardrails, room_type, rate,
+	                                          start_date, end_date)
 
 	# the hurdle is the DYNAMIC floor: when demand tiers are active for any
 	# date in range, a manual rate can't undercut the minimum sell rate
@@ -194,7 +235,8 @@ def set_room_rate(property: str, room_type: str, start_date: str,
 	               f"for {start_date}→{end_date}"))
 	return {
 		"season": season.name, "rate": rate,
-		"guardrail_checked": rail.name if rail else None,
+		"guardrail_checked": rails_applied[0] if rails_applied else None,
+		"guardrails_checked": rails_applied,
 	}
 
 
@@ -3218,7 +3260,14 @@ def availability_calendar(property: str, start_date: str | None = None, days: in
 	rows = []
 	for rt in room_types:
 		rt_doc = frappe.get_doc("Room Type", rt.name)
-		base = occupancy_rate(rt_doc, 2, 0)
+
+		def _display_rate(date, rt_doc=rt_doc, rt_name=rt.name):
+			"""The 2-adult shelf rate for one night. Priced per night rather
+			than once for the range, so a day-scoped rule (small-group
+			pricing, a weekend season) shows on the right columns."""
+			return float(season_adjust(
+				property, date, occupancy_rate(rt_doc, 2, 0, date), rt_name))
+
 		if has_active_sius(property, rt.name):
 			caps = capacity_by_night(property, rt.name, start, end)
 			total = max(caps) if caps else 0
@@ -3227,8 +3276,7 @@ def availability_calendar(property: str, start_date: str | None = None, days: in
 				cells.append({
 					"date": str(date),
 					"available": caps[i] if i < len(caps) else 0,
-					"rate": float(season_adjust(property, date, base,
-					                            rt.name)),
+					"rate": _display_rate(date),
 				})
 		else:
 			total = frappe.db.count(
@@ -3255,8 +3303,7 @@ def availability_calendar(property: str, start_date: str | None = None, days: in
 				cells.append({
 					"date": str(date),
 					"available": max(0, total - taken),
-					"rate": float(season_adjust(property, date, base,
-					                            rt.name)),
+					"rate": _display_rate(date),
 				})
 		rows.append({
 			"room_type": rt.name,
