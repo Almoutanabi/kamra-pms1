@@ -11,6 +11,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { BookingDialog } from "./components/BookingDialog"
 import { CommandPalette } from "./components/CommandPalette"
 import HelpPanel from "./components/HelpPanel"
+import UpdateNag from "./components/UpdateNag"
 import { Button } from "./components/ui/button"
 import {
   appForPath,
@@ -298,6 +299,7 @@ export default function AppShell() {
           </a>
         </div>
       )}
+      {!kiosk && !demoMode && <UpdateNag />}
       <div className="flex min-h-0 flex-1">
       {!kiosk && (
       <aside className="hidden w-52 shrink-0 border-r border-zinc-200 bg-white px-3 py-5 sm:sticky sm:top-0 sm:block sm:h-screen sm:overflow-y-auto">

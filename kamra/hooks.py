@@ -55,6 +55,8 @@ scheduler_events = {
 		# 04:45 - drop old kamrapms.com Hosting Enquiry leads (default 24 months;
 		# Won / converted stays; site_config hosting_enquiry_retention_months)
 		"45 4 * * *": ["kamra.hosting_enquiry_retention.purge_expired_hosting_enquiries"],
+		# 06:00 - warm GitHub latest-release cache for the in-app update nag
+		"0 6 * * *": ["kamra.health.poll_github_releases"],
 	},
 }
 
