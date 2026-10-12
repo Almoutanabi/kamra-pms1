@@ -8,10 +8,10 @@ desk, or disclosed a security problem responsibly.
 
 | Contributor | What they built |
 | --- | --- |
-| [@Kruthikagowda12](https://github.com/Kruthikagowda12) | AioSell channel-manager adapter and fixes (#40, #46, #52), housekeeping proof media and room swap / upgrade (#74), phone validation (#69), season scoping (#80), property / booking flow (#22) |
+| [@Kruthikagowda12](https://github.com/Kruthikagowda12) | AioSell channel-manager adapter and fixes (#40, #46, #52), housekeeping proof media and room swap / upgrade (#74), phone validation (#69), season scoping (#80), property / booking flow (#22), per-head small-group rates and weekend / weekday guardrails (#162) |
 | [@Mohammed-Muneef](https://github.com/Mohammed-Muneef) | Laundry, kitchen display v2, inventory & recipes, menu import, ID-document hardening |
 | [@faresalslahi-collab](https://github.com/faresalslahi-collab) | Booking guest and room summary (#83) |
-| [@ShaikhAmerPasha](https://github.com/ShaikhAmerPasha) | Saved bookings keep their voucher after it expires or hits its limit (reported in #142, fixed in #143); folio charges refuse zero or minus amounts and tax rates outside the country's list (reported in #146, fixed in #147) |
+| [@ShaikhAmerPasha](https://github.com/ShaikhAmerPasha) | Saved bookings keep their voucher after it expires or hits its limit (reported in #142, fixed in #143); folio charges refuse zero or minus amounts and tax rates outside the country's list (reported in #146, fixed in #147); the bill screen's Void button asks for the reason the ledger needs (reported in #160, fixed in #161) |
 
 ## Issues from the front desk
 

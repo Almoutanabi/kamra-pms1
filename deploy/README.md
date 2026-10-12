@@ -24,7 +24,7 @@ file (`/swapfile-kamra`) so the build doesn't run out of memory. Then open
 | Command | What it does |
 | --- | --- |
 | `install.sh` | Install. Safe to re-run: keeps the DB password in `kamra.env` and skips `new-site` if a site exists. |
-| `/opt/kamra/install.sh update` | Rebuild the image from `apps.json` (fresh `CACHE_BUST`, so new Kamra code is fetched), recreate containers, `bench --site all migrate`. `KAMRA_BRANCH=v2.6.4` switches branch/tag. |
+| `/opt/kamra/install.sh update` | Rebuild the image from `apps.json` (fresh `CACHE_BUST`, so new Kamra code is fetched), recreate containers, `bench --site all migrate`. `KAMRA_BRANCH=vX.Y.Z` pins a release tag. |
 | `install.sh build` | Build the image only — used by Packer to bake 1-Click snapshots so first boot skips the build. |
 
 Hit `unauthorized` on GHCR? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) and

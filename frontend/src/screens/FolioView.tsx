@@ -242,6 +242,7 @@ export default function FolioView() {
   })
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [voidFor, setVoidFor] = useState<string | null>(null)
+  const [voidReason, setVoidReason] = useState("")
   const [partVal, setPartVal] = useState("")
   // ways to pay follow the country pack; Payment Link is the gateway, anywhere
   const loc = useLocale()
@@ -957,14 +958,25 @@ export default function FolioView() {
                               {c.charge_type !== "Allowance" &&
                                 (voidFor === c.name ? (
                                   <span className="mr-1.5 inline-flex items-center gap-1">
+                                    <input
+                                      className={`${inputCls} w-52`}
+                                      placeholder={t("Reason (required - goes on the record)")}
+                                      value={voidReason}
+                                      onChange={(e) => setVoidReason(e.target.value)}
+                                    />
                                     <button
-                                      className="rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100"
-                                      disabled={busy}
+                                      className="rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                                      disabled={busy || !voidReason.trim()}
                                       onClick={() =>
                                         act(async () => {
                                           await call("kamra.api.void_folio_charge",
-                                            withPin({ folio: folio.name, charge_row: c.name }))
+                                            withPin({
+                                              folio: folio.name,
+                                              charge_row: c.name,
+                                              reason: voidReason.trim(),
+                                            }))
                                           setVoidFor(null)
+                                          setVoidReason("")
                                         })
                                       }
                                     >
@@ -972,7 +984,10 @@ export default function FolioView() {
                                     </button>
                                     <button
                                       className="text-xs text-zinc-400 hover:text-zinc-700"
-                                      onClick={() => setVoidFor(null)}
+                                      onClick={() => {
+                                        setVoidFor(null)
+                                        setVoidReason("")
+                                      }}
                                     >
                                       {t("Cancel")}
                                     </button>
@@ -981,7 +996,10 @@ export default function FolioView() {
                                   <button
                                     aria-label={t("Void this charge")}
                                     className="mr-1.5 inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-500 hover:border-rose-400 hover:text-rose-700"
-                                    onClick={() => setVoidFor(c.name)}
+                                    onClick={() => {
+                                      setVoidFor(c.name)
+                                      setVoidReason("")
+                                    }}
                                   >
                                     <Trash2 className="size-3" aria-hidden />
                                     {t("Void")}
