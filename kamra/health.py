@@ -25,7 +25,11 @@ GITHUB_REPO = "Kamra-PMS/kamra-pms"
 GITHUB_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_RELEASES = f"https://github.com/{GITHUB_REPO}/releases"
 CACHE_KEY = "kamra:github_latest_release"
-CACHE_TTL = 3600  # 1 hour — polite to GitHub's unauthenticated rate limit
+# Outlives the twice-daily scheduler poll, so admins never wait on GitHub.
+CACHE_TTL = 13 * 3600
+# A failed fetch is cached too: an offline site must not hold a worker for
+# the full timeout on every admin page load.
+FAIL_TTL = 3600
 # Per-user dismiss / snooze for the in-app update nag (DefaultValue).
 NAG_DISMISS_KEY = "kamra_update_nag_dismiss"
 
@@ -52,7 +56,7 @@ def _cmp_semver(a: str, b: str) -> int | None:
 
 def _fetch_github_latest() -> dict:
 	cached = frappe.cache.get_value(CACHE_KEY)
-	if isinstance(cached, dict) and cached.get("tag"):
+	if isinstance(cached, dict):
 		return cached
 
 	req = Request(
@@ -67,7 +71,7 @@ def _fetch_github_latest() -> dict:
 		with urlopen(req, timeout=8) as resp:  # nosemgrep: python.lang.security - public GitHub API over HTTPS
 			payload = json.loads(resp.read().decode("utf-8"))
 	except (HTTPError, URLError, TimeoutError, ValueError, OSError) as e:
-		return {
+		failed = {
 			"ok": False,
 			"error": str(e)[:200],
 			"tag": None,
@@ -75,6 +79,8 @@ def _fetch_github_latest() -> dict:
 			"url": GITHUB_RELEASES,
 			"published_at": None,
 		}
+		frappe.cache.set_value(CACHE_KEY, failed, expires_in_sec=FAIL_TTL)
+		return failed
 
 	tag = (payload.get("tag_name") or "").strip()
 	out = {
