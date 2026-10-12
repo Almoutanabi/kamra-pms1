@@ -41,9 +41,26 @@ upgrade-breaking changes (removed doctypes / API contracts).
 ## [2.6.12](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.11...v2.6.12) (2026-10-12)
 
 
+### Features
+
+* **pricing:** per-head small-group rates and day-scoped guardrails ([#162](https://github.com/Kamra-PMS/kamra-pms/pull/162)) ([a9b5676](https://github.com/Kamra-PMS/kamra-pms/commit/a9b5676)). A whole-place let can charge a small midweek party per head instead of the full house rate, and a rate guardrail can hold a firmer floor at the weekend than midweek.
+* in-app update banner when a newer GitHub release is out ([#157](https://github.com/Kamra-PMS/kamra-pms/pull/157)) ([4f7c1b0](https://github.com/Kamra-PMS/kamra-pms/commit/4f7c1b0)). Admins only, with "Remind me later" and dismiss; it never upgrades anything by itself.
+
+
 ### Bug Fixes
 
-* **billing:** ask for a reason when voiding a charge ([#161](https://github.com/Kamra-PMS/kamra-pms/issues/161)) ([edb80eb](https://github.com/Kamra-PMS/kamra-pms/commit/edb80eb9b2281bdbaad238e7e79ad98f130b19f5))
+* **billing:** ask for a reason when voiding a charge ([#161](https://github.com/Kamra-PMS/kamra-pms/issues/161)) ([edb80eb](https://github.com/Kamra-PMS/kamra-pms/commit/edb80eb9b2281bdbaad238e7e79ad98f130b19f5)). The bill screen's Void button failed every time because the API requires a reason the screen never sent.
+
+
+### Documentation
+
+* **readme:** countries, how it's built and contributing ([#158](https://github.com/Kamra-PMS/kamra-pms/pull/158))
+
+
+### Credits
+
+* [@Kruthikagowda12](https://github.com/Kruthikagowda12): small-group pricing and day-scoped guardrails ([#162](https://github.com/Kamra-PMS/kamra-pms/pull/162))
+* [@ShaikhAmerPasha](https://github.com/ShaikhAmerPasha): reported and fixed the Void button ([#160](https://github.com/Kamra-PMS/kamra-pms/issues/160), [#161](https://github.com/Kamra-PMS/kamra-pms/pull/161))
 
 ## [2.6.11](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.10...v2.6.11) (2026-10-12)
 
