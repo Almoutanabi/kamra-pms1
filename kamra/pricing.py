@@ -16,12 +16,43 @@ def _dec(v) -> Decimal:
 	return Decimal(str(v or 0))
 
 
-def occupancy_rate(rt, adults: int, children: int) -> Decimal:
-	"""Nightly room rate for a party, from Room Type occupancy pricing."""
+def _small_group_rate(rt, adults: int, date=None) -> Decimal | None:
+	"""Per-person rate for a party smaller than the room type's small-group
+	threshold, or None when the rule does not apply.
+
+	Whole-place lets (villas, homestays) often price a small midweek party
+	per head rather than charging the full house rate - "under 5 guests, 4,000
+	each". Kamra's standard model only ever ADDS for guests beyond base
+	occupancy, so without this a party of three pays the eight-person rate.
+
+	`small_group_days` scopes the rule to the days it applies on (blank = every
+	day), which is what keeps a midweek-only rule from undercutting the weekend
+	house rate. With no date in hand the rule is treated as day-agnostic.
+	"""
+	threshold = int(rt.get("small_group_max_adults") or 0)
+	per_adult = _dec(rt.get("small_group_price_per_adult"))
+	if not threshold or not per_adult or adults >= threshold:
+		return None
+	if date is not None and not days_cover(
+			rt.get("small_group_days"), getdate(date).strftime("%a").lower()):
+		return None
+	return adults * per_adult
+
+
+def occupancy_rate(rt, adults: int, children: int, date=None) -> Decimal:
+	"""Nightly room rate for a party, from Room Type occupancy pricing.
+
+	`date` is optional and only used by the small-group rule, so every existing
+	caller keeps its behaviour; pass the night being priced to honour
+	`small_group_days`.
+	"""
 	adults = max(1, int(adults or 1))
 	children = int(children or 0)
 
-	if adults == 1 and rt.single_occupancy_price:
+	small = _small_group_rate(rt, adults, date)
+	if small is not None:
+		rate = small
+	elif adults == 1 and rt.single_occupancy_price:
 		rate = _dec(rt.single_occupancy_price)
 	else:
 		rate = _dec(rt.base_price)
@@ -85,13 +116,19 @@ def demand_adjust(property: str, room_type: str, date, rate: Decimal,
 	return rate, tier
 
 
-def _season_covers_day(season, day_abbr: str) -> bool:
-	"""A blank days_of_week runs every day; otherwise the weekday has to be
-	listed, with the weekend/weekday shorthands expanded."""
-	if not season.days_of_week:
+def days_cover(days_of_week: str | None, day_abbr: str) -> bool:
+	"""Does a comma-separated day list cover this weekday?
+
+	A blank list runs every day; otherwise the weekday has to be listed, with
+	the weekend/weekday shorthands expanded. Shared by seasons, rate
+	guardrails and small-group pricing so all three read a day list the same
+	way - note that "weekend" means Sat+Sun, so a property whose weekend is
+	Fri+Sat spells the days out.
+	"""
+	if not days_of_week:
 		return True
 	normalized_days = set()
-	for d in (x.strip().lower() for x in season.days_of_week.split(",")):
+	for d in (x.strip().lower() for x in str(days_of_week).split(",")):
 		if d in ("weekend", "weekends"):
 			normalized_days.update(["sat", "sun"])
 		elif d in ("weekday", "weekdays"):
@@ -99,6 +136,10 @@ def _season_covers_day(season, day_abbr: str) -> bool:
 		else:
 			normalized_days.add(d[:3])
 	return day_abbr in normalized_days
+
+
+def _season_covers_day(season, day_abbr: str) -> bool:
+	return days_cover(season.days_of_week, day_abbr)
 
 
 def season_adjust(property: str, date, base: Decimal,
@@ -221,7 +262,8 @@ def quote(
 	for i in range(max(nights, 1)):
 		date = add_days(check_in_date, i)
 		rate = season_adjust(
-			property, date, occupancy_rate(rt, adults, children), room_type
+			property, date, occupancy_rate(rt, adults, children, date),
+			room_type
 		)
 		# demand pricing: when the house fills past a hurdle tier, the
 		# premium applies and the tier's floor holds - decided here, in
