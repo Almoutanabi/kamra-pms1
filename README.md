@@ -41,9 +41,12 @@
 - [Screenshots](#screenshots)
 - [Short-term rentals](#short-term-rentals)
 - [Features](#features)
+- [Countries](#countries)
+- [How it's built](#how-its-built)
 - [Documentation & API](#documentation--api)
 - [Install](#install)
 - [Quickstart (development)](#quickstart-development)
+- [Contributing](#contributing)
 - [Who it's for](#who-its-for)
 - [License & contributors](#license--contributors)
 
@@ -51,10 +54,10 @@
 
 ## What's new
 
-Latest release: **[v2.6.9](https://github.com/Kamra-PMS/kamra-pms/releases/tag/v2.6.9)**
+Latest release: **[v2.6.10](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
 (`develop` ships nightly).
 
-- **2.6.9** — India-only integrations live in the India pack (Razorpay and
+- **2.6.9 – 2.6.10** — India-only integrations live in the India pack (Razorpay and
   Cashfree payment links, GSTR-1, **Kamra Verify** GSTIN and guest ID checks);
   privacy: guest contact details hidden from the AI provider, nightly clearing
   of old WhatsApp text and AI chats, children recorded by name and age only,
@@ -156,8 +159,68 @@ Live example: [demo.kamrapms.com/book](https://demo.kamrapms.com/book).
 | **Guests** | Online pre-check-in, GRC + occupant register, **editable nationality**, ID retention modes, Kamra Verify (India: GSTIN and guest ID checks) |
 | **Privacy** | Erasure, access export, guest and message retention, children's data minimised, AI-prompt redaction, privacy notice in English, Arabic and seven Indian languages |
 | **Messaging** | WhatsApp (Meta Cloud API) — confirmations, check-in links, inbox, desk tickets |
-| **Localization** | India GST, Indonesia PB1, Thailand VAT, Malaysia SST, UAE VAT, Saudi VAT + ZATCA e-invoicing — currency, ID types, payment modes and integrations follow the pack; English / العربية UI |
+| **Localization** | Six country packs plus a flat-tax fallback (see [Countries](#countries)); English / العربية UI |
 | **Platform** | Multi-property RBAC, dark mode, property time zone, System Health, AI provider presets, CSV migration (eZee / Cloudbeds presets), eval harness in CI |
+
+---
+
+## Countries
+
+The property's country picks its pack. The pack decides tax, invoice wording,
+ID types, payment modes, the privacy notice and any country-only
+integrations. The core PMS never mentions GST or VAT, and one country's
+integrations are never offered in another.
+
+| Country | Tax on rooms and F&B | Invoices and filings | Front desk and integrations |
+|---|---|---|---|
+| 🇮🇳 India | GST slab by nightly tariff (5% / 18% around ₹7,500) or fixed; F&B 5% | CGST + SGST or IGST from the GSTIN, SAC per line, amount in lakh / crore, GSTR-1 export | Aadhaar, PAN, Voter ID; UPI; Razorpay and Cashfree payment links; Kamra Verify; Form C for foreign guests; notice in 7 Indian languages |
+| 🇸🇦 Saudi Arabia | VAT 15%; municipality fee as a room levy | ZATCA Phase 1: UUID, hash chain, UBL 2.1 XML and QR on every invoice and POS bill; Phase 2 groundwork | National ID, Iqama, GCC ID; Shomoos register (children's IDs kept too); Arabic UI |
+| 🇦🇪 UAE | VAT 5%; municipality fee as a room levy | TRN on "Tax Invoice" | Emirates ID, GCC ID |
+| 🇲🇾 Malaysia | SST 8% on rooms, 6% on F&B | Tourism Tax note for foreign guests | MyKad |
+| 🇹🇭 Thailand | VAT 7% | 13-digit Tax ID; service charge as its own line | Thai ID card |
+| 🇮🇩 Indonesia | Regional hotel tax (PB1 / PBJT) 10% by default | | KTP, KITAS |
+| Anywhere else | One flat rate from property settings | Plain tax invoice | Passport, national ID |
+
+Rates are defaults. The operator can change them on the property or room type
+when the law changes. A new country is one Python module behind the
+`kamra_localization` hook; see [Country packs](CONTRIBUTING.md#country-packs).
+
+---
+
+## How it's built
+
+```mermaid
+flowchart LR
+  desk["Front desk SPA<br/>React + Vite"] --> api
+  book["Booking engine<br/>/book"] --> api
+  hk["Housekeeping<br/>/hk"] --> api
+  agent["Claude / any MCP client"] --> mcp["MCP server<br/>86 tools"] --> api
+  api["Governed API<br/>RBAC · property scope · audit log"] --> core["PMS core<br/>pricing · folios · night audit"]
+  core --> pack["Country pack<br/>tax · invoices · integrations"]
+  core --> db[("Frappe v16<br/>MariaDB")]
+```
+
+- **One API for everyone.** The UI, the booking engine, the housekeeping app
+  and AI agents all call the same whitelisted methods. Each call checks the
+  user's role and property, and every change is logged.
+- **Money is code.** Quotes, tax, deposits and availability are computed in
+  Python with `Decimal`. An AI agent can ask for a quote or post a charge, but
+  never invents a number.
+- **Evals in CI.** `kamra/scripts/eval_harness.py` runs 88 checks of real
+  hotel flows (double booking, split folios, tax slabs, POS, banquets,
+  privacy, every country pack, property scope) on a fresh site for every PR,
+  alongside Semgrep, CodeQL and a fresh-install check.
+
+| Path | What lives there |
+|---|---|
+| `kamra/` | Frappe app: doctypes, `api.py` and the domain modules (folio, pricing, cashier, POS, housekeeping, banquet, privacy…) |
+| `kamra/localization/` | Country packs (`india/`, `saudi.py`, `uae.py`…) and the `generic` fallback |
+| `kamra/zatca/` | Saudi e-invoicing: UBL XML, hash chain, TLV QR |
+| `kamra/mcp_tools.py`, `mcp/` | MCP tool layer (hosted at `/mcp`) and the stdio server |
+| `kamra/scripts/` | Eval harness, demo seed data, migrations from other PMSs |
+| `frontend/` | React SPA. The build is committed to `kamra/public/frontend`, so `bench get-app` needs no Node |
+| `docs-site/` | Source of [kamrapms.com/docs](https://kamrapms.com/docs/), including the generated API and MCP references |
+| `deploy/` | Self-host installer and one-click cloud images |
 
 ---
 
@@ -169,7 +232,7 @@ Going live? Use the **[go-live checklist](https://kamrapms.com/docs/go-live)**.
 
 ### REST & agents
 
-Kamra exposes **170+ REST endpoints** — the same governed layer the UI and AI use:
+Kamra exposes **267 REST endpoints**, the same governed layer the UI and AI use:
 
 - [REST API reference](https://kamrapms.com/docs/api-reference)
 - [Postman collection](https://kamrapms.com/docs/kamra.postman_collection.json)
@@ -247,6 +310,34 @@ Connect Claude (hosted MCP — no local Python):
 # Kamra Agent → Connect your AI → Connect Claude, or:
 claude mcp add --transport http kamra https://pms.yourhotel.com/mcp
 ```
+
+No public HTTPS (air-gapped or localhost)? Run the stdio server in
+[`mcp/kamra_mcp.py`](mcp/kamra_mcp.py) instead; it serves the same tools.
+
+---
+
+## Contributing
+
+Issues and PRs are welcome. The short version of
+[CONTRIBUTING.md](CONTRIBUTING.md):
+
+- Branch from **`develop`** and open the PR against it. `main` only moves on a release.
+- Use [Conventional Commits](https://www.conventionalcommits.org/) (`fix:`,
+  `feat:`, `docs:`). release-please writes the changelog from them.
+- Changed the UI? Run `npm run build` and commit `kamra/public/frontend` with your change.
+- Changed Python? Run the eval harness on a dev site and add a check for the
+  behaviour you changed:
+
+  ```bash
+  bench --site kamra.localhost console
+  >>> from kamra.scripts.eval_harness import execute; execute()
+  ```
+
+- Put anything country-specific (a tax, an ID type, a gateway) in that
+  country's pack, not the core.
+
+Every merged PR and every issue that shapes a feature is credited in the
+release notes and below.
 
 ---
 
