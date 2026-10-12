@@ -4,7 +4,7 @@ printers - it asks the country pack. Packs are resolved through the
 `kamra_uae` app claims its country just by declaring the hook. Countries
 without a pack fall back to a plain flat-tax `generic` pack.
 
-Interface every pack implements (see india.py):
+Interface every pack implements (see india/):
   calculate_room_tax(property, room_type_doc, nightly_rate) -> Decimal
   fnb_tax_rate(property) -> float
   tax_rate_options(property) -> list[float]

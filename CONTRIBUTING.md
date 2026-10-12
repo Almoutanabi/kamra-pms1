@@ -102,10 +102,26 @@ decides the next version is a MAJOR bump.
 
 ## Country packs
 
-Localization lives behind the `kamra_localization` hook
-(`kamra/localization/`); India ships as the reference pack. A new country
-pack implements the same interface (tax calculation, invoice context, locale)
-without touching the core. See `kamra/localization/india.py` for the shape.
+Localization lives behind the `kamra_localization` hook in `hooks.py`,
+which maps a country name to a module in `kamra/localization/`. Countries
+without a pack get `generic.py` (one flat rate).
+
+A pack is a plain module:
+
+- **Required:** `calculate_room_tax`, `fnb_tax_rate`, `tax_rate_options`,
+  `invoice_context` and `locale`.
+- **Optional:** `service_code_for`, `tax_split` and `amount_in_words` for
+  invoice printing; constants such as `ID_TYPES`, `PAYMENT_MODES`,
+  `DEFAULT_CURRENCY`, `NOTICE_LANGUAGES`, `ADULT_AGE` and `MINOR_IDS`.
+- **Country-only integrations:** `PAYMENT_GATEWAYS` plus `payment_provider`,
+  `tax_return_rows`, `verify_tax_id` and `verify_guest_id`. If a pack leaves
+  these out, the country simply doesn't get the feature. Kamra never
+  borrows another country's.
+
+The full interface is in the docstring of `kamra/localization/__init__.py`.
+`thailand.py` is the smallest pack to copy. `india/` shows integrations;
+`saudi.py` shows e-invoicing hooks. Add an eval check for the new pack's
+tax and invoice labels.
 
 ## Credit
 
