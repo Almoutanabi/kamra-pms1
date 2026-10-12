@@ -38,6 +38,14 @@ upgrade-breaking changes (removed doctypes / API contracts).
   quotation, desk-led guest response, department checklists + notify on
   Confirm (Sales/Finance/HK/F&B), and quote no-response chase reminders
 
+## [2.6.11](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.10...v2.6.11) (2026-10-12)
+
+
+### Bug Fixes
+
+* **marketplace:** pass the frappe/marketplace registry checks ([3175600](https://github.com/Kamra-PMS/kamra-pms/commit/3175600c1fc83444cf01c5c793742b82798806f9))
+* **marketplace:** pass the frappe/marketplace registry checks ([5bd422c](https://github.com/Kamra-PMS/kamra-pms/commit/5bd422c475624c6bd808aa33eb78d73ed9f2bddc))
+
 ## [2.6.10](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.9...v2.6.10) (2026-10-11)
 
 

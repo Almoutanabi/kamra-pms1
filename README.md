@@ -54,10 +54,10 @@
 
 ## What's new
 
-Latest release: **[v2.6.11](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
+Latest release: **[v2.6.12](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
 (`develop` ships nightly).
 
-- **2.6.11** — per-head pricing for small parties in whole-place lets,
+- **2.6.12** — per-head pricing for small parties in whole-place lets,
   weekend / weekday rate guardrails, the bill screen's Void button asks for a
   reason, and admins see a banner when a newer Kamra release is out
 - **2.6.9 – 2.6.10** — India-only integrations live in the India pack (Razorpay and
