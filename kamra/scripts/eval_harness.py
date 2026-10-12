@@ -10,7 +10,7 @@ Run via bench console:
 """
 
 import frappe
-from frappe.utils import add_days, nowdate
+from frappe.utils import add_days, getdate, nowdate
 
 P = "EVAL Hotel"
 RESULTS = []
@@ -173,6 +173,72 @@ def t3b():
 		                  ignore_permissions=True)
 		frappe.delete_doc("Room Type", villa.name, force=True,
 		                  ignore_permissions=True)
+
+
+@check("small-group pricing is per head, and only on its own days")
+def t3c():
+	"""A whole-place let prices a small midweek party per head instead of
+	charging the full house rate - but the rule is day-scoped, so it must
+	never undercut the weekend house rate."""
+	from kamra.pricing import occupancy_rate
+
+	villa = frappe.get_doc({
+		"doctype": "Room Type", "property": P, "room_type_code": "ESG",
+		"room_type_name": "Eval Small Group", "base_price": 20000,
+		"base_occupancy": 8, "extra_adult_price": 1600,
+		"adults_capacity": 14, "children_capacity": 6,
+		"small_group_max_adults": 5,
+		"small_group_price_per_adult": 4000,
+		"small_group_days": "sun,mon,tue,wed,thu",
+	}).insert(ignore_permissions=True)
+	try:
+		# 2030-03-05 is a Tuesday, 2030-03-08 a Friday
+		tue, fri = "2030-03-05", "2030-03-08"
+		assert getdate(tue).strftime("%a").lower() == "tue"
+		assert getdate(fri).strftime("%a").lower() == "fri"
+
+		# under the threshold, midweek: per head
+		assert occupancy_rate(villa, 3, 0, tue) == 12000, "3 pax midweek"
+		assert occupancy_rate(villa, 4, 0, tue) == 16000, "4 pax midweek"
+		# at the threshold the house rate takes over, and the two meet
+		assert occupancy_rate(villa, 5, 0, tue) == 20000, "5 pax midweek"
+		assert occupancy_rate(villa, 8, 0, tue) == 20000, "8 pax midweek"
+		# beyond base occupancy the extra-adult charge still applies
+		assert occupancy_rate(villa, 10, 0, tue) == 23200, "10 pax midweek"
+		# the regression this guards: a day the rule excludes keeps the
+		# house rate, so a small weekend party is not quoted per head
+		assert occupancy_rate(villa, 3, 0, fri) == 20000, "3 pax weekend"
+		# and children still price on top of a small-group rate
+		villa.child_price = 1200
+		assert occupancy_rate(villa, 3, 2, tue) == 14400, "3 pax + 2 children"
+	finally:
+		frappe.delete_doc("Room Type", villa.name, force=True,
+		                  ignore_permissions=True)
+
+
+@check("rate guardrails can hold a different floor at the weekend")
+def t3d():
+	"""A property that discounts midweek but holds firm at the weekend needs
+	two rails. The day-scoped one wins on its own days; the general one
+	covers the rest."""
+	from kamra.api import _assert_within_guardrails
+
+	rails = [
+		frappe._dict({"name": "GEN", "room_type": RT, "floor_price": 19000,
+		    "ceiling_price": 50000, "days_of_week": None}),
+		frappe._dict({"name": "WKND", "room_type": RT, "floor_price": 22500,
+		    "ceiling_price": 50000, "days_of_week": "fri,sat"}),
+	]
+	# Tuesday only: the midweek floor applies, 19,000 is allowed
+	_assert_within_guardrails(rails, RT, 19000, "2030-03-05", "2030-03-05")
+	# Friday only: the weekend rail wins, so 19,000 is refused
+	try:
+		_assert_within_guardrails(rails, RT, 19000, "2030-03-08", "2030-03-08")
+		raise AssertionError("weekend floor did not hold")
+	except frappe.ValidationError:
+		pass
+	# and the weekend floor itself passes
+	_assert_within_guardrails(rails, RT, 22500, "2030-03-08", "2030-03-08")
 
 
 @check("GST slab: 5% below threshold, 18% above")
@@ -3715,7 +3781,7 @@ def execute():
 	frappe.db.savepoint("eval_start")
 	try:
 		RT, ROOM = setup()
-		for fn in (t1, t2, t3, t3b, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13,
+		for fn in (t1, t2, t3, t3b, t3c, t3d, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13,
 		           t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24,
 		           t25, t26, t27, t28, t29, t30, t31, t32, t33, t34, t35,
 		           t36, t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,

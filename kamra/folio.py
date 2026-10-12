@@ -259,7 +259,7 @@ def _nightly_room_rate(reservation, date) -> float:
 	from kamra.pricing import occupancy_rate, rates_include_tax, room_gst_rate, season_adjust
 
 	rt = frappe.get_doc("Room Type", reservation.room_type)
-	base = occupancy_rate(rt, reservation.adults, reservation.children)
+	base = occupancy_rate(rt, reservation.adults, reservation.children, date)
 	rate = season_adjust(reservation.property, date, base,
 	                     reservation.room_type)
 	if rates_include_tax(reservation.property):
@@ -272,7 +272,7 @@ def _nightly_gst(reservation, date) -> float:
 	from kamra.pricing import occupancy_rate, room_gst_rate, season_adjust
 
 	rt = frappe.get_doc("Room Type", reservation.room_type)
-	base = occupancy_rate(rt, reservation.adults, reservation.children)
+	base = occupancy_rate(rt, reservation.adults, reservation.children, date)
 	gross = season_adjust(reservation.property, date, base,
 	                      reservation.room_type)
 	return float(room_gst_rate(reservation.property, rt, gross))

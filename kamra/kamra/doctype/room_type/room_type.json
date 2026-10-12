@@ -31,6 +31,9 @@
   "extra_adult_price",
   "extra_bed_price",
   "max_extra_beds",
+  "small_group_max_adults",
+  "small_group_price_per_adult",
+  "small_group_days",
   "sb_children",
   "free_child_age",
   "child_age_limit",
@@ -193,6 +196,25 @@
    "fieldname": "max_extra_beds",
    "fieldtype": "Int",
    "label": "Max Extra Beds"
+  },
+  {
+   "fieldname": "small_group_max_adults",
+   "fieldtype": "Int",
+   "label": "Small-group Threshold (adults)",
+   "description": "Below this many adults, price per person instead of the house rate. 0 = off."
+  },
+  {
+   "fieldname": "small_group_price_per_adult",
+   "fieldtype": "Currency",
+   "label": "Small-group Price Per Adult",
+   "depends_on": "eval:doc.small_group_max_adults > 0"
+  },
+  {
+   "fieldname": "small_group_days",
+   "fieldtype": "Data",
+   "label": "Small-group Days",
+   "description": "Days this rate applies, e.g. sun,mon,tue,wed,thu. Blank = every day.",
+   "depends_on": "eval:doc.small_group_max_adults > 0"
   },
   {
    "fieldname": "sb_children",
