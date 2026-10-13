@@ -2309,6 +2309,17 @@ def t47d():
 	from kamra.folio import open_folio
 	from kamra.localization.india import cashfree
 
+	# Kamra Verify is unreleased: hidden and refused unless the site opts in
+	frappe.conf.kamra_verify_enabled = 0
+	hidden = loc.integrations(loc.pack_for(P))
+	assert not hidden["verify_tax_id"] and not hidden["verify_guest_id"], hidden
+	try:
+		loc.verify_tax_id(loc.pack_for(P), P, "29ABCDE1234F1Z5")
+		raise AssertionError("unreleased Kamra Verify ran")
+	except frappe.ValidationError:
+		pass
+	frappe.conf.kamra_verify_enabled = 1
+
 	# India (EVAL Hotel has no country, so it runs on the India pack)
 	assert loc.integrations(loc.pack_for(P)) == {
 		"payment_gateways": ["Razorpay", "Cashfree"], "tax_return": True,
@@ -2407,6 +2418,7 @@ def t47d():
 	assert out["legal_name"] == "Eval Pvt Ltd" and calls == [("verify_gstin", "eval-connect-key")], (out, calls)
 	# ID reading needs the guest to have been told
 	assert refused(lambda: loc.verify_guest_id(loc.pack_for(P), P, "x", "Aadhaar", 0))
+	frappe.conf.kamra_verify_enabled = 0
 
 
 @check("WhatsApp: native Meta send, booking flow, inbound -> ticket")

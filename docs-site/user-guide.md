@@ -198,8 +198,8 @@ that app's own page). The left rail groups it:
   properties they reach, deactivate them or reset a cashier PIN.
   *Roles & permissions* shows what each role opens and which settings it
   may change. *Modules* switches off the apps a property doesn't run.
-- **Integrations**: payments, the AI assistant key, Claude (MCP), Kamra
-  Verify and, for Saudi properties, ZATCA.
+- **Integrations**: payments, the AI assistant key, Claude (MCP) and, for
+  Saudi properties, ZATCA.
 
 Press <kbd>/</kbd> to search every setting by name. Each page shows who may
 change it. A Revenue Manager edits stay policies, revenue, banquets and the
