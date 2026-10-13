@@ -619,6 +619,12 @@ export const outletsConfig: ScreenConfig = {
     { field: "outlet_type", label: "Type", type: "select", options: ["Restaurant", "Room Service", "Bar", "Spa", "Other"] },
     { field: "gst_rate", label: "GST %", type: "float" },
     { field: "disabled", label: "Disabled", type: "check" },
+    {
+      field: "auto_kot",
+      label: "Auto-accept and print KOT",
+      type: "check",
+      hint: "When a captain sends an order, the kitchen ticket prints immediately and the order shows on the kitchen display as started. Leave this off if the kitchen must press Start.",
+    },
   ],
 }
 

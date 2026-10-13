@@ -1502,6 +1502,50 @@ def t39():
 	assert t2["items"][0]["course"] == "Main", t2["items"][0]["course"]
 
 
+@check("POS: auto KOT accepts the ticket and tells the till to print")
+def t39b():
+	from kamra import pos
+	manual = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Manual Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 0,
+	}).insert(ignore_permissions=True).name
+	auto = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Auto Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 1,
+	}).insert(ignore_permissions=True).name
+
+	def _mi(outlet, name):
+		return frappe.get_doc({
+			"doctype": "Menu Item", "property": P, "outlet": outlet,
+			"item_name": name, "category": "Food", "price": 80, "is_veg": 1,
+			"available": 1, "prep_station": "Kitchen", "course": "Main",
+		}).insert(ignore_permissions=True).name
+
+	dish_m = _mi(manual, "Manual Dal")
+	dish_a = _mi(auto, "Auto Dal")
+	om = pos.create_order(manual, [{"menu_item": dish_m, "qty": 1}], table_no="M1")
+	oa = pos.create_order(auto, [{"menu_item": dish_a, "qty": 1}], table_no="A1")
+
+	fm = pos.fire_kot(om["order"])
+	assert fm["auto_print"] is False, fm
+	tick_m = next(r for r in pos.kitchen_queue(P, outlet=manual) if r["name"] == om["order"])
+	assert not tick_m["accepted_at"], "manual outlet accepted itself"
+	assert tick_m["items"][0]["state"] == "cooking", tick_m
+
+	fa = pos.fire_kot(oa["order"])
+	assert fa["auto_print"] is True and fa["accepted_at"], fa
+	assert fa["ticket"]["items"][0]["item_name"] == "Auto Dal", fa
+	tick_a = next(r for r in pos.kitchen_queue(P, outlet=auto) if r["name"] == oa["order"])
+	assert tick_a["accepted_at"], "auto outlet still waiting on Start"
+	# a second round must not move the accept clock
+	stamp = frappe.db.get_value("POS Order", oa["order"], "accepted_at")
+	pos.add_items(oa["order"], [{"menu_item": dish_a, "qty": 1}])
+	fa2 = pos.fire_kot(oa["order"])
+	assert fa2["auto_print"] is True, fa2
+	assert frappe.db.get_value("POS Order", oa["order"], "accepted_at") == stamp, \
+		"second fire reset the accept time"
+
+
 @check("kitchen stock: fire deducts per outlet, shortage never blocks, ledger reconciles")
 def t40():
 	from kamra import inventory, pos
@@ -3784,7 +3828,7 @@ def execute():
 		for fn in (t1, t2, t3, t3b, t3c, t3d, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13,
 		           t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24,
 		           t25, t26, t27, t28, t29, t30, t31, t32, t33, t34, t35,
-		           t36, t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
+		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86):
