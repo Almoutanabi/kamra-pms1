@@ -23,6 +23,13 @@ LAUNDRY_GST = 18.0  # services rate; resolved server-side on posting
 
 # ── the rate card ────────────────────────────────────────────────────────
 
+
+def express_multiplier(property: str | None) -> float:
+	"""Express price when a rate card line leaves it blank (Settings ->
+	Housekeeping, default 1.5x regular)."""
+	from kamra.settings import get_setting
+	return float(get_setting(property, "laundry_express_multiplier"))
+
 @frappe.whitelist()
 @require_roles(*LAUNDRY_ROLES, "Finance")
 def laundry_rates(property: str):
@@ -34,7 +41,7 @@ def laundry_rates(property: str):
 		order_by="item_name, service_type")
 	for r in rows:
 		r["express_rate"] = float(r.express_rate or 0) or round(
-			float(r.rate) * 1.5, 0)
+			float(r.rate) * express_multiplier(property), 0)
 	return rows
 
 
@@ -150,7 +157,8 @@ def _price(property: str, item_name: str, service_type: str,
 		frappe.throw(_("No rate for {0} ({1}) - add it to the rate card "
 		              "first.").format(item_name, service_type))
 	if express:
-		return float(row.express_rate or 0) or round(float(row.rate) * 1.5, 0)
+		return float(row.express_rate or 0) or round(
+			float(row.rate) * express_multiplier(property), 0)
 	return float(row.rate)
 
 

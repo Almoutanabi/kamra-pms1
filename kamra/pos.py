@@ -214,15 +214,20 @@ def _flag_cleaning_if_freed(doc):
 
 
 def _upcoming_reservations(outlet: str):
-	"""Booked reservations from an hour ago to four hours out - the window
-	in which a table should read as Reserved on the map."""
+	"""Booked reservations inside the window in which a table should read
+	as Reserved on the map - by default an hour ago to four hours out
+	(Settings -> F&B)."""
 	from frappe.utils import add_to_date, now_datetime
+	from kamra.settings import get_setting
+	prop = frappe.db.get_value("POS Outlet", outlet, "property")
+	before = int(get_setting(prop, "pos_reservation_before_min"))
+	after = int(get_setting(prop, "pos_reservation_after_min"))
 	now = now_datetime()
 	return frappe.get_all(
 		"POS Table Reservation",
 		filters={"outlet": outlet, "status": "Booked",
-		         "reserved_at": ("between", [add_to_date(now, hours=-1),
-		                                     add_to_date(now, hours=4)])},
+		         "reserved_at": ("between", [add_to_date(now, minutes=-before),
+		                                     add_to_date(now, minutes=after)])},
 		fields=["name", "table_no", "guest_name", "phone", "party_size",
 		        "reserved_at", "notes"],
 		order_by="reserved_at asc")

@@ -79,7 +79,7 @@ costs nothing.
 
 ## Room levy (municipality fee, city tax)
 
-*Settings → Stay, tax & privacy*: **Room levy name**, **Room levy %** and
+*Settings → Finance → Fees & levies*: **Room levy name**, **Room levy %** and
 whether tax applies to it. When the % is above zero the levy is included in
 every quote and posted as its own line with each room night, so the invoice
 shows it and the ledger books it apart from room revenue. Saudi Arabia and

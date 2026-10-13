@@ -11,7 +11,7 @@ today pings the front desk that the room is ready.
 import frappe
 from frappe.utils import get_datetime, now_datetime, time_diff_in_seconds
 
-from kamra.kamra.doctype.housekeeping_task.housekeeping_task import HK_SLA_MINUTES
+from kamra.kamra.doctype.housekeeping_task.housekeeping_task import sla_minutes
 
 # escalation_level -> the role we notify at that level
 _ESCALATION_ROLE = {1: "Front Desk", 2: "Hotel Admin"}
@@ -29,7 +29,7 @@ def escalate_overdue_tasks():
 	)
 	for t in tasks:
 		overdue_min = time_diff_in_seconds(now, get_datetime(t.due_by)) / 60
-		sla = HK_SLA_MINUTES.get(t.priority, 90)
+		sla = sla_minutes(t.property, t.priority)
 		# level 1 the moment it's overdue; level 2 once it's a full SLA late
 		target = 2 if overdue_min >= sla else 1
 		if target > (t.escalation_level or 0):

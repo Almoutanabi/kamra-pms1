@@ -1,0 +1,557 @@
+"""Settings hub - one registry for everything a property configures.
+
+Each module (Front Desk, Housekeeping, F&B, ...) owns a page of settings.
+A setting lives in one of three stores:
+
+  property  - a field on the Property doc (identity, policies, tax slabs)
+  kv        - a Property Setting row, for knobs that used to be constants
+              (HK SLA minutes, PIN lockout, banquet margins, ...)
+  turnover  - the property's default Turnover Profile
+
+Code reads a value with `get_setting(property, key)`; the UI reads the
+schema with `settings_schema` and writes with `save_settings`, which
+checks the module's editor roles, validates against the registry and
+logs every change to the Activity log. Nothing else should write these.
+"""
+
+import json
+from dataclasses import dataclass, field
+
+import frappe
+from frappe import _
+
+from kamra.authz import ADMIN, assert_property_access, require_roles
+
+CACHE_KEY = "kamra_settings"
+
+
+@dataclass(frozen=True)
+class S:
+	key: str
+	label: str
+	type: str = "text"  # text|number|time|check|select|textarea|image|email
+	default: object = None
+	store: str = "kv"  # property|kv|turnover
+	hint: str = ""
+	options: tuple = ()
+	options_source: str = ""  # countries|timezones - filled by the client
+	min: float | None = None
+	max: float | None = None
+	unit: str = ""  # shown after a number input: min, %, days, x
+
+
+@dataclass(frozen=True)
+class Section:
+	id: str
+	title: str
+	description: str
+	settings: tuple
+
+
+@dataclass(frozen=True)
+class Module:
+	id: str  # = the app slug in enabled_modules where one exists
+	title: str
+	description: str
+	editors: tuple  # roles that may change it (admins always may)
+	sections: tuple = ()
+	group: str = "modules"  # organisation|modules
+	toggle: bool = False  # can be switched off in enabled_modules
+	related: tuple = field(default_factory=tuple)  # (label, route)
+
+
+P = "property"
+SLA_HINT = "Minutes from creation until the task counts as overdue."
+
+MODULES: tuple[Module, ...] = (
+	# --- organisation ------------------------------------------------------
+	Module(
+		"general", "Property", "Identity, location and contact details - printed on invoices and the GRC.",
+		editors=("Hotel Admin",), group="organisation",
+		sections=(
+			Section("identity", "Identity", "", (
+				S("property_name", "Property name", store=P),
+				S("legal_name", "Legal name", store=P, hint="As registered - printed on invoices."),
+				S("property_kind", "Property kind", "select", store=P, options=("Hotel", "Short Term Rental")),
+				S("logo_url", "Logo", "image", store=P, hint="Square, 512px+ - PNG or SVG with transparency looks best."),
+			)),
+			Section("location", "Location & locale", "Country selects the tax and invoicing pack.", (
+				S("country", "Country", "select", store=P, options_source="countries",
+				  hint="Tax labels, ID types, payment methods and the guest phone code follow it."),
+				S("currency", "Currency", store=P, hint="ISO code, e.g. SAR, AED, USD."),
+				S("timezone", "Time zone", "select", store=P, options_source="timezones",
+				  hint="Hotel local clock for the night audit and timestamps."),
+				S("address_line", "Address", store=P),
+				S("city", "City", store=P),
+				S("state", "State / region", store=P),
+				S("pincode", "Postal code", store=P),
+			)),
+			Section("contact", "Contact & registration", "", (
+				S("phone", "Phone", store=P),
+				S("email", "Email", "email", store=P),
+				S("website", "Website", store=P),
+				S("gstin", "Tax registration number", store=P, hint="GSTIN, VAT or TRN - printed on invoices."),
+			)),
+		),
+	),
+	Module(
+		"policies", "Stay policies", "Times, minimum stay and the money rules quoted at booking and enforced by cancel and the night audit.",
+		editors=("Hotel Admin", "Revenue Manager"), group="organisation",
+		sections=(
+			Section("times", "Check-in & check-out", "", (
+				S("checkin_time", "Check-in time", "time", "14:00", P),
+				S("checkout_time", "Check-out time", "time", "11:00", P),
+				S("minimum_nights", "Minimum stay", "number", 1, P, min=1, max=60, unit="nights"),
+			)),
+			Section("cancellation", "Cancellation & no-show", "", (
+				S("free_cancel_days", "Free cancellation until", "number", 1, P, min=0, max=365, unit="days before",
+				  hint="Cancellations earlier than this are always free."),
+				S("cancellation_fee", "Late cancellation fee", "select", "First Night", P, options=("None", "First Night", "Full Stay")),
+				S("no_show_charge", "No-show charge", "select", "First Night", P, options=("None", "First Night", "Full Stay"),
+				  hint="Posted automatically by the night audit."),
+			)),
+			Section("deposits", "Deposits", "", (
+				S("deposit_pct", "Deposit expected at booking", "number", 0, P, min=0, max=100, unit="%"),
+				S("security_deposit_amount", "Security deposit", "number", 0, P, min=0),
+			)),
+		),
+	),
+	Module(
+		"privacy", "Privacy & data", "How long guest data is kept and who guests contact about it.",
+		editors=("Hotel Admin",), group="organisation",
+		sections=(
+			Section("retention", "Retention", "", (
+				S("id_retention", "Guest ID retention", "select", "Verify & Discard", P, options=("Store", "Verify & Discard"),
+				  hint="Verify & Discard masks ID numbers to the last 4 digits and deletes ID photos at checkout."),
+				S("guest_retention_months", "Erase guest data after", "number", 36, P, min=0, unit="months",
+				  hint="Guests with no stay for this long are erased; bills stay for the books. 0 keeps them."),
+				S("message_retention_days", "Clear message text after", "number", 90, P, min=0, unit="days",
+				  hint="WhatsApp and AI chat text is cleared nightly; who, when and delivery status stay. 0 keeps them."),
+			)),
+			Section("contact", "Grievance contact", "", (
+				S("privacy_contact", "Privacy contact", store=P,
+				  hint="Email or phone for access, correction or erasure requests - shown on booking and check-in pages."),
+			)),
+		),
+	),
+	# --- modules -----------------------------------------------------------
+	Module(
+		"front-desk", "Front Desk", "Arrivals, holds and the day view.",
+		editors=("Hotel Admin",),
+		related=(("Rooms", "/rooms"), ("Room types", "/room-types")),
+		sections=(
+			Section("arrivals", "Arrivals", "Getting guests checked in before they reach the desk.", (
+				S("auto_send_checkin_links", "Send pre-check-in links automatically", "check", 0, P,
+				  hint="Guests arriving soon get their online check-in link each morning."),
+				S("prearrival_horizon_days", "Send links this far ahead", "number", 2, min=1, max=14, unit="days"),
+				S("require_precheckin_for_access", "Require pre-check-in before access details", "check", 0, P),
+				S("access_instructions", "Access instructions", "textarea", store=P,
+				  hint="Door codes, parking, Wi-Fi. Released only after payment, deposit and (if set) pre-check-in."),
+			)),
+			Section("holds", "Holds & selling", "", (
+				S("hold_minutes", "Hold unconfirmed bookings for", "number", 120, P, min=5, max=10080, unit="min"),
+				S("sell_message", "Sell message", "textarea", store=P,
+				  hint="Shown in the booking dialog and used by the AI agent as its upsell prompt."),
+			)),
+			Section("dayview", "Hourly view", "The time window on the day-use / hourly tape.", (
+				S("hourly_view_start", "Day starts", "time", "06:00", P),
+				S("hourly_view_end", "Day ends", "time", "23:00", P),
+			)),
+		),
+	),
+	Module(
+		"housekeeping", "Housekeeping", "Task deadlines, room turnover and laundry pricing.",
+		editors=("Hotel Admin", "Housekeeping Supervisor"), toggle=True,
+		related=(("Laundry orders", "/laundry"), ("Room board", "/housekeeping-board")),
+		sections=(
+			Section("sla", "Task deadlines", "How long a housekeeping task may stay open before it is overdue and escalates.", (
+				S("hk_sla_urgent", "Urgent", "number", 20, min=1, max=1440, unit="min", hint=SLA_HINT),
+				S("hk_sla_high", "High", "number", 45, min=1, max=1440, unit="min"),
+				S("hk_sla_medium", "Medium", "number", 90, min=1, max=1440, unit="min"),
+				S("hk_sla_low", "Low", "number", 180, min=1, max=2880, unit="min"),
+			)),
+			Section("turnover", "Room turnover", "The default turnover profile for checkout cleans.", (
+				S("clean_duration_minutes", "Checkout clean takes", "number", 120, "turnover", min=5, max=1440, unit="min"),
+				S("requires_inspection", "Inspect after every checkout clean", "check", 0, "turnover",
+				  hint="A supervisor inspection task is created when the clean is done."),
+				S("inspect_duration_minutes", "Inspection takes", "number", 30, "turnover", min=5, max=480, unit="min"),
+				S("buffer_after_ready_minutes", "Buffer before the room is sellable", "number", 0, "turnover", min=0, max=1440, unit="min"),
+				S("same_day_turn_allowed", "Allow same-day turns", "check", 1, "turnover",
+				  hint="A room may take a new arrival on the day the last guest leaves."),
+			)),
+			Section("laundry", "Laundry", "", (
+				S("laundry_express_multiplier", "Express price", "number", 1.5, min=1, max=5, unit="x regular",
+				  hint="Used when a rate card line leaves its express price blank."),
+			)),
+		),
+	),
+	Module(
+		"operations", "Operations", "Guest request deadlines.",
+		editors=("Hotel Admin",), toggle=True,
+		related=(("Channels", "/channels"), ("SLA report", "/ops-sla")),
+		sections=(
+			Section("sla", "Guest request deadlines", "How long a guest request may stay open before it is overdue.", (
+				S("ticket_sla_urgent", "Urgent", "number", 15, min=1, max=1440, unit="min"),
+				S("ticket_sla_high", "High", "number", 30, min=1, max=1440, unit="min"),
+				S("ticket_sla_medium", "Medium", "number", 60, min=1, max=1440, unit="min"),
+				S("ticket_sla_low", "Low", "number", 240, min=1, max=2880, unit="min"),
+			)),
+		),
+	),
+	Module(
+		"fnb", "F&B", "Restaurant outlets, the menu and table reservations.",
+		editors=("Hotel Admin", "Finance"), toggle=True,
+		related=(("Outlets", "/outlets"), ("Menu", "/menu-items"), ("Kitchen inventory", "/inventory")),
+		sections=(
+			Section("tables", "Table reservations", "Which bookings show against a table on the POS floor.", (
+				S("pos_reservation_before_min", "Show a reservation from", "number", 60, min=0, max=480, unit="min before"),
+				S("pos_reservation_after_min", "Keep showing it until", "number", 240, min=0, max=720, unit="min after"),
+			)),
+		),
+	),
+	Module(
+		"events", "Banquets & Groups", "Quotation margins, payment milestones and follow-ups for functions.",
+		editors=("Hotel Admin", "Revenue Manager"), toggle=True,
+		related=(("Halls & venues", "/venues"), ("Menus & services", "/banquet-catalogue")),
+		sections=(
+			Section("margins", "Quotation margins", "Function quotes are checked against these before they go out.", (
+				S("banquet_target_margin", "Target margin", "number", 40, min=0, max=95, unit="%"),
+				S("banquet_floor_margin", "Floor margin", "number", 25, min=0, max=95, unit="%",
+				  hint="Quotes below this are flagged for approval."),
+			)),
+			Section("payments", "Default payment milestones", "Applied to a new function; each can be changed on the function.", (
+				S("banquet_advance_pct", "Advance at confirmation", "number", 25, min=0, max=100, unit="%"),
+				S("banquet_interim_pct", "Interim payment", "number", 50, min=0, max=100, unit="%"),
+				S("banquet_interim_days", "Interim due", "number", 15, min=0, max=365, unit="days before"),
+			)),
+			Section("followup", "Sales follow-up", "", (
+				S("banquet_follow_up_days", "Follow up an enquiry after", "number", 2, min=0, max=60, unit="days"),
+			)),
+		),
+	),
+	Module(
+		"revenue", "Revenue", "How far the house may oversell, plus demand pricing.",
+		editors=("Hotel Admin", "Revenue Manager"), toggle=True,
+		related=(("Rate plans", "/rate-plans"), ("Seasons", "/seasons"), ("Guardrails", "/guardrails")),
+		sections=(
+			Section("inventory", "Overbooking", "", (
+				S("overbooking_pct", "Overbooking allowance", "number", 0, P, min=0, max=50, unit="%",
+				  hint="0 never oversells. A room type can override this."),
+			)),
+		),
+	),
+	Module(
+		"finance", "Finance", "Room tax, fees and cashier controls.",
+		editors=("Hotel Admin", "Finance"), toggle=True,
+		related=(("Currency desk", "/cashier/fx"), ("Ledgers", "/ledgers")),
+		sections=(
+			Section("tax", "Room tax", "Tax on the room rate. Outlet and service rates come from the country pack.", (
+				S("gst_mode", "Tax mode", "select", "Slab", P, options=("Slab", "Fixed"),
+				  hint="Slab: the rate switches at the threshold per night."),
+				S("gst_slab_threshold", "Slab threshold per night", "number", 7500, P, min=0),
+				S("gst_rate_low", "Rate below threshold", "number", 5, P, min=0, max=100, unit="%"),
+				S("gst_rate_high", "Rate above threshold", "number", 18, P, min=0, max=100, unit="%"),
+				S("rates_include_tax", "Displayed rates include tax", "check", 0, P),
+			)),
+			Section("fees", "Fees & levies", "", (
+				S("room_levy_label", "Room levy name", store=P, hint="Municipality fee, city or tourism tax."),
+				S("room_levy_percent", "Room levy", "number", 0, P, min=0, max=100, unit="%"),
+				S("room_levy_taxable", "Tax applies to the levy", "check", 1, P),
+				S("cleaning_fee", "Cleaning fee per stay", "number", 0, P, min=0),
+				S("cleaning_fee_taxable", "Cleaning fee is taxable", "check", 1, P),
+			)),
+			Section("cashier", "Cashier controls", "", (
+				S("require_cashier_pin", "Require cashier PIN on money actions", "check", 0, P,
+				  hint="Payments, invoices, allowances and settlements re-confirm who is acting. Agents are exempt."),
+				S("pin_max_attempts", "Lock a PIN after", "number", 5, min=3, max=10, unit="wrong tries"),
+				S("pin_lock_minutes", "Lock for / stay unlocked for", "number", 15, min=1, max=240, unit="min"),
+				S("max_cash_refund", "Cash refund limit for new cashiers", "number", 5000, min=0),
+			)),
+		),
+	),
+	Module(
+		"booking-engine", "Booking Engine", "The public /book page: on or off, how it confirms and how guests pay.",
+		editors=("Hotel Admin", "Revenue Manager"), toggle=True,
+		related=(("Hotel profile", "/booking-settings/profile"), ("Photos", "/booking-settings/photos"),
+		         ("FAQ", "/booking-settings/faq"), ("SEO", "/booking-settings/seo")),
+		sections=(
+			Section("page", "Booking page", "", (
+				S("booking_engine_enabled", "Public booking page is live", "check", 1, P),
+				S("booking_mode", "Booking mode", "select", "Instant", P, options=("Instant", "Request to Book")),
+			)),
+			Section("payment", "Guest payment", "", (
+				S("booking_payment_mode", "Guests pay", "select", "Pay at hotel", P,
+				  options=("Pay at hotel", "Advance percent", "Registration fee", "Full online")),
+				S("advance_percent", "Advance", "number", 0, P, min=0, max=100, unit="%",
+				  hint="Used when guests pay an advance percent."),
+				S("registration_fee", "Registration fee", "number", 0, P, min=0,
+				  hint="Used when guests pay a registration fee."),
+			)),
+		),
+	),
+)
+
+BY_ID = {m.id: m for m in MODULES}
+SETTINGS: dict[str, tuple[Module, S]] = {
+	s.key: (m, s) for m in MODULES for sec in m.sections for s in sec.settings
+}
+assert len(SETTINGS) == sum(len(sec.settings) for m in MODULES for sec in m.sections), \
+	"duplicate setting key in the registry"
+
+
+# --- reading -----------------------------------------------------------------
+
+def clear_cache(property: str | None = None):
+	if property:
+		frappe.cache().hdel(CACHE_KEY, property)
+	else:
+		frappe.cache().delete_key(CACHE_KEY)
+
+
+def _kv_values(property: str) -> dict:
+	cached = frappe.cache().hget(CACHE_KEY, property)
+	if cached is not None:
+		return cached
+	rows = frappe.get_all("Property Setting", filters={"property": property},
+	                      fields=["setting_key", "value"])
+	out = {}
+	for r in rows:
+		try:
+			out[r.setting_key] = json.loads(r.value)
+		except (TypeError, ValueError):
+			out[r.setting_key] = r.value
+	frappe.cache().hset(CACHE_KEY, property, out)
+	return out
+
+
+def _turnover_name(property: str) -> str | None:
+	if not frappe.db.exists("DocType", "Turnover Profile"):
+		return None
+	return frappe.db.get_value("Turnover Profile", {"property": property, "is_default": 1}, "name")
+
+
+def get_setting(property: str | None, key: str, default=None):
+	"""The value of one registry setting for a property, or its default.
+	Safe to call from anywhere (scheduler, hooks) - never raises on a
+	missing property or row."""
+	_, spec = SETTINGS[key]
+	fallback = spec.default if default is None else default
+	if not property:
+		return fallback
+	try:
+		if spec.store == "kv":
+			val = _kv_values(property).get(key)
+		elif spec.store == "property":
+			val = frappe.db.get_value("Property", property, key)
+		else:
+			name = _turnover_name(property)
+			val = frappe.db.get_value("Turnover Profile", name, key) if name else None
+	except Exception:
+		return fallback
+	if val is None or val == "":
+		return fallback
+	return _coerce(spec, val)
+
+
+def _coerce(spec: S, val):
+	if spec.type == "number":
+		f = float(val)
+		return int(f) if f.is_integer() and not isinstance(spec.default, float) else f
+	if spec.type == "check":
+		return 1 if val in (1, "1", True, "true") else 0
+	if spec.type == "time":
+		parts = str(val).split(":")
+		return f"{int(parts[0]):02d}:{parts[1][:2] if len(parts) > 1 else '00'}"
+	return val
+
+
+def _values(property: str, module: Module) -> dict:
+	keys = [s for sec in module.sections for s in sec.settings]
+	prop_fields = [s.key for s in keys if s.store == P]
+	prop = frappe.db.get_value("Property", property, prop_fields, as_dict=True) if prop_fields else {}
+	turnover = None
+	if any(s.store == "turnover" for s in keys):
+		name = _turnover_name(property)
+		turnover = frappe.db.get_value("Turnover Profile", name,
+		                               [s.key for s in keys if s.store == "turnover"],
+		                               as_dict=True) if name else {}
+	kv = _kv_values(property)
+	out = {}
+	for s in keys:
+		raw = (prop or {}).get(s.key) if s.store == P else \
+			(turnover or {}).get(s.key) if s.store == "turnover" else kv.get(s.key)
+		out[s.key] = s.default if raw is None or raw == "" else _coerce(s, raw)
+	return out
+
+
+# --- access ------------------------------------------------------------------
+
+def _roles() -> set:
+	return set(frappe.get_roles())
+
+
+def can_edit(module: Module, roles: set | None = None) -> bool:
+	roles = roles if roles is not None else _roles()
+	return bool(roles & (set(ADMIN) | set(module.editors)))
+
+
+def _enabled_modules(property: str) -> list:
+	from kamra.api import ALL_MODULES
+	raw = frappe.db.get_value("Property", property, "enabled_modules")
+	picked = [m.strip() for m in (raw or "").split(",") if m.strip()]
+	return picked or list(ALL_MODULES)
+
+
+# --- endpoints ---------------------------------------------------------------
+
+def _spec_json(s: S) -> dict:
+	d = {"key": s.key, "label": s.label, "type": s.type, "default": s.default,
+	     "hint": s.hint, "store": s.store}
+	for k in ("options", "options_source", "min", "max", "unit"):
+		v = getattr(s, k)
+		if v not in (None, "", ()):
+			d[k] = list(v) if isinstance(v, tuple) else v
+	return d
+
+
+@frappe.whitelist()
+@require_roles("Front Desk", "Finance", "Revenue Manager", "Housekeeping",
+               "Housekeeping Supervisor")
+def settings_schema(property: str) -> dict:
+	"""Every settings page this user may see for the property, with current
+	values. Pages they can't change come back read-only (can_edit=False)."""
+	assert_property_access(property)
+	roles = _roles()
+	enabled = _enabled_modules(property)
+	modules = []
+	for m in MODULES:
+		editable = can_edit(m, roles)
+		if not editable:
+			continue
+		modules.append({
+			"id": m.id, "title": m.title, "description": m.description,
+			"group": m.group, "toggle": m.toggle,
+			"enabled": (m.id in enabled) if m.toggle else True,
+			"editors": list(m.editors), "can_edit": editable,
+			"related": [{"label": a, "to": b} for a, b in m.related],
+			"sections": [{"id": sec.id, "title": sec.title, "description": sec.description,
+			              "settings": [_spec_json(s) for s in sec.settings]} for sec in m.sections],
+			"values": _values(property, m),
+		})
+	return {
+		"modules": modules,
+		"enabled_modules": enabled,
+		"is_admin": bool(roles & set(ADMIN)),
+		"is_it_admin": bool(roles & {"System Manager", "Administrator"}),
+	}
+
+
+def _validate(spec: S, val):
+	if spec.type == "check":
+		return 1 if val in (1, "1", True, "true") else 0
+	if spec.type == "number":
+		if val in (None, ""):
+			return spec.default
+		try:
+			num = float(val)
+		except (TypeError, ValueError):
+			frappe.throw(_("{0} must be a number.").format(_(spec.label)))
+		if spec.min is not None and num < spec.min:
+			frappe.throw(_("{0} can't be below {1}.").format(_(spec.label), spec.min))
+		if spec.max is not None and num > spec.max:
+			frappe.throw(_("{0} can't be above {1}.").format(_(spec.label), spec.max))
+		return int(num) if num.is_integer() and not isinstance(spec.default, float) else num
+	if spec.type == "select" and spec.options and val not in spec.options and val not in ("", None):
+		frappe.throw(_("{0}: pick one of {1}.").format(_(spec.label), ", ".join(spec.options)))
+	if spec.type == "time" and val:
+		try:
+			h, mnt = str(val).split(":")[:2]
+			assert 0 <= int(h) < 24 and 0 <= int(mnt) < 60
+		except Exception:
+			frappe.throw(_("{0} must be a time like 14:00.").format(_(spec.label)))
+		return f"{int(h):02d}:{int(mnt):02d}"
+	return "" if val is None else val
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Finance", "Revenue Manager", "Housekeeping Supervisor")
+def save_settings(property: str, module: str, changes) -> dict:
+	"""Change some settings on one module page. Validates every key against
+	the registry, refuses keys from another module, and writes one
+	Activity log row with the before/after values."""
+	assert_property_access(property)
+	if isinstance(changes, str):
+		changes = json.loads(changes or "{}")
+	mod = BY_ID.get(module)
+	if not mod:
+		frappe.throw(_("Unknown settings page: {0}").format(module))
+	if not can_edit(mod):
+		frappe.throw(_("Your role can't change {0} settings.").format(_(mod.title)),
+		             frappe.PermissionError)
+	if not frappe.db.exists("Property", property):
+		frappe.throw(_("Unknown property."))
+
+	before_all = _values(property, mod)
+	clean: dict = {}
+	for key, val in (changes or {}).items():
+		owner = SETTINGS.get(key)
+		if not owner or owner[0].id != module:
+			frappe.throw(_("{0} isn't a setting on this page.").format(key))
+		clean[key] = _validate(owner[1], val)
+	if not clean:
+		return {"ok": True, "values": before_all}
+
+	by_store: dict[str, dict] = {}
+	for key, val in clean.items():
+		by_store.setdefault(SETTINGS[key][1].store, {})[key] = val
+
+	if by_store.get(P):
+		doc = frappe.get_doc("Property", property)
+		doc.update(by_store[P])
+		doc.save(ignore_permissions=True)  # role checked above; controller validation still runs
+	if by_store.get("turnover"):
+		from kamra.turnover import ensure_default_profile
+		name = ensure_default_profile(property)
+		if name:
+			tp = frappe.get_doc("Turnover Profile", name)
+			tp.update(by_store["turnover"])
+			tp.save(ignore_permissions=True)
+	for key, val in (by_store.get("kv") or {}).items():
+		name = frappe.db.get_value("Property Setting", {"property": property, "setting_key": key})
+		if name:
+			frappe.db.set_value("Property Setting", name, "value", json.dumps(val))
+		else:
+			frappe.get_doc({"doctype": "Property Setting", "property": property,
+			                "setting_key": key, "value": json.dumps(val)}).insert(ignore_permissions=True)
+	clear_cache(property)
+
+	after_all = _values(property, mod)
+	changed = {k: after_all[k] for k in clean if before_all.get(k) != after_all.get(k)}
+	if changed:
+		from kamra.savings import log_action
+		labels = ", ".join(SETTINGS[k][1].label for k in changed)
+		log_action("settings_changed", "Property", property, property=property,
+		           rationale=f"{mod.title} settings: {labels}",
+		           before_snapshot={k: before_all.get(k) for k in changed},
+		           after_snapshot=changed)
+	if "country" in changed or "currency" in changed:
+		frappe.clear_cache()
+	return {"ok": True, "values": after_all, "changed": list(changed)}
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Hotel Admin")
+def set_module_enabled(property: str, module: str, enabled) -> dict:
+	"""Switch one module on or off for the property."""
+	from kamra.api import set_enabled_modules
+	mod = BY_ID.get(module)
+	if not mod or not mod.toggle:
+		frappe.throw(_("{0} can't be switched off.").format(module))
+	on = str(enabled).lower() in ("1", "true")
+	current = set(_enabled_modules(property))
+	current = current | {module} if on else current - {module}
+	res = set_enabled_modules(property, sorted(current))
+	from kamra.savings import log_action
+	log_action("module_enabled" if on else "module_disabled", "Property", property,
+	           property=property, rationale=f"{mod.title} switched {'on' if on else 'off'}")
+	return res

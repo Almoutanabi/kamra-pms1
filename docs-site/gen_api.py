@@ -35,6 +35,8 @@ MODULES = [
     ("dashboards", "Dashboards", ""),
     ("reports", "Reports", ""),
     ("agents_api", "Activity ledger", ""),
+    ("settings", "Settings hub (module settings)", ""),
+    ("staff", "Staff & access", ""),
     ("public_api", "Public (no auth - booking page, QR menu)",
      "These are allow_guest endpoints: no token needed, rate-limited."),
 ]

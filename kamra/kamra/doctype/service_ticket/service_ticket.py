@@ -5,14 +5,21 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import add_to_date, get_datetime, now_datetime
 
-# priority -> minutes to resolve
+# priority -> minutes to resolve. Defaults - each property sets its own in
+# Settings -> Operations (ticket_sla_<priority>).
 SLA_MINUTES = {"Urgent": 15, "High": 30, "Medium": 60, "Low": 240}
+
+
+def sla_minutes(property: str | None, priority: str | None) -> int:
+	from kamra.settings import get_setting
+	p = priority if priority in SLA_MINUTES else "Medium"
+	return int(get_setting(property, f"ticket_sla_{p.lower()}", SLA_MINUTES[p]))
 
 
 class ServiceTicket(Document):
 	def before_insert(self):
 		self.due_by = add_to_date(
-			now_datetime(), minutes=SLA_MINUTES.get(self.priority, 60)
+			now_datetime(), minutes=sla_minutes(self.property, self.priority)
 		)
 
 	def on_update(self):
