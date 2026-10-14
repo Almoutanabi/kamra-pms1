@@ -64,6 +64,7 @@ interface Showcase {
     description: string | null
     base_price: number
     adults_capacity: number
+    children_capacity: number
     bed_type: string | null
     room_view: string | null
     amenities: string[]
@@ -103,6 +104,13 @@ interface StayResult {
 const inputCls =
   "w-full rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-base " +
   "focus:outline-2 focus:outline-offset-1 focus:outline-brand-600"
+
+function clampGuests(value: number, floor: number, cap: number) {
+	const n = Number.isFinite(value) ? value : floor
+	const atLeast = Math.max(floor, n)
+	return cap > 0 ? Math.min(atLeast, cap) : atLeast
+}
+
 
 function todayPlus(days: number) {
   const d = new Date()
@@ -241,6 +249,41 @@ export default function PublicListing() {
   const locationSlug = resolved?.location_slug
   const isSite = resolved?.kind === "site"
   const primary = data?.room_types[0]
+
+  // What can actually be booked here. A listing is capped by its own room
+  // type; a site page by the roomiest listing on it, since the guest has yet
+  // to pick one. Without this the page quotes a party the booking will then
+  // refuse - the guest gets a price, fills in their details, and only finds
+  // out on submit (Reservation.validate_occupancy is the real guard).
+  const capOf = (
+    rts: { adults_capacity: number; children_capacity: number }[] | undefined,
+    field: "adults_capacity" | "children_capacity",
+  ) => {
+    const caps = (rts || []).map((rt) => Number(rt[field]) || 0)
+    return caps.length && caps.every((c) => c > 0) ? Math.max(...caps) : 0
+  }
+  const maxAdults = isSite
+    ? capOf(data?.room_types, "adults_capacity")
+    : Number(primary?.adults_capacity) || 0
+  const maxChildren = isSite
+    ? capOf(data?.room_types, "children_capacity")
+    : Number(primary?.children_capacity) || 0
+  const atAdultCap = maxAdults > 0 && search.adults >= maxAdults
+  const atChildCap = maxChildren > 0 && search.children >= maxChildren
+
+  // The party also arrives in the URL (/stay/slug/in/out/adults/children), so
+  // clamp once the capacity is known - otherwise a shared or edited link walks
+  // straight past the inputs.
+  useEffect(() => {
+    if (!maxAdults && !maxChildren) return
+    setSearch((q) => {
+      const adults = clampGuests(q.adults, 1, maxAdults)
+      const children = clampGuests(q.children, 0, maxChildren)
+      return adults === q.adults && children === q.children
+        ? q
+        : { ...q, adults, children }
+    })
+  }, [maxAdults, maxChildren])
   const siteMeta = useMemo(() => {
     if (!data) return null
     if (isSite && locationSlug) {
@@ -668,15 +711,21 @@ export default function PublicListing() {
                   <input
                     type="number"
                     min={1}
+                    max={maxAdults || undefined}
                     className={inputCls}
                     value={search.adults}
                     onChange={(e) =>
                       setSearch({
                         ...search,
-                        adults: Math.max(1, Number(e.target.value)),
+                        adults: clampGuests(Number(e.target.value), 1, maxAdults),
                       })
                     }
                   />
+                  {atAdultCap && (
+                    <span className="mt-1 block text-xs text-rose-600">
+                      Sleeps up to {maxAdults}
+                    </span>
+                  )}
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium text-zinc-600">
@@ -685,15 +734,21 @@ export default function PublicListing() {
                   <input
                     type="number"
                     min={0}
+                    max={maxChildren || undefined}
                     className={inputCls}
                     value={search.children}
                     onChange={(e) =>
                       setSearch({
                         ...search,
-                        children: Math.max(0, Number(e.target.value)),
+                        children: clampGuests(Number(e.target.value), 0, maxChildren),
                       })
                     }
                   />
+                  {atChildCap && (
+                    <span className="mt-1 block text-xs text-rose-600">
+                      Up to {maxChildren} children
+                    </span>
+                  )}
                 </label>
               </div>
               <p className="text-center text-xs text-zinc-400">
