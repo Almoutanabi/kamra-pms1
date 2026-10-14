@@ -7,6 +7,10 @@ from frappe.model.document import Document
 from frappe.utils import cint, date_diff, formatdate, now_datetime, today
 
 
+class InventoryRefused(frappe.ValidationError):
+	"""No room left to sell: category sold out, room or villa already taken."""
+
+
 class Reservation(Document):
 	def after_insert(self):
 		# every booking gets a pre-arrival check-in link
@@ -82,7 +86,7 @@ class Reservation(Document):
 					_("{0} is sold out for {1}: {2} of {3} rooms sold and "
 					  "the overbooking allowance ({4}%) is used up.").format(
 						self.room_type, d, cnt, total, pct),
-					title=_("Overbooking limit"))
+					title=_("Overbooking limit"), exc=InventoryRefused)
 
 	def validate(self):
 		self.validate_dates()
@@ -386,6 +390,7 @@ class Reservation(Document):
 					self.room, conflict[0][0]
 				),
 				title=_("Double booking blocked"),
+				exc=InventoryRefused,
 			)
 
 	def validate_villa_lockout(self):
@@ -425,6 +430,7 @@ class Reservation(Document):
 						self.property, overlap[0][0]
 					),
 					title=_("Double Booking Blocked"),
+					exc=InventoryRefused,
 				)
 		else:
 			# An individual room is being booked. Check if the Entire Property (Villa) is booked.
@@ -453,6 +459,7 @@ class Reservation(Document):
 						self.property, overlap[0][0]
 					),
 					title=_("Double Booking Blocked"),
+					exc=InventoryRefused,
 				)
 
 	def on_update(self):

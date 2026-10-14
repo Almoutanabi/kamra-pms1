@@ -302,14 +302,18 @@ def _apply_event(conn, e: dict, requested_reason: str | None = None) -> dict:
 			return {"ota_ref": e.get("ota_ref"), "result": "cancel_unmatched"}
 		cancelled, vouchers = [], []
 		for r in rows:
-			if r.status != "Confirmed":
+			if r.status not in ("Confirmed", "Requested"):
 				continue  # idempotent: already cancelled / checked out
 			res = frappe.get_doc("Reservation", r.name)
-			out = _do_cancel(
-				res, reason="Booked elsewhere",
-				note=f"Cancelled by {e.get('channel') or 'OTA'} "
-				     f"({e.get('booking_id') or e.get('ota_ref')})",
-				issue_credit_note=1)
+			note = (f"Cancelled by {e.get('channel') or 'OTA'} "
+			        f"({e.get('booking_id') or e.get('ota_ref')})")
+			if r.status == "Requested":
+				# a retained OTA sale holds no room and took no money
+				_release(res, "Booked elsewhere", note)
+				cancelled.append(r.name)
+				continue
+			out = _do_cancel(res, reason="Booked elsewhere", note=note,
+			                 issue_credit_note=1)
 			cancelled.append(r.name)
 			if out.get("credit_note_voucher"):
 				vouchers.append(out["credit_note_voucher"])
@@ -396,17 +400,22 @@ def _reconcile_booking_rooms(conn, booking_id: str, keep: set) -> None:
 	"""After a modify, a room line the payload no longer carries is a room the
 	guest dropped. Release it (no credit note - a modify is not a cancel)."""
 	for r in _reservations_for_booking(conn.property, booking_id):
-		if r.ota_ref in keep or r.status != "Confirmed":
+		if r.ota_ref in keep or r.status not in ("Confirmed", "Requested"):
 			continue
-		doc = frappe.get_doc("Reservation", r.name)
-		frappe.flags.kamra_cancelling = True
-		try:
-			doc.status = "Cancelled"
-			doc.cancellation_reason = "Other"
-			doc.cancellation_note = f"Room removed on modify by {conn.provider}"
-			doc.save(ignore_permissions=True)
-		finally:
-			frappe.flags.kamra_cancelling = False
+		_release(frappe.get_doc("Reservation", r.name), "Other",
+		         f"Room removed on modify by {conn.provider}")
+
+
+def _release(doc, reason: str, note: str) -> None:
+	"""Cancel without a fee or credit note."""
+	frappe.flags.kamra_cancelling = True
+	try:
+		doc.status = "Cancelled"
+		doc.cancellation_reason = reason
+		doc.cancellation_note = note
+		doc.save(ignore_permissions=True)
+	finally:
+		frappe.flags.kamra_cancelling = False
 
 
 def process_webhook_events(connection: str, payload: dict) -> None:
@@ -431,9 +440,8 @@ def process_webhook_events(connection: str, payload: dict) -> None:
 				conn, booking_id, keep={e.get("ota_ref") for e in events})
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background webhook worker persists the completed booking before returning; reviewed as intentional
 	except Exception as exc:
-		messages = getattr(frappe.local, "message_log", [])
-		capacity_refused = isinstance(exc, frappe.ValidationError) and messages and (
-			messages[-1].get("title") in (frappe._("Overbooking limit"), frappe._("Double Booking Blocked")))
+		from kamra.kamra.doctype.reservation.reservation import InventoryRefused
+		capacity_refused = isinstance(exc, InventoryRefused)
 		frappe.db.rollback()
 		if capacity_refused and action in ("book", "modify"):
 			for e in events:
