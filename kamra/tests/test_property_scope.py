@@ -6,6 +6,8 @@ property link for User Permissions to bite on), and upsert endpoints that
 load a record by `name` before the caller's `property` is applied.
 """
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils import add_days, nowdate
@@ -70,6 +72,73 @@ class PropertyScopeTestCase(IntegrationTestCase):
 
 	def as_desk(self):
 		frappe.set_user(USER)  # nosemgrep: frappe-setuser -- acting as the restricted persona
+
+	def unscoped_desk(self):
+		frappe.db.delete("User Permission", {"user": USER, "allow": "Property"})
+		frappe.clear_cache(user=USER)
+		self.as_desk()
+
+	def test_strict_scope_refuses_staff_without_property_permissions(self):
+		self.unscoped_desk()
+		with patch.dict(frappe.conf, {"kamra_strict_property_scope": True}):
+			with self.assertRaises(frappe.PermissionError):
+				authz.assert_property_access(OTHER)
+			self.assertEqual(authz.restricted_properties(), set())
+
+	def test_legacy_scope_keeps_unscoped_staff_chain_wide(self):
+		self.unscoped_desk()
+		for strict in (None, False):
+			with patch.dict(frappe.conf, {"kamra_strict_property_scope": strict}):
+				self.assertIsNone(authz.restricted_properties())
+				authz.assert_property_access(OTHER)
+
+	def test_strict_scope_keeps_explicit_property_permissions(self):
+		self.as_desk()
+		with patch.dict(frappe.conf, {"kamra_strict_property_scope": True}):
+			authz.assert_property_access(HOME)
+			with self.assertRaises(frappe.PermissionError):
+				authz.assert_property_access(OTHER)
+
+	def test_strict_scope_keeps_administrator_chain_wide(self):
+		with patch.dict(frappe.conf, {"kamra_strict_property_scope": True}):
+			self.assertIsNone(authz.restricted_properties())
+			authz.assert_property_access(OTHER)
+
+	def test_strict_scope_keeps_system_manager_chain_wide(self):
+		user = frappe.get_doc("User", USER)
+		user.add_roles("System Manager")
+		try:
+			self.unscoped_desk()
+			with patch.dict(frappe.conf, {"kamra_strict_property_scope": True}):
+				self.assertIsNone(authz.restricted_properties())
+				authz.assert_property_access(OTHER)
+		finally:
+			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- fixture cleanup
+			user.remove_roles("System Manager")
+
+	def test_strict_scope_keeps_unscoped_agent_behavior(self):
+		user = frappe.get_doc("User", USER)
+		user.add_roles("Kamra Agent")
+		try:
+			self.unscoped_desk()
+			with patch.dict(frappe.conf, {"kamra_strict_property_scope": True}):
+				self.assertIsNone(authz.restricted_properties())
+				authz.assert_property_access(OTHER)
+		finally:
+			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- fixture cleanup
+			user.remove_roles("Kamra Agent")
+
+	def test_strict_scope_does_not_exempt_hotel_admin(self):
+		user = frappe.get_doc("User", USER)
+		user.add_roles("Hotel Admin")
+		try:
+			self.unscoped_desk()
+			with patch.dict(frappe.conf, {"kamra_strict_property_scope": True}):
+				with self.assertRaises(frappe.PermissionError):
+					authz.assert_property_access(OTHER)
+		finally:
+			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- fixture cleanup
+			user.remove_roles("Hotel Admin")
 
 	# ── Frappe's own REST / Desk paths ─────────────────────────────────
 
