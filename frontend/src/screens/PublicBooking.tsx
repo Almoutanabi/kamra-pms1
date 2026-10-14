@@ -76,6 +76,7 @@ interface Showcase {
     description: string | null
     base_price: number
     adults_capacity: number
+    children_capacity: number
     bed_type: string | null
     room_view: string | null
     amenities: string[]
@@ -126,6 +127,13 @@ interface StayResult {
 const inputCls =
   "w-full rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-base " +
   "focus:outline-2 focus:outline-offset-1 focus:outline-brand-600"
+
+function clampGuests(value: number, floor: number, cap: number) {
+	const n = Number.isFinite(value) ? value : floor
+	const atLeast = Math.max(floor, n)
+	return cap > 0 ? Math.min(atLeast, cap) : atLeast
+}
+
 
 function todayPlus(days: number) {
   const d = new Date()
@@ -178,6 +186,32 @@ export default function PublicBooking() {
     }[]
   >([])
   const [data, setData] = useState<Showcase | null>(null)
+
+  // What this property can actually sleep. A property page lists several room
+  // types and the guest has not picked one yet, so the roomiest bounds the
+  // search. Without it the page quotes a party the booking then refuses -
+  // the guest gets a price, fills in their details, and only finds out on
+  // submit (Reservation.validate_occupancy is the real guard).
+  const capAcross = (field: "adults_capacity" | "children_capacity") => {
+    const caps = (data?.room_types || []).map((rt) => Number(rt[field]) || 0)
+    return caps.length && caps.every((c) => c > 0) ? Math.max(...caps) : 0
+  }
+  const maxAdults = capAcross("adults_capacity")
+  const maxChildren = capAcross("children_capacity")
+
+  // The party also arrives in the URL (/book/in/out/adults/children), so clamp
+  // once the capacity is known - otherwise a shared or edited link walks
+  // straight past the inputs.
+  useEffect(() => {
+    if (!maxAdults && !maxChildren) return
+    setSearch((q) => {
+      const adults = clampGuests(q.adults, 1, maxAdults)
+      const children = clampGuests(q.children, 0, maxChildren)
+      return adults === q.adults && children === q.children
+        ? q
+        : { ...q, adults, children }
+    })
+  }, [maxAdults, maxChildren])
   const [search, setSearch] = useState(() => {
     const check_in_date = params.checkin ?? todayPlus(1)
     return {
@@ -537,24 +571,42 @@ export default function PublicBooking() {
               <input
                 type="number"
                 min={1}
+                max={maxAdults || undefined}
                 className={inputCls}
                 value={search.adults}
                 onChange={(e) =>
-                  setSearch({ ...search, adults: Math.max(1, Number(e.target.value)) })
+                  setSearch({
+                    ...search,
+                    adults: clampGuests(Number(e.target.value), 1, maxAdults),
+                  })
                 }
               />
+              {maxAdults > 0 && search.adults >= maxAdults && (
+                <span className="mt-1 block text-xs text-rose-600">
+                  Sleeps up to {maxAdults}
+                </span>
+              )}
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-zinc-500">Children</span>
               <input
                 type="number"
                 min={0}
+                max={maxChildren || undefined}
                 className={inputCls}
                 value={search.children}
                 onChange={(e) =>
-                  setSearch({ ...search, children: Math.max(0, Number(e.target.value)) })
+                  setSearch({
+                    ...search,
+                    children: clampGuests(Number(e.target.value), 0, maxChildren),
+                  })
                 }
               />
+              {maxChildren > 0 && search.children >= maxChildren && (
+                <span className="mt-1 block text-xs text-rose-600">
+                  Up to {maxChildren} children
+                </span>
+              )}
             </label>
           </div>
           <p className="mt-1.5 text-xs text-zinc-400">
