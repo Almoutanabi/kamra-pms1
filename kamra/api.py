@@ -2935,6 +2935,33 @@ def _scrub_stay_ids(res):
 			                    update_modified=False)
 
 
+def cancellation_tier_for(property: str, days_before: int) -> dict | None:
+	"""The tier covering a cancellation this many days before arrival.
+
+	Tiers are bands keyed by the days remaining: 7/0%, 3/50%, 0/100% reads
+	as free beyond a week, half between three and seven days, nothing back
+	inside three. The band with the highest `days_before` at or below the
+	days remaining wins. A property with no tiers keeps the single-window
+	policy, so nothing changes for anyone who has not set them up.
+	"""
+	rows = frappe.get_all(
+		"Cancellation Tier", filters={"parent": property},
+		fields=["days_before", "charge_pct", "label"],
+		order_by="days_before desc")
+	if not rows:
+		return None
+	for t in rows:
+		if int(days_before) >= int(t.days_before or 0):
+			return {"days_before": int(t.days_before or 0),
+			        "charge_pct": float(t.charge_pct or 0),
+			        "label": t.label}
+	# earlier than every band (a late cancellation on a policy whose lowest
+	# band is above zero): the strictest one applies
+	last = rows[-1]
+	return {"days_before": int(last.days_before or 0),
+	        "charge_pct": float(last.charge_pct or 0), "label": last.label}
+
+
 def _cancellation_terms(res):
 	"""Policy + fee estimate for a reservation, before anyone commits."""
 	from frappe.utils import date_diff
@@ -2945,6 +2972,37 @@ def _cancellation_terms(res):
 		"Property", res.property,
 		["free_cancel_days", "cancellation_fee"], as_dict=True)
 	days_before = date_diff(res.check_in_date, nowdate())
+
+	from kamra.pricing import stay_season_rules
+
+	rules = stay_season_rules(res.property, res.check_in_date,
+	                          res.check_out_date, res.room_type)
+	if rules["non_refundable"]:
+		# Peak dates are sold on the understanding that they are not given
+		# back; no band of the policy applies.
+		return {
+			"days_before_arrival": days_before,
+			"free_cancel_days": int(policy.free_cancel_days or 0),
+			"inside_window": True,
+			"fee_basis": "100% of stay",
+			"tier": {"days_before": days_before, "charge_pct": 100.0,
+			         "label": rules["season"] or "Non-refundable dates"},
+			"non_refundable_season": rules["season"],
+			"estimated_fee": policy_fee(res, "", pct=100),
+		}
+
+	tier = cancellation_tier_for(res.property, days_before)
+	if tier:
+		pct = tier["charge_pct"]
+		return {
+			"days_before_arrival": days_before,
+			"free_cancel_days": int(policy.free_cancel_days or 0),
+			"inside_window": pct > 0,
+			"fee_basis": f"{pct:g}% of stay",
+			"tier": tier,
+			"estimated_fee": policy_fee(res, "", pct=pct) if pct else 0.0,
+		}
+
 	inside_window = days_before < int(policy.free_cancel_days or 0)
 	basis = policy.cancellation_fee or "None"
 	fee = policy_fee(res, basis) if inside_window and basis != "None" else 0.0
@@ -2953,6 +3011,7 @@ def _cancellation_terms(res):
 		"free_cancel_days": int(policy.free_cancel_days or 0),
 		"inside_window": inside_window,
 		"fee_basis": basis,
+		"tier": None,
 		"estimated_fee": fee,
 	}
 
@@ -2986,9 +3045,11 @@ def _do_cancel(res, reason: str = "Guest request", note: str | None = None,
 	if terms["inside_window"] and not int(waive_fee or 0) \
 			and terms["fee_basis"] != "None":
 		from kamra.folio import post_policy_fee
+		tier = terms.get("tier")
 		fee = post_policy_fee(
 			res, terms["fee_basis"],
-			f"Cancellation fee ({terms['fee_basis']})")
+			f"Cancellation fee ({terms['fee_basis']})",
+			pct=tier["charge_pct"] if tier else None)
 
 	res.status = "Cancelled"
 	res.cancellation_reason = reason
@@ -3858,7 +3919,8 @@ def booking_options(property: str):
 		"room_types": frappe.get_all(
 			"Room Type", filters={"property": property, "disabled": 0},
 			fields=["name", "room_type_name", "base_price",
-			        "adults_capacity", "children_capacity", "room_category"],
+			        "adults_capacity", "children_capacity", "room_category",
+			        "max_extra_beds"],
 			order_by="base_price asc",
 		),
 		"meal_plans": frappe.get_all(
@@ -3912,12 +3974,14 @@ def _booking_property_policy(property: str) -> dict:
 def get_quote(property: str, room_type: str, check_in_date: str,
               check_out_date: str, adults: int = 2, children: int = 0,
               meal_plan: str | None = None, rate_plan: str | None = None,
-              voucher_code: str | None = None):
+              voucher_code: str | None = None,
+              over_capacity_charge: float = 0):
 	from kamra.pricing import quote
 
 	return quote(property, room_type, check_in_date, check_out_date,
 	             int(adults), int(children), meal_plan or None,
-	             rate_plan or None, voucher_code or None)
+	             rate_plan or None, voucher_code or None,
+	             over_capacity_charge=float(over_capacity_charge or 0))
 
 
 def _find_or_create_guest(guest_name: str, phone: str | None,
@@ -3967,7 +4031,10 @@ def create_booking(property: str, room_type: str, check_in_date: str,
                    room: str | None = None,
                    status: str | None = None,
                    idempotency_key: str | None = None,
-                   hold_expires_on: str | None = None):
+                   hold_expires_on: str | None = None,
+                   over_capacity_reason: str | None = None,
+                   over_capacity_guests: int = 0,
+                   over_capacity_charge: float = 0):
 	"""One-call booking: attach to an existing guest profile when given,
 	else dedup by phone / create one. Optional auto room assignment,
 	voucher applied, price computed by the engine.
@@ -4059,6 +4126,16 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 		doc.status = "Waitlist"
 	elif status:
 		doc.status = status
+
+	# Booking a party above the room's capacity is a decision someone makes
+	# by arrangement; the reason is what records who agreed it, and the
+	# reservation refuses without one.
+	if (over_capacity_reason or "").strip():
+		doc.over_capacity_reason = over_capacity_reason.strip()
+	if over_capacity_guests:
+		doc.over_capacity_guests = int(over_capacity_guests)
+	if over_capacity_charge:
+		doc.over_capacity_charge = float(over_capacity_charge)
 
 	# extras chosen at booking - priced from the Experience, posted to the
 	# folio the moment it opens

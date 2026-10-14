@@ -16,6 +16,31 @@ def _dec(v) -> Decimal:
 	return Decimal(str(v or 0))
 
 
+def small_group_allows_stay(rt, check_in, check_out) -> bool:
+	"""Does the small-group rate survive this particular stay?
+
+	Properties that price small parties per head usually mean it midweek
+	only, and treat a stay that touches a weekend as a weekend stay
+	throughout - you cannot have two nights of a villa at the per-head rate
+	because the first one happened to be a Thursday. `small_group_whole_stay`
+	says so: every night has to fall on a small-group day, or the rate is off
+	for the whole booking.
+
+	Off (the default), each night is judged on its own, which is what a
+	property wanting a simple midweek discount expects.
+	"""
+	if not rt.get("small_group_whole_stay"):
+		return True
+	days = rt.get("small_group_days")
+	if not days:
+		return True
+	nights = max(1, int(date_diff(check_out, check_in) or 0))
+	return all(
+		days_cover(days, getdate(add_days(check_in, i)).strftime("%a").lower())
+		for i in range(nights)
+	)
+
+
 def _small_group_rate(rt, adults: int, date=None) -> Decimal | None:
 	"""Per-person rate for a party smaller than the room type's small-group
 	threshold, or None when the rule does not apply.
@@ -39,30 +64,74 @@ def _small_group_rate(rt, adults: int, date=None) -> Decimal | None:
 	return adults * per_adult
 
 
-def occupancy_rate(rt, adults: int, children: int, date=None) -> Decimal:
+def _extra_adult_charge(rt, adults: int) -> Decimal:
+	"""What guests beyond the base occupancy add, up to the room's capacity.
+
+	The rate card only covers the room as sold - base occupancy plus the
+	extra adults it can take. Anyone beyond the stated capacity is there by
+	arrangement, on a mattress on the floor, and what they cost is agreed
+	with the guest rather than read off a rate card. That amount lives on the
+	booking (`over_capacity_charge`), so the engine stops at capacity and does
+	not invent a price for people it was never asked about.
+	"""
+	base = int(rt.base_occupancy or 2)
+	cap = int(rt.get("adults_capacity") or 0)
+	billable = min(adults, cap) if cap else adults
+	extra = max(0, billable - base)
+	return extra * _dec(rt.extra_adult_price)
+
+
+def occupancy_rate(rt, adults: int, children: int, date=None,
+                   allow_small_group: bool = True) -> Decimal:
 	"""Nightly room rate for a party, from Room Type occupancy pricing.
 
 	`date` is optional and only used by the small-group rule, so every existing
 	caller keeps its behaviour; pass the night being priced to honour
-	`small_group_days`.
+	`small_group_days`. `allow_small_group=False` switches that rate off for
+	the whole stay - see small_group_allows_stay().
 	"""
 	adults = max(1, int(adults or 1))
 	children = int(children or 0)
 
-	small = _small_group_rate(rt, adults, date)
+	small = _small_group_rate(rt, adults, date) if allow_small_group else None
 	if small is not None:
 		rate = small
 	elif adults == 1 and rt.single_occupancy_price:
 		rate = _dec(rt.single_occupancy_price)
 	else:
 		rate = _dec(rt.base_price)
-		extra_adults = max(0, adults - int(rt.base_occupancy or 2))
-		rate += extra_adults * _dec(rt.extra_adult_price)
+		rate += _extra_adult_charge(rt, adults)
 
 	# children between free_child_age and child_age_limit pay child_price;
 	# the API treats older children as adults upstream.
-	rate += children * _dec(rt.child_price)
+	rate += _child_charge(rt, adults, children, priced_per_head=small is not None)
 	return rate
+
+
+def _child_charge(rt, adults: int, children: int,
+                  priced_per_head: bool = False) -> Decimal:
+	"""What the children in a party add to the nightly rate.
+
+	By default every child is charged, which suits a room sold per person.
+	A whole-place let is different: the rate buys the house up to its base
+	occupancy, so a family of six adults and two children in a house that
+	sleeps eight has already paid for all eight - charging the children again
+	bills the same beds twice. `children_within_base_occupancy` switches to
+	that reading, where children fill the base occupancy alongside adults and
+	only the guests beyond it are charged.
+
+	A small-group rate is already per head, so every child is charged there
+	whichever way the flag is set.
+	"""
+	per_child = _dec(rt.child_price)
+	if not children or not per_child:
+		return Decimal(0)
+	if priced_per_head or not rt.get("children_within_base_occupancy"):
+		return children * per_child
+	base = int(rt.base_occupancy or 2)
+	# adults take the base occupancy first; children fill what is left
+	free_seats = max(0, base - adults)
+	return max(0, children - free_seats) * per_child
 
 
 def forecast_occupancy(property: str, date) -> float:
@@ -201,6 +270,44 @@ def rates_include_tax(property: str) -> bool:
 	return bool(frappe.get_cached_doc("Property", property).get("rates_include_tax"))
 
 
+def stay_season_rules(property: str, check_in, check_out,
+                      room_type: str | None = None) -> dict:
+	"""The strictest season rules a stay runs into.
+
+	Peak dates carry more than a price: New Year wants a two-night minimum,
+	December wants no refunds. Those live on the Season that already prices
+	the date, so one record covers the whole rule rather than a separate
+	calendar nobody remembers to update.
+
+	Returns the longest minimum stay any covered night asks for, and whether
+	any of them is non-refundable.
+	"""
+	nights = max(1, int(date_diff(check_out, check_in) or 0))
+	seasons = frappe.get_all(
+		"Season",
+		filters={"property": property, "disabled": 0,
+		         "start_date": ("<=", add_days(check_in, nights - 1)),
+		         "end_date": (">=", check_in),
+		         "room_type": ("in", [room_type, "", None])},
+		fields=["season_name", "start_date", "end_date", "days_of_week",
+		        "minimum_nights", "non_refundable"])
+	min_nights, non_refundable, named = 0, False, None
+	for i in range(nights):
+		date = add_days(check_in, i)
+		day_abbr = getdate(date).strftime("%a").lower()
+		for s in seasons:
+			if not (getdate(s.start_date) <= getdate(date) <= getdate(s.end_date)):
+				continue
+			if not days_cover(s.days_of_week, day_abbr):
+				continue
+			if int(s.minimum_nights or 0) > min_nights:
+				min_nights, named = int(s.minimum_nights), s.season_name
+			if s.non_refundable:
+				non_refundable = True
+	return {"minimum_nights": min_nights, "non_refundable": non_refundable,
+	        "season": named, "nights": nights}
+
+
 def validate_voucher(property: str, voucher_code: str, nights: int,
                      check_limits: bool = True):
 	"""Return the voucher doc if valid, else throw with a guest-readable reason.
@@ -245,6 +352,7 @@ def quote(
 	rate_plan: str | None = None,
 	voucher_code: str | None = None,
 	check_voucher_limits: bool = True,
+	over_capacity_charge: float = 0,
 ) -> dict:
 	nights = date_diff(check_out_date, check_in_date)
 	day_use = nights == 0
@@ -253,6 +361,7 @@ def quote(
 
 	rt = frappe.get_doc("Room Type", room_type)
 	inclusive = rates_include_tax(property)
+	small_ok = small_group_allows_stay(rt, check_in_date, check_out_date)
 
 	nightly = []
 	room_total = Decimal(0)
@@ -262,7 +371,9 @@ def quote(
 	for i in range(max(nights, 1)):
 		date = add_days(check_in_date, i)
 		rate = season_adjust(
-			property, date, occupancy_rate(rt, adults, children, date),
+			property, date,
+			occupancy_rate(rt, adults, children, date,
+			               allow_small_group=small_ok),
 			room_type
 		)
 		# demand pricing: when the house fills past a hurdle tier, the
@@ -272,6 +383,8 @@ def quote(
 			occ_cache[str(date)] = forecast_occupancy(property, date)
 		rate, tier = demand_adjust(property, room_type, date, rate,
 		                           occupancy=occ_cache[str(date)])
+		# guests above capacity, at the price agreed on this booking
+		rate += _dec(over_capacity_charge)
 		gst = room_gst_rate(property, rt, rate)
 		if inclusive:
 			# configured price is gross — back out the taxable value

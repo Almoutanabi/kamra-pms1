@@ -17,6 +17,8 @@
   "adjustment_type",
   "adjustment_value",
   "priority",
+  "minimum_nights",
+  "non_refundable",
   "disabled",
   "days_of_week"
  ],
@@ -83,6 +85,18 @@
    "fieldname": "priority",
    "fieldtype": "Int",
    "label": "Priority"
+  },
+  {
+   "fieldname": "minimum_nights",
+   "fieldtype": "Int",
+   "label": "Minimum Nights",
+   "description": "Shortest stay allowed when this season covers a night. 0 = no minimum."
+  },
+  {
+   "fieldname": "non_refundable",
+   "fieldtype": "Check",
+   "label": "Non-refundable",
+   "description": "A stay touching these dates cannot be cancelled free of charge, whatever the cancellation policy says."
   },
   {
    "default": "0",
