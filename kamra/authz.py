@@ -8,7 +8,7 @@ import json
 from functools import wraps
 
 import frappe
-from frappe.utils import add_to_date, now_datetime
+from frappe.utils import add_to_date, cint, now_datetime
 
 ADMIN = ("System Manager", "Administrator", "Hotel Admin")
 
@@ -64,17 +64,45 @@ SCOPED_ARGS = {
 def restricted_properties(user: str | None = None) -> set[str] | None:
 	"""The properties the user (default: current) is limited to by Frappe
 	User Permissions, or None when they aren't restricted (they see them all).
-	Opt-in strict scope requires staff to have explicit Property permissions."""
+	Opt-in strict scope requires everyone but Administrator / System Manager
+	to have explicit Property permissions."""
 	from frappe.core.doctype.user_permission.user_permission import get_user_permissions
 	user = user or frappe.session.user
 	perms = get_user_permissions(user).get("Property")
 	if perms:
 		return {p.get("doc") for p in perms}
-	if frappe.conf.get("kamra_strict_property_scope") and not (
-		user == "Administrator" or set(frappe.get_roles(user)) & {"System Manager", "Kamra Agent"}
-	):
+	if _strict_scope() and not (user == "Administrator" or "System Manager" in frappe.get_roles(user)):
 		return set()
 	return None
+
+
+def _strict_scope() -> bool:
+	return bool(cint(frappe.conf.get("kamra_strict_property_scope")))
+
+
+def property_query_conditions(user: str | None = None, doctype: str | None = None) -> str:
+	"""permission_query_conditions hook for property-linked doctypes. Only
+	under strict scope: a user without Property permissions then lists none,
+	not every hotel. Otherwise Frappe's own User Permissions apply as before."""
+	if not _strict_scope() or not doctype:
+		return ""
+	allowed = restricted_properties(user)
+	if allowed is None:
+		return ""
+	if not allowed:
+		return "1=0"
+	props = ", ".join(frappe.db.escape(p) for p in sorted(allowed))
+	return f"`tab{doctype}`.`property` IN ({props})"
+
+
+def property_has_permission(doc, ptype: str | None = None, user: str | None = None,
+                            debug: bool = False) -> bool:
+	"""has_permission hook matching property_query_conditions for single
+	records. Frappe treats a falsy return as a deny."""
+	if not _strict_scope():
+		return True
+	allowed = restricted_properties(user)
+	return allowed is None or doc.get("property") in allowed
 
 
 def assert_property_access(property: str | None):
