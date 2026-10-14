@@ -63,10 +63,18 @@ SCOPED_ARGS = {
 
 def restricted_properties(user: str | None = None) -> set[str] | None:
 	"""The properties the user (default: current) is limited to by Frappe
-	User Permissions, or None when they aren't restricted (they see them all)."""
+	User Permissions, or None when they aren't restricted (they see them all).
+	Opt-in strict scope requires staff to have explicit Property permissions."""
 	from frappe.core.doctype.user_permission.user_permission import get_user_permissions
-	perms = get_user_permissions(user or frappe.session.user).get("Property")
-	return {p.get("doc") for p in perms} if perms else None
+	user = user or frappe.session.user
+	perms = get_user_permissions(user).get("Property")
+	if perms:
+		return {p.get("doc") for p in perms}
+	if frappe.conf.get("kamra_strict_property_scope") and not (
+		user == "Administrator" or set(frappe.get_roles(user)) & {"System Manager", "Kamra Agent"}
+	):
+		return set()
+	return None
 
 
 def assert_property_access(property: str | None):
