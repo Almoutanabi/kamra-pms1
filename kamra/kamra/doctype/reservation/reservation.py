@@ -116,6 +116,21 @@ class Reservation(Document):
 				title=_("Minimum stay"),
 			)
 
+		# Peak dates can ask for longer than the property's own floor - a
+		# two-night minimum over New Year, say - and the rule lives on the
+		# Season that already prices those nights.
+		from kamra.pricing import stay_season_rules
+
+		rules = stay_season_rules(self.property, self.check_in_date,
+		                          self.check_out_date, self.room_type)
+		if rules["minimum_nights"] > nights:
+			frappe.throw(
+				_("{0} needs a stay of at least {1} nights.").format(
+					rules["season"] or _("These dates"),
+					rules["minimum_nights"]),
+				title=_("Minimum stay"),
+			)
+
 	def validate_status_transition(self):
 		if self.is_new():
 			return
@@ -152,16 +167,33 @@ class Reservation(Document):
 				title=_("Room capacity"))
 		cap = frappe.db.get_value(
 			"Room Type", self.room_type,
-			["adults_capacity", "children_capacity", "room_type_name"],
+			["adults_capacity", "children_capacity", "room_type_name",
+			 "max_extra_beds"],
 			as_dict=True,
 		) or frappe._dict()
+
+		# A room can take a few more than it sleeps comfortably, by
+		# arrangement - a family with one more child, a group happy to share.
+		# That is a decision someone makes and signs their name to, so it
+		# needs a reason and stops at the extra beds the room type allows.
+		beds = cint(cap.max_extra_beds)
+		stated = (self.get("over_capacity_reason") or "").strip()
+		allowance = beds if stated else 0
+		if beds and adults > cint(cap.adults_capacity) and not stated:
+			frappe.throw(_(
+				"{0} sleeps {1}. Up to {2} more can be booked by arrangement "
+				"- give a reason on the booking to record who agreed it."
+			).format(cap.room_type_name or self.room_type,
+			         cint(cap.adults_capacity), beds),
+				title=_("Over room capacity"))
+
 		over = []
-		if cint(cap.adults_capacity) and adults > cint(cap.adults_capacity):
+		if cint(cap.adults_capacity) and adults > cint(cap.adults_capacity) + allowance:
 			over.append(_("{0} adults (max {1})").format(
-				adults, cint(cap.adults_capacity)))
-		if cint(cap.children_capacity) and children > cint(cap.children_capacity):
+				adults, cint(cap.adults_capacity) + allowance))
+		if cint(cap.children_capacity) and children > cint(cap.children_capacity) + allowance:
 			over.append(_("{0} children (max {1})").format(
-				children, cint(cap.children_capacity)))
+				children, cint(cap.children_capacity) + allowance))
 		if over:
 			frappe.throw(_(
 				"{0} can't sleep {1}. Reduce the party, pick a bigger room "

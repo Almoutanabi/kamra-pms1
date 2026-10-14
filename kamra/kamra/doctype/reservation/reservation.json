@@ -89,6 +89,9 @@
   "sb_extras",
   "purpose",
   "extra_beds",
+  "over_capacity_guests",
+  "over_capacity_charge",
+  "over_capacity_reason",
   "infants",
   "cb_extras",
   "valet_parking",
@@ -529,14 +532,14 @@
    "label": "Occupants"
   },
   {
-   "description": "Everyone staying in the room \u2014 the legal hotel register. Printed on the GRC.",
+   "description": "Everyone staying in the room — the legal hotel register. Printed on the GRC.",
    "fieldname": "occupants",
    "fieldtype": "Table",
    "label": "Occupants",
    "options": "Stay Occupant"
   },
   {
-   "description": "Extras chosen at booking \u2014 posted to the guest folio when it opens.",
+   "description": "Extras chosen at booking — posted to the guest folio when it opens.",
    "fieldname": "addons",
    "fieldtype": "Table",
    "label": "Add-ons",
@@ -693,6 +696,24 @@
    "fieldname": "extra_beds",
    "fieldtype": "Int",
    "label": "Extra Beds"
+  },
+  {
+   "fieldname": "over_capacity_guests",
+   "fieldtype": "Int",
+   "label": "Extra Guests By Arrangement",
+   "description": "How many guests above the room type's capacity this booking carries."
+  },
+  {
+   "fieldname": "over_capacity_charge",
+   "fieldtype": "Currency",
+   "label": "Extra Guest Charge / Night",
+   "description": "The amount agreed for those guests, per night. Posts to the folio with the room charge."
+  },
+  {
+   "fieldname": "over_capacity_reason",
+   "fieldtype": "Small Text",
+   "label": "Over-capacity Reason",
+   "description": "Required to book above the room type's capacity. Allowed only up to the extra beds the room type permits."
   },
   {
    "fieldname": "infants",
