@@ -134,3 +134,49 @@ class ChannelManagerBookingTestCase(IntegrationTestCase):
 		payload["rooms"][0]["occupancy"]["adults"] = 3
 		self.deliver(payload)
 		self.assertFalse(frappe.db.exists("Reservation", {"property": self.property, "ota_ref": self.ref}))
+
+	def test_ota_cancel_cancels_retained_requested_booking(self):
+		self.sold_out()
+		self.deliver(self.payload())
+		self.assertEqual(self.received().status, "Requested")
+		self.deliver({"action": "cancel", "hotelCode": "demo", "channel": "Booking.com",
+			"bookingId": self.ref})
+		doc = self.received()
+		self.assertEqual(doc.status, "Cancelled")
+		self.assertIn(self.ref, doc.cancellation_note or "")
+
+	def test_modify_dropping_a_retained_room_cancels_it(self):
+		self.deliver(self.payload(rooms=3))
+		for i in range(3):
+			self.assertEqual(self.received(f"{self.ref}-{i}").status, "Requested")
+		payload = self.payload(rooms=2)
+		payload["action"] = "modify"
+		self.deliver(payload)
+		self.assertEqual(self.received(f"{self.ref}-0").status, "Requested")
+		self.assertEqual(self.received(f"{self.ref}-1").status, "Requested")
+		self.assertEqual(self.received(f"{self.ref}-2").status, "Cancelled")
+
+	def test_physical_room_double_booking_is_retained_as_requested(self):
+		"""The room-overlap refusal ("Double booking blocked") is an inventory
+		refusal too, whatever its message title says."""
+		frappe.get_doc({"doctype": "Room", "property": self.property,
+			"room_type": self.room_type, "room_number": "102"}).insert(ignore_permissions=True)
+		taken = frappe.db.get_value("Room", {"property": self.property, "room_number": "101"})
+		holder = self.sold_out()
+		frappe.db.set_value("Reservation", holder.name, "room", taken)
+		original = cm._apply_event
+
+		def assign_taken_room(conn, e, requested_reason=None):
+			out = original(conn, e, requested_reason=requested_reason)
+			if not requested_reason and out.get("reservation"):
+				doc = frappe.get_doc("Reservation", out["reservation"])
+				doc.room = taken
+				doc.save(ignore_permissions=True)
+			return out
+
+		with patch.object(cm, "_apply_event", side_effect=assign_taken_room):
+			self.deliver(self.payload())
+		doc = self.received()
+		self.assertEqual(doc.status, "Requested")
+		self.assertIn("OTA overbooking — resolve", doc.special_requests)
+		self.assertFalse(doc.room)
