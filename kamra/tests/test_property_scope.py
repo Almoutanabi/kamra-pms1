@@ -31,7 +31,7 @@ def _guest(first: str) -> str:
 		ignore_permissions=True).name
 
 
-def _stay(guest: str, prop: str) -> None:
+def _stay(guest: str, prop: str) -> str:
 	# validation (room types, rates) is beside the point here; the scope
 	# rule only reads guest + property
 	doc = frappe.get_doc({
@@ -41,6 +41,15 @@ def _stay(guest: str, prop: str) -> None:
 	})
 	doc.set_new_name()
 	doc.db_insert()
+	return doc.name
+
+
+def _record(doctype: str, prop: str) -> str:
+	# a bare row is enough: the scope rule only reads the property link
+	doc = frappe.get_doc({"doctype": doctype, "property": prop})
+	doc.name = "TEST-SCOPE-" + frappe.generate_hash(length=10)
+	doc.db_insert()
+	return doc.name
 
 
 class PropertyScopeTestCase(IntegrationTestCase):
@@ -62,9 +71,9 @@ class PropertyScopeTestCase(IntegrationTestCase):
 		frappe.clear_cache(user=USER)
 
 		self.mine = _guest("ScopeMine")
-		_stay(self.mine, HOME)
+		self.my_stay = _stay(self.mine, HOME)
 		self.theirs = _guest("ScopeTheirs")
-		_stay(self.theirs, OTHER)
+		self.their_stay = _stay(self.theirs, OTHER)
 		self.fresh = _guest("ScopeFresh")  # no stays anywhere yet
 
 	def tearDown(self):
@@ -116,17 +125,93 @@ class PropertyScopeTestCase(IntegrationTestCase):
 			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- fixture cleanup
 			user.remove_roles("System Manager")
 
-	def test_strict_scope_keeps_unscoped_agent_behavior(self):
+	def test_strict_scope_does_not_exempt_kamra_agent(self):
 		user = frappe.get_doc("User", USER)
 		user.add_roles("Kamra Agent")
 		try:
 			self.unscoped_desk()
 			with patch.dict(frappe.conf, {"kamra_strict_property_scope": True}):
-				self.assertIsNone(authz.restricted_properties())
-				authz.assert_property_access(OTHER)
+				self.assertEqual(authz.restricted_properties(), set())
+				with self.assertRaises(frappe.PermissionError):
+					authz.assert_property_access(OTHER)
 		finally:
 			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- fixture cleanup
 			user.remove_roles("Kamra Agent")
+
+	def test_strict_scope_reads_site_config_as_integer(self):
+		self.unscoped_desk()
+		with patch.dict(frappe.conf, {"kamra_strict_property_scope": "0"}):
+			self.assertIsNone(authz.restricted_properties())
+		with patch.dict(frappe.conf, {"kamra_strict_property_scope": "1"}):
+			self.assertEqual(authz.restricted_properties(), set())
+
+	# ── strict scope on Frappe's own list / document reads ─────────────
+
+	def listed_properties(self, doctype="Reservation"):
+		return set(frappe.get_list(doctype, filters={"property": ["in", [HOME, OTHER]]},
+		                           pluck="property", limit_page_length=0))
+
+	def test_legacy_scope_lists_every_property_to_unscoped_staff(self):
+		self.unscoped_desk()
+		self.assertEqual(self.listed_properties(), {HOME, OTHER})
+		self.assertTrue(frappe.has_permission("Reservation", "read", self.their_stay))
+
+	def test_strict_scope_lists_nothing_to_unscoped_staff(self):
+		self.unscoped_desk()
+		with patch.dict(frappe.conf, {"kamra_strict_property_scope": 1}):
+			self.assertEqual(self.listed_properties(), set())
+			self.assertFalse(frappe.has_permission("Reservation", "read", self.their_stay))
+			with self.assertRaises(frappe.PermissionError):
+				frappe.client.get("Reservation", self.their_stay)
+
+	def test_strict_scope_lists_only_permitted_property(self):
+		self.as_desk()
+		with patch.dict(frappe.conf, {"kamra_strict_property_scope": 1}):
+			self.assertEqual(self.listed_properties(), {HOME})
+			self.assertTrue(frappe.has_permission("Reservation", "read", self.my_stay))
+			self.assertFalse(frappe.has_permission("Reservation", "read", self.their_stay))
+
+	def test_strict_scope_covers_property_linked_doctypes(self):
+		names = {dt: _record(dt, OTHER) for dt in ("Folio", "Room", "Housekeeping Task")}
+		user = frappe.get_doc("User", USER)
+		user.add_roles("Hotel Admin")
+		try:
+			self.unscoped_desk()
+			with patch.dict(frappe.conf, {"kamra_strict_property_scope": 1}):
+				for doctype, name in names.items():
+					self.assertEqual(self.listed_properties(doctype), set(), doctype)
+					self.assertFalse(frappe.has_permission(doctype, "read", name), doctype)
+		finally:
+			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- fixture cleanup
+			user.remove_roles("Hotel Admin")
+
+	def test_strict_scope_keeps_system_manager_lists_chain_wide(self):
+		user = frappe.get_doc("User", USER)
+		user.add_roles("System Manager")
+		try:
+			self.unscoped_desk()
+			with patch.dict(frappe.conf, {"kamra_strict_property_scope": 1}):
+				self.assertEqual(self.listed_properties(), {HOME, OTHER})
+		finally:
+			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- fixture cleanup
+			user.remove_roles("System Manager")
+
+	def test_every_property_linked_doctype_is_scoped(self):
+		linked = {
+			row.parent for row in frappe.get_all(
+				"DocField", filters={"fieldname": "property", "fieldtype": "Link",
+				                     "options": "Property", "parenttype": "DocType"},
+				fields=["parent"])
+			if frappe.db.get_value("DocType", row.parent, "module") == "Kamra"
+			and not frappe.get_meta(row.parent).istable
+			and not frappe.get_meta(row.parent).issingle
+		}
+		self.assertTrue({"Reservation", "Folio", "Room", "Housekeeping Task"} <= linked)
+		queries = frappe.get_hooks("permission_query_conditions")
+		checks = frappe.get_hooks("has_permission")
+		for doctype in sorted(linked):
+			self.assertIn("kamra.authz.property_query_conditions", queries.get(doctype, []), doctype)
+			self.assertIn("kamra.authz.property_has_permission", checks.get(doctype, []), doctype)
 
 	def test_strict_scope_does_not_exempt_hotel_admin(self):
 		user = frappe.get_doc("User", USER)
