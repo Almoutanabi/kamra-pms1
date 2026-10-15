@@ -256,12 +256,22 @@ def _room_gst(reservation) -> float:
 def _nightly_room_rate(reservation, date) -> float:
 	"""Taxable nightly rate: seasons applied, tax backed out when the
 	property configures tax-inclusive pricing."""
-	from kamra.pricing import occupancy_rate, rates_include_tax, room_gst_rate, season_adjust
+	from kamra.pricing import (
+		occupancy_rate, rates_include_tax, room_gst_rate, season_adjust,
+		small_group_allows_stay,
+	)
 
 	rt = frappe.get_doc("Room Type", reservation.room_type)
-	base = occupancy_rate(rt, reservation.adults, reservation.children, date)
+	base = occupancy_rate(
+		rt, reservation.adults, reservation.children, date,
+		allow_small_group=small_group_allows_stay(
+			rt, reservation.check_in_date, reservation.check_out_date))
 	rate = season_adjust(reservation.property, date, base,
 	                     reservation.room_type)
+	# Guests above the room's capacity are there by arrangement at a price
+	# agreed on the booking, so it rides the room night rather than sitting
+	# in a separate line the desk has to remember to post.
+	rate += Decimal(str(reservation.get("over_capacity_charge") or 0))
 	if rates_include_tax(reservation.property):
 		gst = room_gst_rate(reservation.property, rt, rate)
 		rate = rate / (Decimal(1) + gst / Decimal(100))
@@ -269,12 +279,18 @@ def _nightly_room_rate(reservation, date) -> float:
 
 
 def _nightly_gst(reservation, date) -> float:
-	from kamra.pricing import occupancy_rate, room_gst_rate, season_adjust
+	from kamra.pricing import (
+		occupancy_rate, room_gst_rate, season_adjust, small_group_allows_stay,
+	)
 
 	rt = frappe.get_doc("Room Type", reservation.room_type)
-	base = occupancy_rate(rt, reservation.adults, reservation.children, date)
+	base = occupancy_rate(
+		rt, reservation.adults, reservation.children, date,
+		allow_small_group=small_group_allows_stay(
+			rt, reservation.check_in_date, reservation.check_out_date))
 	gross = season_adjust(reservation.property, date, base,
 	                      reservation.room_type)
+	gross += Decimal(str(reservation.get("over_capacity_charge") or 0))
 	return float(room_gst_rate(reservation.property, rt, gross))
 
 
@@ -526,9 +542,17 @@ def split_charge(from_folio: str, charge_row: str, to_folio: str,
 	return {"kept": float(remainder), "moved": float(part)}
 
 
-def policy_fee(reservation, basis: str) -> float:
+def policy_fee(reservation, basis: str, pct: float | None = None) -> float:
 	"""₹ for a cancellation/no-show fee basis: 'First Night' or
-	'Full Stay' (pre-tax; GST rides on the folio line)."""
+	'Full Stay' (pre-tax; GST rides on the folio line).
+
+	`pct` charges that percentage of the stay instead, which is what a
+	tiered cancellation policy needs - "50% between three and seven days"
+	is neither one night nor the whole stay.
+	"""
+	if pct is not None:
+		return round(float(reservation.amount_before_tax or 0)
+		             * float(pct) / 100.0, 2)
 	if basis == "First Night":
 		return float(_nightly_room_rate(reservation,
 		                                reservation.check_in_date))
@@ -537,10 +561,13 @@ def policy_fee(reservation, basis: str) -> float:
 	return 0.0
 
 
-def post_policy_fee(reservation, basis: str, label: str) -> float:
+def post_policy_fee(reservation, basis: str, label: str,
+                    pct: float | None = None) -> float:
 	"""Open the guest folio and post a policy fee (no-show / late
-	cancellation). Returns the pre-tax amount posted."""
-	amount = policy_fee(reservation, basis)
+	cancellation). Returns the pre-tax amount posted.
+
+	`pct` posts that percentage of the stay, for a tiered policy."""
+	amount = policy_fee(reservation, basis, pct=pct)
 	if amount <= 0:
 		return 0.0
 	folio = frappe.get_doc("Folio", open_folio(reservation))
