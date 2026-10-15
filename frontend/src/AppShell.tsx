@@ -57,6 +57,9 @@ export interface ShellContext {
   refreshKey: number
   canBook: boolean
   openBooking: (initial: BookingInitial) => void
+  /** The property's enabled_modules (empty = all; undefined while loading) -
+   *  the same filter the sidebar and MCP apply. */
+  modules?: string[]
 }
 
 // mirrors @require_roles on kamra.api.create_booking / walk_in (admins always pass)
@@ -444,6 +447,7 @@ export default function AppShell() {
               {
                 refreshKey,
                 canBook,
+                modules,
                 openBooking: (initial) => {
                   if (canBook) setBooking(initial)
                 },

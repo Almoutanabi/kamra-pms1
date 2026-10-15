@@ -102,6 +102,9 @@ export const locale = () => cache
 export const cur = () => cache.currency_symbol
 /** The number-formatting locale, e.g. "en-IN" (lakhs) or "id-ID". */
 export const moneyLocale = () => cache.locale
+export const fmtMoney = (n: unknown) =>
+  cache.currency_symbol +
+  Number(n ?? 0).toLocaleString(cache.locale, { maximumFractionDigits: 2 })
 export const taxRates = () => cache.tax_rates
 export const taxLabel = () => cache.tax_label
 

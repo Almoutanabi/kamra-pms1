@@ -40,6 +40,9 @@ interface AuditResult {
   amount_posted?: number
   no_shows_flagged?: number
   folios_opened?: number
+  late_arrivals_held?: number
+  no_show_fees_waived?: number
+  held_late_arrivals?: { reservation: string; guest_name?: string; eta?: string | null; reason: string }[]
 }
 
 export default function Billing() {
@@ -63,7 +66,7 @@ export default function Billing() {
     listResource("Night Audit Run", {
       fields: [
         "name", "business_date", "status", "room_charges_posted",
-        "amount_posted", "no_shows_flagged", "folios_opened", "creation",
+        "amount_posted", "no_shows_flagged", "folios_opened", "late_arrivals_held", "creation",
       ],
       filters: [["property", "=", getCurrentProperty()]],
       orderBy: "creation desc",
@@ -132,7 +135,37 @@ export default function Billing() {
                   noShows: audit.no_shows_flagged ?? 0,
                   s3: audit.no_shows_flagged === 1 ? "" : "s",
                 })}
+                {(audit.no_show_fees_waived ?? 0) > 0 && (
+                  <>
+                    {" "}
+                    {t("No-show fee waived on {n} OTA booking(s).", { n: audit.no_show_fees_waived ?? 0 })}
+                  </>
+                )}
               </p>
+            )}
+            {!audit.already_ran && (audit.held_late_arrivals?.length ?? 0) > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <div className="text-xs font-medium uppercase tracking-wider text-amber-800">
+                  {t("Held late arrivals")}
+                </div>
+                <p className="mt-0.5 text-xs text-amber-700">
+                  {t("Still Due In. The next night audit marks them no-show if they have not checked in.")}
+                </p>
+                <ul className="mt-1.5 space-y-1 text-sm text-amber-900">
+                  {audit.held_late_arrivals!.map((h) => (
+                    <li key={h.reservation} className="flex flex-wrap gap-x-2">
+                      <button
+                        type="button"
+                        className="font-medium hover:underline"
+                        onClick={() => navigate(`/reservations?q=${encodeURIComponent(h.reservation)}`)}
+                      >
+                        {h.guest_name || h.reservation}
+                      </button>
+                      <span className="text-amber-700">· {h.reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </CardContent>
         )}
@@ -160,6 +193,8 @@ export default function Billing() {
                       noShows: Number(r.no_shows_flagged) || 0,
                       s3: Number(r.no_shows_flagged) === 1 ? "" : "s",
                     })}
+                    {Number(r.late_arrivals_held) > 0 &&
+                      ` · ${t("{n} late arrival(s) held", { n: Number(r.late_arrivals_held) })}`}
                   </span>
                   <span className="text-xs text-zinc-400">
                     {t("ran {when}", { when: fmtWhen(r.creation) })}

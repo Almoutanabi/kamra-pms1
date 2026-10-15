@@ -74,6 +74,7 @@
   "precheckin_verified_on",
   "precheckin_link_sent",
   "eta",
+  "late_arrival",
   "sb_arrival",
   "arrival_mode",
   "arrival_ref",
@@ -111,6 +112,8 @@
   "advance_due",
   "payment_policy",
   "quote_snapshot",
+  "night_rates",
+  "rate_lock_key",
   "access_released",
   "access_released_on"
  ],
@@ -486,6 +489,13 @@
    "label": "Guest ETA"
   },
   {
+   "default": "0",
+   "description": "Guest is arriving late. The night audit holds a late arrival as Due In instead of marking it a no-show, and the next audit decides if they still have not arrived.",
+   "fieldname": "late_arrival",
+   "fieldtype": "Check",
+   "label": "Late Arrival"
+  },
+  {
    "fieldname": "travel_agent",
    "fieldtype": "Link",
    "label": "Travel Agent",
@@ -602,6 +612,22 @@
    "label": "Quote Snapshot",
    "options": "JSON",
    "read_only": 1
+  },
+  {
+   "description": "The room rate confirmed for each night at booking. The folio bills these rates; later rate or season changes do not alter them. An amendment re-quotes them after the desk confirms the new price.",
+   "fieldname": "night_rates",
+   "fieldtype": "Table",
+   "label": "Confirmed Night Rates",
+   "options": "Reservation Night Rate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rate_lock_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Rate Lock Key",
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "default": "0",
@@ -754,7 +780,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-01 18:00:00.000000",
+ "modified": "2026-10-15 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kamra",
  "name": "Reservation",

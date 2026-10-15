@@ -524,6 +524,9 @@ export const reservationsConfig: ScreenConfig = {
       field: "status",
       label: "Status",
       options: [
+        "Requested",
+        "Held",
+        "Pending Payment",
         "Waitlist",
         "Confirmed",
         "Checked In",

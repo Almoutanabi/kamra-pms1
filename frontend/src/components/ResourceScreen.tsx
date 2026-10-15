@@ -167,6 +167,7 @@ function FieldInput(props: {
 const BADGE_TONES: Record<string, "green" | "sky" | "amber" | "rose" | "zinc"> = {
   Confirmed: "green", "Checked In": "sky", "Checked Out": "zinc",
   Cancelled: "rose", "No Show": "rose", Waitlist: "amber",
+  Requested: "amber", Held: "amber", "Pending Payment": "amber",
   Open: "amber", Closed: "zinc", Enquiry: "amber", Completed: "zinc",
   Clean: "green", Dirty: "amber", Inspected: "sky", "Out of Order": "rose",
   "In Progress": "sky", Done: "green",

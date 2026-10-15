@@ -60,19 +60,43 @@ Rules:
 # tool name → (kamra.api function, description, JSON-schema params,
 # inject property?, mutating? - mutating calls are audit-logged)
 EXTRA_TOOLS = {
+	"amend_stay_preview": (
+		"amend_stay_preview",
+		"What new dates would do to a stay's bill (current vs new total, new "
+		"nightly rates). Read-only - call before amend_stay.",
+		{"reservation": {"type": "string"}, "check_in_date": {"type": "string"},
+		 "check_out_date": {"type": "string"}}, False, False),
 	"amend_stay": (
 		"amend_stay",
-		"Change a stay's dates (extend/shorten). Re-prices and re-checks overlaps.",
+		"Change a stay's dates (extend/shorten). Re-prices and re-checks "
+		"overlaps. When the total changes it is refused unless confirm_price=1: "
+		"run amend_stay_preview, tell the user the new price, and only pass "
+		"confirm_price=1 once they agree.",
 		{"reservation": {"type": "string"}, "check_in_date": {"type": "string"},
-		 "check_out_date": {"type": "string"}}, False, True),
+		 "check_out_date": {"type": "string"},
+		 "confirm_price": {"type": "integer"}}, False, True),
 	"move_room": (
 		"move_reservation",
 		"Move OR upgrade a stay to a different room - a same-type swap, or a "
 		"different type (upgrade/downgrade, e.g. Standard -> Suite). The stay's "
 		"room type follows the room it moves into. Call movable_rooms first to "
-		"pick a room that is free for the dates.",
-		{"reservation": {"type": "string"}, "new_room": {"type": "string"}},
+		"pick a room that is free for the dates. A different type re-prices: "
+		"check room_move_preview and pass confirm_price=1 once the new price "
+		"is agreed.",
+		{"reservation": {"type": "string"}, "new_room": {"type": "string"},
+		 "confirm_price": {"type": "integer"}},
 		False, True),
+	"room_move_preview": (
+		"room_move_preview",
+		"What moving a stay to a room would do to its bill. Read-only.",
+		{"reservation": {"type": "string"}, "new_room": {"type": "string"}},
+		False, False),
+	"set_late_arrival": (
+		"set_late_arrival",
+		"Flag a confirmed arrival as arriving late (late_arrival=1, optional "
+		"eta) so the night audit holds it instead of marking a no-show; 0 clears.",
+		{"reservation": {"type": "string"}, "late_arrival": {"type": "integer"},
+		 "eta": {"type": "string"}}, False, True),
 	"movable_rooms": (
 		"movable_rooms",
 		"Rooms this stay could move into - across ALL room types - each flagged "
