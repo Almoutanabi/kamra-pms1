@@ -26,7 +26,10 @@ upgrade-breaking changes (removed doctypes / API contracts).
   quotation, desk-led guest response, department checklists + notify on
   Confirm (Sales/Finance/HK/F&B), and quote no-response chase reminders
 
-### Features (next release)
+## [2.6.14](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.13...v2.6.14) (2026-10-15)
+
+
+### Features
 
 * **front desk:** Request to Book inbox on Today, with Accept (assigns a room,
   re-checks availability) and Decline (reason required, guest notified where
@@ -48,7 +51,7 @@ upgrade-breaking changes (removed doctypes / API contracts).
   versa; unused group-block rooms are held until the cutoff, then released
   automatically ([#207](https://github.com/Kamra-PMS/kamra-pms/pull/207))
 
-### Bug Fixes (next release)
+### Bug Fixes
 
 * **ledger:** room nights, meal plans, levies, fees, add-ons and POS room
   charges now reach the ledger, and company payments clear AR; patches
@@ -65,6 +68,7 @@ upgrade-breaking changes (removed doctypes / API contracts).
   crash the reset ([#204](https://github.com/Kamra-PMS/kamra-pms/pull/204))
 * **performance:** the first page load downloads about a third less
   JavaScript; React and the router are cached across releases ([#208](https://github.com/Kamra-PMS/kamra-pms/pull/208))
+
 
 ## [2.6.13](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.12...v2.6.13) (2026-10-15)
 
