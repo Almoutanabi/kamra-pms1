@@ -1265,5 +1265,13 @@
   "One day later": "بعد يوم واحد",
   "Hold late arrivals until the next audit": "احتجاز الوصول المتأخر حتى التدقيق التالي",
   "No no-show fee on OTA bookings": "بلا رسوم عدم حضور على حجوزات وكالات السفر الإلكترونية",
-  "Release non-guaranteed arrivals at": "إلغاء الحجوزات غير المضمونة عند"
+  "Release non-guaranteed arrivals at": "إلغاء الحجوزات غير المضمونة عند",
+  "Unassigned floor": "طابق غير محدد",
+  "Blacklisted": "في القائمة السوداء",
+  "{name} is blacklisted": "{name} في القائمة السوداء",
+  "This guest is blacklisted": "هذا النزيل في القائمة السوداء",
+  "A multi-room booking can't override a blacklist. Book one room, or remove the flag on the guest profile.": "لا يمكن لحجز متعدد الغرف تجاوز القائمة السوداء. احجز غرفة واحدة، أو أزل العلامة من ملف النزيل.",
+  "I understand and want to book this guest anyway": "أفهم ذلك وأريد حجز هذا النزيل على أي حال",
+  "Reason for overriding the blacklist": "سبب تجاوز القائمة السوداء",
+  "Only a Hotel Admin can book a blacklisted guest.": "يمكن لمدير الفندق فقط حجز نزيل في القائمة السوداء."
 }
