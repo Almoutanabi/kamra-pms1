@@ -53,6 +53,8 @@ class Reservation(Document):
 		# also skip classic non-inventory statuses not in LIVE
 		if self.status in ("Cancelled", "No Show", "Checked Out", "Waitlist"):
 			return
+		# Serialize bookings of a category, even before a room is assigned.
+		frappe.db.get_value("Room Type", self.room_type, "name", for_update=True)
 		total = frappe.db.count("Room", {"room_type": self.room_type})
 		if not total:
 			return  # setup-time bookings before rooms exist
