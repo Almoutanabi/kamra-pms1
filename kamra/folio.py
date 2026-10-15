@@ -257,7 +257,10 @@ def _nightly_room_rate(reservation, date) -> float:
 	"""Taxable nightly rate: seasons applied, tax backed out when the
 	property configures tax-inclusive pricing."""
 	from kamra.pricing import (
-		occupancy_rate, rates_include_tax, room_gst_rate, season_adjust,
+		occupancy_rate,
+		rates_include_tax,
+		room_gst_rate,
+		season_adjust,
 		small_group_allows_stay,
 	)
 
@@ -280,7 +283,10 @@ def _nightly_room_rate(reservation, date) -> float:
 
 def _nightly_gst(reservation, date) -> float:
 	from kamra.pricing import (
-		occupancy_rate, room_gst_rate, season_adjust, small_group_allows_stay,
+		occupancy_rate,
+		room_gst_rate,
+		season_adjust,
+		small_group_allows_stay,
 	)
 
 	rt = frappe.get_doc("Room Type", reservation.room_type)
@@ -542,17 +548,26 @@ def split_charge(from_folio: str, charge_row: str, to_folio: str,
 	return {"kept": float(remainder), "moved": float(part)}
 
 
+def percent_fee(reservation, pct: float) -> float:
+	"""₹ for a cancellation band expressed as a percentage of the stay.
+
+	A tiered policy says "half back between three and seven days", which is
+	neither one night nor the whole stay, so it cannot be said with a fee
+	basis. Pre-tax; GST rides on the folio line.
+	"""
+	return round(float(reservation.amount_before_tax or 0)
+	             * float(pct) / 100.0, 2)
+
+
 def policy_fee(reservation, basis: str, pct: float | None = None) -> float:
 	"""₹ for a cancellation/no-show fee basis: 'First Night' or
 	'Full Stay' (pre-tax; GST rides on the folio line).
 
-	`pct` charges that percentage of the stay instead, which is what a
-	tiered cancellation policy needs - "50% between three and seven days"
-	is neither one night nor the whole stay.
+	`pct` defers to percent_fee(), so a caller holding a tiered band can use
+	the one entry point the posting path already calls.
 	"""
 	if pct is not None:
-		return round(float(reservation.amount_before_tax or 0)
-		             * float(pct) / 100.0, 2)
+		return percent_fee(reservation, pct)
 	if basis == "First Night":
 		return float(_nightly_room_rate(reservation,
 		                                reservation.check_in_date))

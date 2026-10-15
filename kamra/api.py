@@ -2988,7 +2988,12 @@ def cancellation_tier_for(property: str, days_before: int) -> dict | None:
 	policy, so nothing changes for anyone who has not set them up.
 	"""
 	rows = frappe.get_all(
-		"Cancellation Tier", filters={"parent": property},
+		"Cancellation Tier",
+		# a child table is addressed by all three: parent alone would pick up
+		# rows from any other doctype that grows a Cancellation Tier table,
+		# and quietly change what a guest is charged
+		filters={"parenttype": "Property", "parentfield": "cancellation_tiers",
+		         "parent": property},
 		fields=["days_before", "charge_pct", "label"],
 		order_by="days_before desc")
 	if not rows:
@@ -3009,7 +3014,7 @@ def _cancellation_terms(res):
 	"""Policy + fee estimate for a reservation, before anyone commits."""
 	from frappe.utils import date_diff
 
-	from kamra.folio import policy_fee
+	from kamra.folio import percent_fee, policy_fee
 
 	policy = frappe.db.get_value(
 		"Property", res.property,
@@ -3031,7 +3036,7 @@ def _cancellation_terms(res):
 			"tier": {"days_before": days_before, "charge_pct": 100.0,
 			         "label": rules["season"] or "Non-refundable dates"},
 			"non_refundable_season": rules["season"],
-			"estimated_fee": policy_fee(res, "", pct=100),
+			"estimated_fee": percent_fee(res, 100),
 		}
 
 	tier = cancellation_tier_for(res.property, days_before)
@@ -3043,7 +3048,7 @@ def _cancellation_terms(res):
 			"inside_window": pct > 0,
 			"fee_basis": f"{pct:g}% of stay",
 			"tier": tier,
-			"estimated_fee": policy_fee(res, "", pct=pct) if pct else 0.0,
+			"estimated_fee": percent_fee(res, pct) if pct else 0.0,
 		}
 
 	inside_window = days_before < int(policy.free_cancel_days or 0)
