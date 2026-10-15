@@ -16,6 +16,8 @@ from frappe.utils import cint, nowdate
 from kamra.assistant_privacy import processor_disclosure, scrub_for_llm
 from kamra.authz import require_roles
 from kamra.llm_compat import chat_payload, retry_chat_payload
+# one set of booking-reference parameter docs for MCP and the copilot
+from kamra.mcp_tools import _IDEMPOTENCY_KEY, _MEAL_PLAN, _RATE_PLAN, _ROOM_TYPE
 
 MAX_TOOL_ROUNDS = 6
 TIMEOUT = 60
@@ -153,7 +155,7 @@ EXTRA_TOOLS = {
 	"set_room_rate": (
 		"set_room_rate",
 		"Set a nightly rate for a room type over dates. Owner guardrails apply - give a reason.",
-		{"room_type": {"type": "string"}, "start_date": {"type": "string"},
+		{"room_type": _ROOM_TYPE, "start_date": {"type": "string"},
 		 "end_date": {"type": "string"}, "rate": {"type": "number"},
 		 "reason": {"type": "string"}}, True, True),
 	"owner_briefing": (
@@ -185,10 +187,14 @@ TOOLS = {
 		{"start_date": {"type": "string"}, "days": {"type": "integer"}}, True, False),
 	"quote": (
 		"get_quote",
-		"Price a stay (room type, dates, occupancy, optional meal plan / voucher).",
-		{"room_type": {"type": "string"}, "check_in_date": {"type": "string"},
+		"Price a stay (room type, dates, occupancy, optional meal plan / rate "
+		"plan / voucher). Room type, meal plan and rate plan take the id, code "
+		"or exact name; an unknown or ambiguous one is refused with the valid "
+		"options - pick from those, never guess.",
+		{"room_type": _ROOM_TYPE, "check_in_date": {"type": "string"},
 		 "check_out_date": {"type": "string"}, "adults": {"type": "integer"},
-		 "children": {"type": "integer"}, "meal_plan": {"type": "string"},
+		 "children": {"type": "integer"}, "meal_plan": _MEAL_PLAN,
+		 "rate_plan": _RATE_PLAN,
 		 "voucher_code": {"type": "string"}}, True, False),
 	"booking_options": (
 		"booking_options",
@@ -196,11 +202,15 @@ TOOLS = {
 		{}, True, False),
 	"create_booking": (
 		"create_booking",
-		"Book a stay. Quote first; confirm the total with staff before calling.",
-		{"room_type": {"type": "string"}, "check_in_date": {"type": "string"},
+		"Book a stay. Quote first; confirm the total with staff before calling. "
+		"Room type / meal plan / rate plan take the id, code or exact name. "
+		"Call it once per room: a repeat returns the existing booking "
+		"(idempotent_replay) instead of booking twice.",
+		{"room_type": _ROOM_TYPE, "check_in_date": {"type": "string"},
 		 "check_out_date": {"type": "string"}, "guest_name": {"type": "string"},
 		 "phone": {"type": "string"}, "adults": {"type": "integer"},
-		 "children": {"type": "integer"}, "meal_plan": {"type": "string"},
+		 "children": {"type": "integer"}, "meal_plan": _MEAL_PLAN,
+		 "rate_plan": _RATE_PLAN, "idempotency_key": _IDEMPOTENCY_KEY,
 		 "company": {"type": "string"},
 		 "booked_by_name": {"type": "string"},
 		 "booked_by_phone": {"type": "string"}}, True, True),
@@ -252,7 +262,7 @@ TOOLS = {
 		"Name a guest into a group's room block (creates their reservation "
 		"on the group dates).",
 		{"group_booking": {"type": "string"},
-		 "room_type": {"type": "string"},
+		 "room_type": _ROOM_TYPE,
 		 "guest_name": {"type": "string"},
 		 "phone": {"type": "string"}}, False, True),
 	"guest_search": (

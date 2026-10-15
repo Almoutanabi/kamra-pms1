@@ -1329,6 +1329,7 @@ Everything the booking form needs to render its dropdowns.
 | `meal_plan` | no | `None` |
 | `rate_plan` | no | `None` |
 | `voucher_code` | no | `None` |
+| `over_capacity_charge` | no | `0` |
 
 ### `kamra.api.create_booking`
 
@@ -1377,6 +1378,9 @@ status / idempotency_key / hold_expires_on support Instant public booking
 | `status` | no | `None` |
 | `idempotency_key` | no | `None` |
 | `hold_expires_on` | no | `None` |
+| `over_capacity_reason` | no | `None` |
+| `over_capacity_guests` | no | `0` |
+| `over_capacity_charge` | no | `0` |
 
 ### `kamra.api.waitlist`
 
@@ -1916,6 +1920,9 @@ Pass a course to send only that course and hold the rest - the table
 orders once, the kitchen cooks the mains when the starters are cleared.
 Each line is stamped with the moment it was fired: that, not when the
 captain opened the tab, is when the cook's clock starts.
+
+Outlets with auto KOT on also accept the ticket here, so the kitchen
+does not press Start, and the response tells the till to print.
 
 | Param | Required | Default |
 | --- | --- | --- |

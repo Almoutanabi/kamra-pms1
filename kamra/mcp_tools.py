@@ -49,6 +49,34 @@ def _p(typ: str, **extra: Any) -> dict[str, Any]:
 	return {"type": typ, **extra}
 
 
+# Booking references: the PMS resolves these to this property's IDs
+# (kamra/booking_refs.py) and refuses unknown or ambiguous values with the
+# list of valid options - it never guesses.
+_ROOM_TYPE = _p(
+	"string",
+	description="Room type: its id (e.g. 'Kamra Demo Palace-DLX'), its code "
+	"('DLX') or its exact name ('Deluxe'). See booking_options.",
+)
+_MEAL_PLAN = _p(
+	"string",
+	description="Optional meal plan: id, code ('CP') or exact label "
+	"('Breakfast Included'). See booking_options.",
+)
+_RATE_PLAN = _p(
+	"string",
+	description="Optional rate plan: id, code ('BAR') or exact name. "
+	"See booking_options.",
+)
+_IDEMPOTENCY_KEY = _p(
+	"string",
+	description="Optional unique key for this booking (e.g. a UUID). Retrying "
+	"with the same key returns the first booking instead of a duplicate. "
+	"Without a key, an identical booking (same guest, room type and dates) "
+	"made in the last 10 minutes is returned instead of booking twice; pass "
+	"a new key to book a second identical room on purpose.",
+)
+
+
 def _t(
 	name: str,
 	dotted: str,
@@ -101,14 +129,17 @@ TOOLS: tuple[ToolSpec, ...] = (
 		"quote",
 		"api.get_quote",
 		"""Price a stay (deterministic: occupancy pricing, seasons, meal plan,
-		voucher, GST). Use before every booking.""",
+		voucher, GST). Use before every booking. Room type, meal plan and rate
+		plan accept the id, code or exact name; an unknown or ambiguous value
+		is refused with the valid options.""",
 		{
-			"room_type": _p("string"),
+			"room_type": _ROOM_TYPE,
 			"check_in_date": _p("string"),
 			"check_out_date": _p("string"),
 			"adults": _p("integer"),
 			"children": _p("integer"),
-			"meal_plan": _p("string"),
+			"meal_plan": _MEAL_PLAN,
+			"rate_plan": _RATE_PLAN,
 			"voucher_code": _p("string"),
 		},
 		required=("room_type", "check_in_date", "check_out_date"),
@@ -126,17 +157,22 @@ TOOLS: tuple[ToolSpec, ...] = (
 		"create_booking",
 		"api.create_booking",
 		"""Create a reservation. Dedupes the guest by phone, auto-assigns a
-		free room, applies the voucher, prices via the engine.""",
+		free room, applies the voucher, prices via the engine. Room type,
+		meal plan and rate plan accept the id, code or exact name. Safe to
+		retry: a repeated call returns the existing booking (see
+		idempotency_key) — check idempotent_replay in the result.""",
 		{
 			"guest_name": _p("string"),
-			"room_type": _p("string"),
+			"room_type": _ROOM_TYPE,
 			"check_in_date": _p("string"),
 			"check_out_date": _p("string"),
 			"phone": _p("string"),
 			"adults": _p("integer"),
 			"children": _p("integer"),
-			"meal_plan": _p("string"),
+			"meal_plan": _MEAL_PLAN,
+			"rate_plan": _RATE_PLAN,
 			"voucher_code": _p("string"),
+			"idempotency_key": _IDEMPOTENCY_KEY,
 		},
 		required=("guest_name", "room_type", "check_in_date", "check_out_date"),
 		property=True,
@@ -150,12 +186,13 @@ TOOLS: tuple[ToolSpec, ...] = (
 		restricted. Promote it later with promote_waitlist when a room frees.""",
 		{
 			"guest_name": _p("string"),
-			"room_type": _p("string"),
+			"room_type": _ROOM_TYPE,
 			"check_in_date": _p("string"),
 			"check_out_date": _p("string"),
 			"phone": _p("string"),
 			"adults": _p("integer"),
 			"children": _p("integer"),
+			"idempotency_key": _IDEMPOTENCY_KEY,
 		},
 		required=("guest_name", "room_type", "check_in_date", "check_out_date"),
 		property=True,
@@ -567,7 +604,7 @@ TOOLS: tuple[ToolSpec, ...] = (
 		the owner's rate guardrails — the PMS rejects rates outside the
 		floor/ceiling. Always give a reason (it goes in the audit trail).""",
 		{
-			"room_type": _p("string"),
+			"room_type": _ROOM_TYPE,
 			"start_date": _p("string"),
 			"end_date": _p("string"),
 			"rate": _p("number"),
@@ -707,7 +744,7 @@ TOOLS: tuple[ToolSpec, ...] = (
 		the group's dates against the held inventory.""",
 		{
 			"group_booking": _p("string"),
-			"room_type": _p("string"),
+			"room_type": _ROOM_TYPE,
 			"guest_name": _p("string"),
 			"phone": _p("string"),
 		},

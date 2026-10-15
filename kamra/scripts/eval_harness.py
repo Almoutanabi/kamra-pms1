@@ -4419,6 +4419,143 @@ def t92():
 		frappe.local.session = real
 
 
+@check("agent booking refs: names / codes resolve to this property's IDs; unknown or ambiguous refuse with options")
+def t98():
+	from kamra import api
+	from kamra.booking_refs import resolve_meal_plan, resolve_room_type
+
+	frappe.db.delete("Meal Plan", {"property": P})  # rolled back after the run
+	for mp, label in (("CP", "Breakfast"), ("MAP", "Half Board")):
+		frappe.get_doc({"doctype": "Meal Plan", "property": P, "code": mp,
+		                "label": label, "price_per_adult": 300,
+		                }).insert(ignore_permissions=True)
+	for v in (RT, "Eval Room", "eval room", "evl", " EVL "):
+		assert resolve_room_type(P, v) == RT, v
+	assert resolve_meal_plan(P, "breakfast") == f"{P}-CP"
+	assert resolve_meal_plan(P, "map") == f"{P}-MAP"
+	assert resolve_meal_plan(P, "") is None
+	# what the agent actually sends now works end to end
+	q = api.get_quote(P, "Eval Room", "2030-02-01", "2030-02-02",
+	                  meal_plan="Breakfast")
+	assert q["room_total"] == 4000, q
+	# unknown -> refused, listing the valid options; never a guess
+	try:
+		api.get_quote(P, "Deluxe", "2030-02-01", "2030-02-02")
+		raise AssertionError("unknown room type accepted")
+	except frappe.ValidationError as e:
+		assert "Eval Room" in str(e) and RT in str(e), e
+	# a prefix is not a match
+	try:
+		resolve_room_type(P, "Eval")
+		raise AssertionError("prefix guessed")
+	except frappe.ValidationError:
+		pass
+	# ambiguous names refuse with both candidates
+	frappe.get_doc({"doctype": "Meal Plan", "property": P, "code": "AP",
+	                "label": "BREAKFAST", "price_per_adult": 350,
+	                }).insert(ignore_permissions=True)
+	try:
+		resolve_meal_plan(P, "Breakfast")
+		raise AssertionError("ambiguous meal plan resolved")
+	except frappe.ValidationError as e:
+		assert f"{P}-AP" in str(e) and f"{P}-CP" in str(e), e
+	# another property's ID is refused, not booked across properties
+	other = "EVAL Refs Other"
+	if not frappe.db.exists("Property", other):
+		frappe.get_doc({"doctype": "Property", "property_name": other,
+		                "city": "Elsewhere"}).insert(ignore_permissions=True)
+	ort = frappe.get_doc({"doctype": "Room Type", "property": other,
+	                      "room_type_code": "OTH", "room_type_name": "Other Room",
+	                      "base_price": 1000}).insert(ignore_permissions=True)
+	try:
+		resolve_room_type(P, ort.name)
+		raise AssertionError("another property's room type accepted")
+	except frappe.ValidationError as e:
+		assert "another property" in str(e), e
+
+
+@check("agent bookings are idempotent: retries return the first booking; desk multi-room still books")
+def t96():
+	from kamra import api
+	from kamra.mcp_tools import TOOLS, call_tool
+
+	spec = next(t for t in TOOLS if t.name == "create_booking")
+	# earlier checks fill this tiny property; capacity isn't under test here
+	frappe.db.set_value("Property", P, "overbooking_pct", 400)
+	args = {"guest_name": "Eval Retry Guest", "room_type": "Eval Room",
+	        "check_in_date": "2031-03-01", "check_out_date": "2031-03-03"}
+	first = call_tool(spec, dict(args), P)
+	again = call_tool(spec, dict(args), P)  # the model retried
+	assert again["reservation"] == first["reservation"], (first, again)
+	assert again.get("idempotent_replay") and again.get("duplicate_of_recent"), again
+	assert frappe.db.count("Reservation", {
+		"property": P, "check_in_date": "2031-03-01",
+		"guest_name": "Eval Retry Guest"}) == 1
+	# same guest by phone (a different spelling of the name) is still a retry
+	pa = dict(args, guest_name="Eval Phone Guest", phone="+91 70000 09301")
+	one = call_tool(spec, dict(pa), P)
+	two = call_tool(spec, dict(pa, guest_name="eval phone guest"), P)
+	assert one["reservation"] == two["reservation"], (one, two)
+	# an explicit idempotency key: same key replays, a new key books again
+	ka = dict(args, guest_name="Eval Key Guest", idempotency_key="eval-k-1")
+	k1 = call_tool(spec, dict(ka), P)
+	k1b = call_tool(spec, dict(ka), P)
+	k2 = call_tool(spec, dict(ka, idempotency_key="eval-k-2"), P)
+	assert k1b["reservation"] == k1["reservation"], (k1, k1b)
+	assert k2["reservation"] != k1["reservation"], "a new key was refused"
+	# different dates are a different booking
+	other = call_tool(spec, dict(args, check_out_date="2031-03-04"), P)
+	assert other["reservation"] != first["reservation"]
+	# the desk books several identical rooms for one party: never blocked
+	d1 = api.create_booking(P, RT, "2031-04-01", "2031-04-02", "Eval Desk Party",
+	                        phone="+91 70000 09302", assign_room=0)
+	d2 = api.create_booking(P, RT, "2031-04-01", "2031-04-02", "Eval Desk Party",
+	                        phone="+91 70000 09302", assign_room=0)
+	assert d1["reservation"] != d2["reservation"] and not d2.get("idempotent_replay"), d2
+
+
+@check("agent activity log: Chat / MCP actions land in the log; a bad row is never lost silently")
+def t97():
+	import json as _json
+	import os
+
+	from kamra.savings import log_action
+
+	# the doctype ships the channels the agent layers write
+	path = os.path.join(os.path.dirname(frappe.get_module_path("kamra")),
+	                    "kamra", "doctype", "agent_action_log", "agent_action_log.json")
+	with open(path) as f:
+		field = next(x for x in _json.load(f)["fields"] if x["fieldname"] == "action_channel")
+	assert {"Chat", "MCP"} <= set(field["options"].split("\n")), field["options"]
+
+	live = frappe.get_meta("Agent Action Log").get_field("action_channel").options.split("\n")
+	for ch in ("Chat", "MCP", "QR"):
+		name = log_action(f"eval_channel_{ch.lower()}", "Property", P, P,
+		                  rationale="eval", agent_name="Eval", channel=ch)
+		assert name, f"{ch} action never reached the log"
+		got = frappe.db.get_value("Agent Action Log", name, ["action_channel", "rationale"], as_dict=True)
+		if ch in live:
+			assert got.action_channel == ch, got
+		else:  # an unmigrated / unknown channel maps instead of failing the row
+			assert got.action_channel == "API" and f"[channel: {ch}]" in got.rationale, got
+
+	# the copilot's chat path writes its audit line
+	from kamra import assistant
+	before = frappe.db.count("Agent Action Log", {"action_type": "copilot_create_booking"})
+	assistant._run_tool("create_booking", {
+		"guest_name": "Eval Chat Guest", "room_type": "EVL",
+		"check_in_date": "2031-05-01", "check_out_date": "2031-05-02"}, P)
+	assert frappe.db.count("Agent Action Log", {"action_type": "copilot_create_booking"}) == before + 1
+
+	# a row that can't validate is retried minimally and reported, not dropped
+	errs = frappe.db.count("Error Log")
+	name = log_action("eval_bad_ref", "Reservation", "NO-SUCH-RES-EVAL", P,
+	                  rationale="eval", agent_name="Eval", channel="Chat")
+	assert name, "fallback row not written"
+	assert "log fallback" in frappe.db.get_value("Agent Action Log", name, "rationale")
+	assert frappe.db.count("Error Log") > errs, "failure not reported"
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4436,7 +4573,8 @@ def execute():
 		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
+		           t96, t97, t98):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
