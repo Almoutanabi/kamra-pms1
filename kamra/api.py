@@ -1691,6 +1691,30 @@ def get_billing_rules(company: str):
 
 
 @frappe.whitelist()
+@require_roles("Finance", "Front Desk", "Kamra Agent")
+def company_billing_default(company: str, property: str | None = None):
+	"""What this company pays when it has no billing rules: the property's
+	`default_company_billing` for a credit company, nothing otherwise.
+	`charge_types` is None when every charge type (except liquor) is covered."""
+	from kamra.folio import COMPANY_BILLING_DEFAULTS, default_company_billing
+	if property:
+		from kamra.crs import assert_property_access
+		assert_property_access(property)
+	doc = frappe.get_doc("Corporate Account", company)
+	has_rules = bool(doc.get("billing_rules"))
+	label = default_company_billing(property)
+	covered = COMPANY_BILLING_DEFAULTS[label]
+	return {
+		"company": company,
+		"credit_allowed": bool(doc.credit_allowed),
+		"has_rules": has_rules,
+		"default": label,
+		"charge_types": None if covered is None else sorted(covered),
+		"applies": bool(doc.credit_allowed) and not has_rules,
+	}
+
+
+@frappe.whitelist()
 @require_roles("Front Desk", "Kamra Agent")
 def update_occupants(reservation: str, occupants):
 	"""Replace the stay's occupant register.

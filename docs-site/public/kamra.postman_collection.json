@@ -1722,6 +1722,43 @@
      }
     },
     {
+     "name": "company_billing_default",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.company_billing_default",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.company_billing_default"
+       ]
+      },
+      "description": "What this company pays when it has no billing rules: the property's\n`default_company_billing` for a credit company, nothing otherwise.\n`charge_types` is None when every charge type (except liquor) is covered.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"company\": \"<company>\",\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
      "name": "update_occupants",
      "request": {
       "method": "POST",

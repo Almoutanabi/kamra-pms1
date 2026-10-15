@@ -198,12 +198,46 @@ def open_company_folio(reservation) -> str:
 	return split_folio(reservation.name, "Company")
 
 
-def _company_pays(company: str, charge_type: str) -> bool:
-	return frappe.db.get_value(
+# What a credit company pays when it has NO billing rules of its own - the
+# property's `default_company_billing` setting. "Room" means the stay as sold:
+# the room night, its meal plan, the levies on it, early/late fees, the
+# cleaning fee and any discount against it. Alcohol is filtered out before
+# any of this (target_folio), so no option can bill liquor to a company.
+_ROOM_CHARGES = frozenset({
+	"Room", "Meal Plan", "Room Levy", "Early Check-in", "Late Checkout",
+	"Cleaning Fee", "Discount",
+})
+COMPANY_BILLING_DEFAULTS = {
+	"Room and F&B (liquor to guest)": _ROOM_CHARGES | {"Food & Beverage"},
+	"Room only": _ROOM_CHARGES,
+	"Everything except liquor": None,  # every charge type
+	"Nothing (guest pays unless rules say so)": frozenset(),
+}
+DEFAULT_COMPANY_BILLING = "Room and F&B (liquor to guest)"
+
+
+def default_company_billing(property: str | None) -> str:
+	from kamra.settings import get_setting
+	value = get_setting(property, "default_company_billing")
+	return value if value in COMPANY_BILLING_DEFAULTS else DEFAULT_COMPANY_BILLING
+
+
+def _company_pays(company: str, charge_type: str,
+                  property: str | None = None) -> bool:
+	"""Does the company pay this charge type? Its own billing rules decide
+	when it has any. A credit company with none falls back to the
+	property's default; a company without credit pays nothing by default."""
+	rules = frappe.get_all(
 		"Company Billing Rule",
-		{"parent": company, "charge_type": charge_type},
-		"pay_by",
-	) == "Company"
+		filters={"parent": company},
+		fields=["charge_type", "pay_by"])
+	if rules:
+		return any(r.charge_type == charge_type and r.pay_by == "Company"
+		           for r in rules)
+	if not frappe.db.get_value("Corporate Account", company, "credit_allowed"):
+		return False
+	covered = COMPANY_BILLING_DEFAULTS[default_company_billing(property)]
+	return covered is None or charge_type in covered
 
 
 def target_folio(reservation, charge_type: str, is_alcohol: int = 0) -> str:
@@ -212,18 +246,21 @@ def target_folio(reservation, charge_type: str, is_alcohol: int = 0) -> str:
 	Group stays route company-payable charge types to the ONE group
 	master folio (company pays the stay for every room, each guest pays
 	their own extras). Individual corporate stays route to the stay's
-	Company folio. Alcohol never bills to a company - Indian corporates
-	won't settle it and most travel policies prohibit it.
+	Company folio. The company's billing rules pick the charge types; a
+	credit company with no rules uses the property's default
+	(`default_company_billing`). Alcohol never bills to a company -
+	Indian corporates won't settle it and most travel policies prohibit it.
 	"""
 	if not is_alcohol:
 		group = reservation.get("group_booking")
 		if group:
 			company = frappe.db.get_value(
 				"Group Booking", group, "company")
-			if company and _company_pays(company, charge_type):
+			if company and _company_pays(
+					company, charge_type, reservation.get("property")):
 				return open_group_folio(group)
 		if reservation.get("company") and _company_pays(
-				reservation.company, charge_type):
+				reservation.company, charge_type, reservation.get("property")):
 			return open_company_folio(reservation)
 	return open_folio(reservation)
 

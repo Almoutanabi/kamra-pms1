@@ -1650,7 +1650,8 @@ def t38():
 	tick = next(r for r in pos.kitchen_queue(P, outlet=outlet) if r["name"] == o["order"])
 	assert [i["state"] for i in tick["items"]] == ["cooking"], tick
 	pos.mark_prepared(o["order"])
-	pos.deliver_order(o["order"])
+	# serving is the kitchen's mark_prepared; the bill closes on payment
+	pos.pay_order(o["order"], "Cash")
 	# once it has left the kitchen there is nothing to recall
 	try:
 		pos.recall_prepared(o["order"])
@@ -6453,6 +6454,179 @@ def t194():
 	assert _leak_net(folio, "Guest") == 0, _leak_net(folio, "Guest")
 
 
+def _routed(res_name, desc):
+	"""(folio_type, is_alcohol) of the one line whose description is `desc`."""
+	rows = frappe.db.sql(
+		"""SELECT f.folio_type, fc.is_alcohol FROM `tabFolio Charge` fc
+		   JOIN `tabFolio` f ON fc.parent = f.name
+		   WHERE f.reservation = %s AND fc.description = %s""",
+		(res_name, desc), as_dict=True)
+	assert len(rows) == 1, (desc, rows)
+	return rows[0].folio_type
+
+
+def _set_company_default(value):
+	frappe.db.set_value("Property", P, "default_company_billing", value)
+	frappe.clear_document_cache("Property", P)
+
+
+@check("credit company with no billing rules: room + food to the company, liquor and laundry to the guest")
+def t200():
+	from kamra import api
+	from kamra.folio import post_remaining_nights
+	_set_company_default("Room and F&B (liquor to guest)")
+	corp = _credit_corp("EVAL Default Corp")
+	res, _guest_folio = _in_house("Eval Default Corp", "+91 70000 00200", "2037-02-01",
+	                              "2037-02-02", _ledger_room("L200"), company=corp)
+	post_remaining_nights(res)
+	room_on = frappe.db.sql(
+		"""SELECT f.folio_type FROM `tabFolio Charge` fc JOIN `tabFolio` f
+		   ON fc.parent = f.name WHERE f.reservation = %s AND fc.charge_type = 'Room'""",
+		res.name, pluck=True)
+	assert room_on == ["Company"], room_on
+	api.post_stay_charge(res.name, "Food & Beverage", "eval200 lunch", 500)
+	api.post_stay_charge(res.name, "Food & Beverage", "eval200 whisky", 800, is_alcohol=1)
+	api.post_stay_charge(res.name, "Laundry", "eval200 laundry", 300)
+	api.post_stay_charge(res.name, "Minibar", "eval200 minibar", 200)
+	got = {d: _routed(res.name, d) for d in
+	       ("eval200 lunch", "eval200 whisky", "eval200 laundry", "eval200 minibar")}
+	assert got == {"eval200 lunch": "Company", "eval200 whisky": "Guest",
+	               "eval200 laundry": "Guest", "eval200 minibar": "Guest"}, got
+	shown = api.company_billing_default(corp, P)
+	assert shown["applies"] and shown["default"].startswith("Room and F&B"), shown
+
+
+@check("a company's own billing rules beat the property default")
+def t201():
+	from kamra import api
+	from kamra.folio import post_remaining_nights
+	_set_company_default("Everything except liquor")
+	corp = frappe.get_doc({
+		"doctype": "Corporate Account", "company_name": "EVAL Rules Corp",
+		"credit_allowed": 1,
+		"billing_rules": [{"charge_type": "Laundry", "pay_by": "Company"}],
+	}).insert(ignore_permissions=True).name
+	res, _g = _in_house("Eval Rules Corp", "+91 70000 00201", "2037-02-03",
+	                    "2037-02-04", _ledger_room("L201"), company=corp)
+	post_remaining_nights(res)
+	api.post_stay_charge(res.name, "Food & Beverage", "eval201 lunch", 500)
+	api.post_stay_charge(res.name, "Laundry", "eval201 laundry", 300)
+	api.post_stay_charge(res.name, "Minibar", "eval201 vodka", 300, is_alcohol=1)
+	assert _routed(res.name, "eval201 lunch") == "Guest"
+	assert _routed(res.name, "eval201 laundry") == "Company"
+	assert _routed(res.name, "eval201 vodka") == "Guest"
+	room_on = frappe.db.sql(
+		"""SELECT f.folio_type FROM `tabFolio Charge` fc JOIN `tabFolio` f
+		   ON fc.parent = f.name WHERE f.reservation = %s AND fc.charge_type = 'Room'""",
+		res.name, pluck=True)
+	assert room_on == ["Guest"], room_on
+	assert not api.company_billing_default(corp, P)["applies"]
+	# "Everything except liquor" still keeps liquor off a rule-less company
+	corp2 = _credit_corp("EVAL Everything Corp")
+	res2, _g2 = _in_house("Eval Everything Corp", "+91 70000 00211", "2037-02-05",
+	                      "2037-02-06", _ledger_room("L211"), company=corp2)
+	api.post_stay_charge(res2.name, "Laundry", "eval201 all laundry", 300)
+	api.post_stay_charge(res2.name, "Food & Beverage", "eval201 all beer", 300, is_alcohol=1)
+	assert _routed(res2.name, "eval201 all laundry") == "Company"
+	assert _routed(res2.name, "eval201 all beer") == "Guest"
+	_set_company_default("Room and F&B (liquor to guest)")
+
+
+@check("'Nothing' keeps the strict routing; a company without credit gets nothing by default")
+def t202():
+	from kamra import api
+	from kamra.folio import post_remaining_nights
+	_set_company_default("Nothing (guest pays unless rules say so)")
+	corp = _credit_corp("EVAL Strict Corp")
+	res, _g = _in_house("Eval Strict Corp", "+91 70000 00202", "2037-02-07",
+	                    "2037-02-08", _ledger_room("L202"), company=corp)
+	post_remaining_nights(res)
+	api.post_stay_charge(res.name, "Food & Beverage", "eval202 lunch", 500)
+	assert _routed(res.name, "eval202 lunch") == "Guest"
+	assert not frappe.db.get_value("Folio", {"reservation": res.name,
+	                                         "folio_type": "Company"})
+	_set_company_default("Room and F&B (liquor to guest)")
+	cash_corp = frappe.get_doc({"doctype": "Corporate Account",
+	                            "company_name": "EVAL No Credit Corp"}
+	                           ).insert(ignore_permissions=True).name
+	res2, _g2 = _in_house("Eval No Credit", "+91 70000 00212", "2037-02-09",
+	                      "2037-02-10", _ledger_room("L212"), company=cash_corp)
+	api.post_stay_charge(res2.name, "Food & Beverage", "eval202 nc lunch", 500)
+	assert _routed(res2.name, "eval202 nc lunch") == "Guest"
+	assert not api.company_billing_default(cash_corp, P)["applies"]
+
+
+def _eval_bill_outlet(name):
+	outlet = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": name,
+		"outlet_type": "Restaurant", "gst_rate": 5}).insert(ignore_permissions=True).name
+	dish = frappe.get_doc({
+		"doctype": "Menu Item", "property": P, "outlet": outlet,
+		"item_name": f"{name} Thali", "category": "Food", "price": 300,
+		"is_veg": 1, "available": 1, "prep_station": "Kitchen",
+	}).insert(ignore_permissions=True).name
+	return outlet, dish
+
+
+def _refused(fn, *args):
+	try:
+		fn(*args)
+	except frappe.ValidationError as e:
+		assert any(w in str(e) for w in ("not settled", "authoriz", "payment mode")), e
+		return
+	raise AssertionError(f"{fn.__name__} closed an unsettled bill")
+
+
+@check("POS: an unpaid dine-in or takeaway bill cannot be closed; serving it does not settle it")
+def t203():
+	from kamra import pos
+	outlet, dish = _eval_bill_outlet("Eval Unpaid")
+	o = pos.create_order(outlet, [{"menu_item": dish, "qty": 1}], table_no="U1",
+	                     order_type="Dine In")
+	pos.fire_kot(o["order"])
+	pos.mark_prepared(o["order"])  # the kitchen served it
+	assert frappe.db.get_value("POS Order", o["order"], "status") == "Preparing"
+	_refused(pos.deliver_order, o["order"])
+	assert frappe.db.get_value("POS Order", o["order"], "status") != "Delivered"
+	# the same rule holds on a direct save, not just the endpoint
+	doc = frappe.get_doc("POS Order", o["order"])
+	doc.status = "Delivered"
+	_refused(doc.save)
+	assert pos.pay_order(o["order"], "Card")["paid"]
+	assert frappe.db.get_value("POS Order", o["order"], "status") == "Delivered"
+
+	t = pos.create_order(outlet, [{"menu_item": dish, "qty": 2}], order_type="Takeaway")
+	_refused(pos.deliver_order, t["order"])
+	# NC without an authorizer is not complimentary
+	frappe.db.set_value("POS Order", t["order"], "nc", 1)
+	_refused(pos.deliver_order, t["order"])
+	frappe.db.set_value("POS Order", t["order"], "nc", 0)
+	pos.mark_nc(t["order"], "GM", "eval comp")
+	assert pos.deliver_order(t["order"])["status"] == "Delivered"
+
+
+@check("POS: a bill closes when posted to a checked-in room, or when nothing is left on it")
+def t204():
+	from kamra import pos
+	outlet, dish = _eval_bill_outlet("Eval Room Close")
+	res, guest = _in_house("Eval Room Close", "+91 70000 00204", "2037-02-11",
+	                       "2037-02-12", _ledger_room("L204"))
+	o = pos.create_order(outlet, [{"menu_item": dish, "qty": 1}], table_no="R1",
+	                     order_type="Dine In")
+	pos.charge_to_room(o["order"], res.room)
+	assert pos.deliver_order(o["order"])["posted_to_folio"]
+	assert frappe.get_all("Folio Charge", filters={
+		"parent": guest, "description": ["like", f"%{o['order']}%"]})
+	v = pos.create_order(outlet, [{"menu_item": dish, "qty": 1}], table_no="R2",
+	                     order_type="Dine In")
+	row = frappe.get_doc("POS Order", v["order"]).items[0].name
+	pos.void_item(v["order"], row, "guest left before ordering")
+	assert pos.deliver_order(v["order"])["status"] == "Delivered"
+	# a paid bill must say how it was paid
+	p = pos.create_order(outlet, [{"menu_item": dish, "qty": 1}], order_type="Takeaway")
+	doc = frappe.get_doc("POS Order", p["order"])
+	doc.paid, doc.status = 1, "Delivered"
+	_refused(doc.save)
 # --- night audit checklist, blocker acknowledgement, audit pack (t205-t214) ---
 
 def _na_setting(key, value):
@@ -6703,6 +6877,7 @@ def execute():
 		           t177, t178, t179, t160, t161, t162, t163, t164, t165, t166, t167, t130,
 		           t131, t132, t133, t134, t135, t136, t137, t138, t139, t180, t181, t182,
 		           t183, t184, t185, t186, t190, t191, t192, t193, t194,
+		           t200, t201, t202, t203, t204,
 		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214):
 			fn()
 	finally:
