@@ -57,6 +57,10 @@
 Latest release: **[v2.6.12](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
 (`develop` ships nightly).
 
+- **Next (on `develop`)** — night audit can't run ahead of the calendar,
+  no-show balances read from the folio, whole-villa check-in, `/hk` app keeps
+  staff signed in, balanced city-ledger transfers, and the Kamra Agent books by
+  room and meal-plan name without double-booking on retries
 - **2.6.12** — per-head pricing for small parties in whole-place lets,
   weekend / weekday rate guardrails, the bill screen's Void button asks for a
   reason, and admins see a banner when a newer Kamra release is out
@@ -153,7 +157,7 @@ Live example: [demo.kamrapms.com/book](https://demo.kamrapms.com/book).
 |---|---|
 | **Front desk** | Today board, check-in flow (GRC readiness + room suggestion), tape chart, ETA/ETD, guest profiles, blacklist |
 | **Booking engine** | Direct booking + SEO console; hotels = room grid; STRs = villa catalog |
-| **Short-term rentals** | Hotel vs STR property kind, sellable units, per-villa locations, Instant / Request-to-book |
+| **Short-term rentals** | Hotel vs STR property kind, sellable units, per-villa locations, whole-villa check-in as one unit, Instant / Request-to-book |
 | **Booking** | Multi-room / group / corporate, returning guests, add-ons, vouchers, travel agents, day-use |
 | **Revenue** | Seasons, rate plans, guardrails, hurdle rates, overbooking allowance, cancellation & no-show policy in code |
 | **Billing** | Folios, corporate routing, group masters, charge splits, deposits, night audit, tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
