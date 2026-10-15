@@ -4225,6 +4225,64 @@ def t91():
 	st.save_settings(P, "revenue", json.dumps({"overbooking_pct": 0}))
 
 
+@check("folio void from the bill screen: reason required, PIN-gated, ledger reversed, logged")
+def t95():
+	"""The bill screen voids a line with call("kamra.api.void_folio_charge",
+	{folio, charge_row, reason}) as Front Desk, after the PinPad unlock.
+	Issue #160: the screen sent no reason, so every void was refused."""
+	from kamra import api
+	g = _guest("Eval Void", "+91 70000 00092")
+	res = _res(g, "2033-05-11", "2033-05-12", ROOM)
+	res.status = "Checked In"
+	res.save(ignore_permissions=True)
+	folio = api.split_folio(res.name, "Extra")["folio"]
+	api.add_folio_charge(folio, "Laundry", "eval wrong line", 400, 0)
+	row = next(c.name for c in frappe.get_doc("Folio", folio).charges
+	           if c.description == "eval wrong line")
+	orig = frappe.db.get_value("Folio Ledger Entry", {
+		"source_name": row, "reversal_of": ["in", ["", None]]}, "name")
+	assert orig, "the charge left no ledger entry to reverse"
+	frappe.db.set_value("Property", P, "require_cashier_pin", 1)
+	user = "frontdesk@kamra.local"
+	unlock = f"kamra_cashier_unlock:{user}"
+	me = frappe.session.user
+	frappe.set_user(user)  # nosemgrep: frappe-setuser -- controlled user context switch for the bill screen's caller
+	try:
+		# no PinPad unlock yet - the PIN policy still holds
+		frappe.cache.delete_value(unlock)
+		try:
+			api.void_folio_charge(**{"folio": folio, "charge_row": row,
+			                         "reason": "posted to the wrong room"})
+			raise AssertionError("a void skipped the cashier PIN")
+		except frappe.ValidationError as e:
+			assert "PIN" in str(e), e
+		# after the unlock: the exact payload the screen sends
+		frappe.cache.set_value(unlock, 1, expires_in_sec=60)
+		# the pre-#160 call shape (no reason) and a blank one: refused
+		for bad in ({}, {"reason": "  "}):
+			try:
+				api.void_folio_charge(**{"folio": folio, "charge_row": row, **bad})
+				raise AssertionError(f"a void went through with {bad}")
+			except frappe.ValidationError as e:
+				assert "reason" in str(e).lower(), e
+		out = api.void_folio_charge(**{"folio": folio, "charge_row": row,
+		                               "reason": "posted to the wrong room"})
+	finally:
+		frappe.cache.delete_value(unlock)
+		frappe.set_user(me)  # nosemgrep: frappe-setuser -- controlled user context switch for the bill screen's caller
+		frappe.db.set_value("Property", P, "require_cashier_pin", 0)
+	assert out["removed"]["amount"] == 400, out
+	doc = frappe.get_doc("Folio", folio)
+	assert not any(c.name == row for c in doc.charges), "line still on the bill"
+	rev = frappe.db.get_value("Folio Ledger Entry", {"reversal_of": orig},
+	                          ["debit", "credit", "description"], as_dict=True)
+	assert rev and float(rev.credit) == frappe.db.get_value(
+		"Folio Ledger Entry", orig, "debit"), rev
+	assert "posted to the wrong room" in rev.description, rev
+	assert frappe.db.exists("Agent Action Log", {
+		"action_type": "void_charge", "reference_name": folio}), "void not logged"
+
+
 @check("whole-villa booking: checks in with no room, audits, checks out (rooms occupied then dirty)")
 def t94():
 	from kamra import api
@@ -4378,7 +4436,7 @@ def execute():
 		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
