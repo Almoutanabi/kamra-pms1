@@ -26,6 +26,46 @@ upgrade-breaking changes (removed doctypes / API contracts).
   quotation, desk-led guest response, department checklists + notify on
   Confirm (Sales/Finance/HK/F&B), and quote no-response chase reminders
 
+### Features (next release)
+
+* **front desk:** Request to Book inbox on Today, with Accept (assigns a room,
+  re-checks availability) and Decline (reason required, guest notified where
+  messaging is set up) ([#207](https://github.com/Kamra-PMS/kamra-pms/pull/207))
+* **front desk:** per-property no-show policy under Settings → Front desk →
+  Night audit & no-shows: when to mark no-shows, protect late arrivals, waive
+  the fee for OTA bookings, and an optional release time for non-guaranteed
+  arrivals ([#210](https://github.com/Kamra-PMS/kamra-pms/pull/210))
+* **revenue:** rate lock — each night's confirmed rate is saved at booking
+  and billed exactly; date or room-type changes show the new price and need
+  confirmation before saving ([#210](https://github.com/Kamra-PMS/kamra-pms/pull/210))
+* **rentals:** security deposits — collect, waive, withhold part for damage,
+  and refund the rest, all through the cashier till and ledger ([#206](https://github.com/Kamra-PMS/kamra-pms/pull/206))
+* **booking:** day-use (hourly) bookings from the booking screen ([#206](https://github.com/Kamra-PMS/kamra-pms/pull/206))
+* **f&b:** printable QR codes for restaurant tables and rooms ([#206](https://github.com/Kamra-PMS/kamra-pms/pull/206))
+* **finance:** record a company's payment against its city-ledger balance,
+  oldest bills first or picked by folio ([#209](https://github.com/Kamra-PMS/kamra-pms/pull/209))
+* **inventory:** booking a whole villa takes its rooms off sale and vice
+  versa; unused group-block rooms are held until the cutoff, then released
+  automatically ([#207](https://github.com/Kamra-PMS/kamra-pms/pull/207))
+
+### Bug Fixes (next release)
+
+* **ledger:** room nights, meal plans, levies, fees, add-ons and POS room
+  charges now reach the ledger, and company payments clear AR; patches
+  backfill past entries ([#209](https://github.com/Kamra-PMS/kamra-pms/pull/209))
+* **night audit:** room nights bill the rate-plan price; no-show fees are
+  dated to the day being closed; expired holds release their rooms ([#202](https://github.com/Kamra-PMS/kamra-pms/pull/202))
+* **front desk:** the booking page shows the advance due now; blacklisted
+  guests are flagged, with a logged Hotel Admin override and a blacklist
+  control on the guest profile; the reservation panel refreshes after a
+  gateway payment; meal plan names, the GRC link, AI provider settings and
+  the app list are fixed ([#205](https://github.com/Kamra-PMS/kamra-pms/pull/205))
+* **demo & setup:** seeded records get their defaults, wizard rooms get a
+  floor, rentals are seeded as rentals, and past-dated seed bookings no longer
+  crash the reset ([#204](https://github.com/Kamra-PMS/kamra-pms/pull/204))
+* **performance:** the first page load downloads about a third less
+  JavaScript; React and the router are cached across releases ([#208](https://github.com/Kamra-PMS/kamra-pms/pull/208))
+
 ## [2.6.13](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.12...v2.6.13) (2026-10-15)
 
 
