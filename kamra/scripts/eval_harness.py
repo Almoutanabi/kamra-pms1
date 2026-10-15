@@ -6727,7 +6727,7 @@ def t208():
 	_na_till()
 	_na_setting("na_auto_audit_with_blockers", "Hold and alert")
 	try:
-		with patch("kamra.housekeeping._notify_role") as alert:
+		with patch("kamra.night_audit.alert_staff") as alert:
 			out = _audit_eval(nowdate(), f"{nowdate()} 03:00",
 			                  lambda: run_night_audit(P, mode="scheduled"))
 		assert out.get("held"), out
