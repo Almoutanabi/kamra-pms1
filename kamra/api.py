@@ -304,7 +304,8 @@ def owner_briefing(property: str, date: str | None = None):
 	)[0][0]
 
 	audit = frappe.db.get_value(
-		"Night Audit Run", {"property": property, "business_date": yesterday},
+		"Night Audit Run", {"property": property, "business_date": yesterday,
+		                    "status": ("!=", "Draft")},
 		["name", "room_charges_posted", "no_shows_flagged"], as_dict=True,
 	)
 
@@ -678,7 +679,7 @@ def registration_card(reservation: str):
 
 
 @frappe.whitelist()
-@require_roles("Finance", "Front Desk", "Kamra Agent")
+@require_roles("Finance", "Front Desk", "Night Auditor", "Kamra Agent")
 def cash_summary(property: str, date: str | None = None):
 	"""Cashier reconciliation: what the system says was collected today,
 	per payment mode - the number the drawer must match at shift close.
@@ -1334,7 +1335,7 @@ def advance_ticket(ticket: str, status: str, resolution_note: str | None = None)
 
 
 @frappe.whitelist()
-@require_roles("Finance", "Front Desk", "Kamra Agent")
+@require_roles("Finance", "Front Desk", "Night Auditor", "Kamra Agent")
 def get_folio(reservation: str):
 	"""Folio for a reservation - opens one if the guest is checked in."""
 	name = frappe.db.get_value(
@@ -2091,11 +2092,16 @@ def _invoice_guest(res) -> dict:
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Kamra Agent")
-def run_night_audit(property: str, business_date: str | None = None):
+@require_roles("Front Desk", "Finance", "Night Auditor", "Kamra Agent")
+def run_night_audit(property: str, business_date: str | None = None,
+                    acknowledge=None, note: str | None = None):
+	"""Close the current business date. Refused while a blocking pre-check
+	(kamra.night_audit.night_audit_precheck) has items, unless each is
+	listed in `acknowledge` (check keys) with a `note` giving the reason."""
 	# Night audit is a front-desk / night-auditor ritual, not admin-only.
 	from kamra.folio import run_night_audit as _run
-	return _run(property, business_date)
+	return _run(property, business_date, acknowledge=acknowledge, note=note,
+	            mode="manual")
 
 
 @frappe.whitelist()
@@ -2515,7 +2521,7 @@ def _stay_balance(reservation: str) -> dict:
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent", "Finance", "Revenue Manager")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent", "Finance", "Revenue Manager")
 def front_desk_snapshot(property: str | None = None, date: str | None = None):
 	"""Everything the front desk needs for one day, in one call."""
 	date = date or nowdate()
@@ -2839,7 +2845,7 @@ def verify_precheckin(reservation: str):
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent")
 def checkin_context(reservation: str):
 	"""Everything the check-in flow needs in one round trip: how complete
 	the guest's registration is, the assigned room - or the allocator's
@@ -2915,7 +2921,7 @@ def checkin_context(reservation: str):
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent")
 def check_in(reservation: str, room: str | None = None):
 	doc = frappe.get_doc("Reservation", reservation)
 	if room:
@@ -3407,7 +3413,7 @@ def _assert_settled(doc):
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent")
 def check_out(reservation: str):
 	doc = frappe.get_doc("Reservation", reservation)
 	_assert_settled(doc)

@@ -547,7 +547,7 @@ class NightlySchedulerTestCase(AuditTestCase):
 		self.fail_first_ut = False
 		real = folio_mod.run_night_audit
 
-		def only_ours(prop, business_date=None):
+		def only_ours(prop, business_date=None, **kw):
 			# the cron walks every property on the site; audit only ours so
 			# the test never posts into a developer's seeded hotels
 			self.calls.append(prop)
@@ -556,7 +556,7 @@ class NightlySchedulerTestCase(AuditTestCase):
 			if self.fail_first_ut:
 				self.fail_first_ut = False
 				raise RuntimeError("boom")
-			return real(prop, business_date)
+			return real(prop, business_date, **kw)
 
 		self._stack.enter_context(
 			patch.object(folio_mod, "run_night_audit", side_effect=only_ours))
@@ -660,7 +660,8 @@ class NightAuditPermissionTestCase(AuditTestCase):
 			                 email)
 		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- restore
 		self.assertEqual(self.stub.call_count, len(self.ALLOWED))
-		self.stub.assert_called_with(PROP_A, None)
+		self.stub.assert_called_with(PROP_A, None, acknowledge=None, note=None,
+		                             mode="manual")
 
 	def test_other_roles_are_refused(self):
 		from kamra import api
@@ -1078,3 +1079,411 @@ class RateLockTestCase(AuditTestCase):
 		gross = [float(r.rate) * (1 + float(r.gst_rate) / 100) for r in doc.night_rates]
 		self.assertAlmostEqual(sum(gross), 3000, delta=0.05)
 		self.assertAlmostEqual(gross[1] / gross[0], 2, places=2)
+
+
+class NightAuditChecklistTestCase(AuditTestCase):
+	"""kamra.night_audit: the pre-check checklist, blocker acknowledgement,
+	the scheduled run's hold-or-report setting, the saved audit pack and
+	the End of Day wizard."""
+
+	def setUp(self):
+		super().setUp()
+		self.at(TODAY)
+		make_property(PROP_A, business_date=YESTERDAY,
+		              no_show_charge="First Night")
+		self.rt = make_room_type(PROP_A, "STD", base_price=1000)
+		self.rooms = [make_room(PROP_A, self.rt, f"10{i}") for i in range(1, 6)]
+		frappe.db.set_value("Room Type", self.rt, "overbooking_pct", 100)
+		for r in self.rooms:
+			frappe.db.set_value("Room", r, {"occupancy_status": "Vacant",
+			                                "housekeeping_status": "Clean"})
+		self._stack.enter_context(patch.object(
+			folio_mod, "audit_clock", return_value=at_time(YESTERDAY, "23:00")))
+		self.alerts = self._stack.enter_context(
+			patch("kamra.housekeeping._notify_role"))
+		from kamra import settings
+		settings.clear_cache(PROP_A)
+		self.addCleanup(settings.clear_cache, PROP_A)
+
+	# helpers -------------------------------------------------------------
+
+	def setting(self, key, value):
+		import json as _json
+
+		from kamra import settings
+		name = frappe.db.get_value("Property Setting",
+		                           {"property": PROP_A, "setting_key": key})
+		if name:
+			frappe.db.set_value("Property Setting", name, "value", _json.dumps(value))
+		else:
+			frappe.get_doc({"doctype": "Property Setting", "property": PROP_A,
+			                "setting_key": key, "value": _json.dumps(value)}
+			               ).insert(ignore_permissions=True)
+		settings.clear_cache(PROP_A)
+
+	def checks(self):
+		from kamra import night_audit
+		return {c["key"]: c for c in
+		        night_audit.night_audit_precheck(PROP_A)["checks"]}
+
+	def in_house(self, room=0, check_in=None, check_out=None, **kw):
+		return make_reservation(PROP_A, self.rt, check_in or d(-3),
+		                        check_out or d(2), status="Checked In",
+		                        room=self.rooms[room], **kw)
+
+	def open_till(self):
+		from kamra import cashier
+		return cashier.open_session(PROP_A, opening_float=500)["name"]
+
+	def outlet(self):
+		outlet = frappe.db.get_value("POS Outlet", {"property": PROP_A,
+		                                            "outlet_name": "UT Bar"})
+		if not outlet:
+			outlet = frappe.get_doc({
+				"doctype": "POS Outlet", "property": PROP_A,
+				"outlet_name": "UT Bar", "outlet_type": "Restaurant",
+				"gst_rate": 5}).insert(ignore_permissions=True).name
+		item = frappe.get_doc({
+			"doctype": "Menu Item", "property": PROP_A, "outlet": outlet,
+			"item_name": "UT Soup", "price": 300, "available": 1,
+		}).insert(ignore_permissions=True).name
+		return outlet, item
+
+	def pos_order(self, **kw):
+		outlet, item = self.outlet()
+		return frappe.get_doc({
+			"doctype": "POS Order", "property": PROP_A, "outlet": outlet,
+			"status": "Placed", "order_type": "Dine In", "table_no": "T1",
+			"items": [{"menu_item": item, "item_name": "UT Soup", "qty": 1,
+			           "rate": 300}], **kw,
+		}).insert(ignore_permissions=True)
+
+	def run_manual(self, **kw):
+		from kamra import api
+		return api.run_night_audit(PROP_A, **kw)
+
+	# the checks ----------------------------------------------------------
+
+	def test_a_quiet_day_has_no_blockers_and_runs(self):
+		from kamra import night_audit
+		out = night_audit.night_audit_precheck(PROP_A)
+		self.assertEqual(out["business_date"], YESTERDAY)
+		self.assertTrue(out["can_run"])
+		self.assertEqual(out["blockers"], [])
+		self.assertEqual([c["key"] for c in out["checks"]], list(night_audit.ORDER))
+		for c in out["checks"]:
+			self.assertIn(c["severity"], ("block", "warn", "info"))
+			self.assertTrue(c["action"])
+		run = self.run_manual()
+		self.assertEqual(run["status"], "Completed")
+		self.assertTrue(run["has_pack"])
+
+	def test_open_till_blocks_until_acknowledged_with_a_reason(self):
+		session = self.open_till()
+		c = self.checks()["open_tills"]
+		self.assertEqual((c["severity"], c["count"]), ("block", 1))
+		self.assertEqual(c["items"][0]["session"], session)
+		with self.assertRaises(frappe.ValidationError):
+			self.run_manual()
+		with self.assertRaises(frappe.ValidationError):
+			self.run_manual(acknowledge=["open_tills"], note="")
+		self.assertEqual(self.bd(), YESTERDAY)
+		out = self.run_manual(acknowledge='["open_tills"]',
+		                      note="Bar till counted by the duty manager")
+		self.assertEqual(out["acknowledged"], ["open_tills"])
+		self.assertEqual(out["status"], "Completed with Warnings")
+		run = frappe.get_doc("Night Audit Run", out["audit"])
+		import json as _json
+		acks = _json.loads(run.acknowledgements)
+		self.assertEqual(acks[0]["key"], "open_tills")
+		self.assertEqual(acks[0]["by"], "Administrator")
+		self.assertTrue(acks[0]["at"])
+		self.assertEqual(acks[0]["note"], "Bar till counted by the duty manager")
+		self.assertEqual(run.exceptions, 1)
+		self.assertEqual(run.run_trigger, "Manual")
+		self.assertEqual(self.bd(), TODAY)
+
+	def bd(self):
+		return str(frappe.db.get_value("Property", PROP_A, "business_date"))
+
+	def test_closing_the_till_clears_the_blocker(self):
+		from kamra import cashier
+		session = self.open_till()
+		cashier.close_session(session, counted_cash=500)
+		self.assertEqual(self.checks()["open_tills"]["count"], 0)
+		self.assertEqual(self.run_manual()["status"], "Completed")
+
+	def test_a_blocking_check_can_be_made_a_warning(self):
+		self.open_till()
+		self.setting("na_block_open_tills", 0)
+		c = self.checks()["open_tills"]
+		self.assertEqual((c["severity"], c["count"]), ("warn", 1))
+		self.assertEqual(self.run_manual()["status"], "Completed")
+
+	def test_open_and_unsettled_pos_bills_block(self):
+		order = self.pos_order()
+		c = self.checks()["open_pos_bills"]
+		self.assertEqual((c["severity"], c["count"]), ("block", 1))
+		row = c["items"][0]
+		self.assertEqual((row["bill_no"], row["outlet"], row["amount"]),
+		                 (order.name, "UT Bar", 300))
+		self.assertEqual(row["state"], "open")
+		with self.assertRaises(frappe.ValidationError):
+			self.run_manual()
+
+	def test_departure_still_in_house_blocks(self):
+		res = self.in_house(check_in=d(-4), check_out=YESTERDAY)
+		c = self.checks()["departures_due"]
+		self.assertEqual((c["severity"], c["count"]), ("block", 1))
+		self.assertEqual(c["items"][0]["reservation"], res.name)
+		self.assertIn("nights", c["items"][0])
+		self.setting("na_block_departures", 0)
+		self.assertEqual(self.checks()["departures_due"]["severity"], "warn")
+
+	def test_arrivals_show_what_the_no_show_policy_will_do(self):
+		due = make_reservation(PROP_A, self.rt, YESTERDAY, d(1))
+		ota = make_reservation(PROP_A, self.rt, YESTERDAY, d(1),
+		                       source="OTA", channel="Booking.com")
+		late = make_reservation(PROP_A, self.rt, YESTERDAY, d(1), late_arrival=1)
+		c = self.checks()["arrivals_pending"]
+		self.assertEqual(c["severity"], "warn")
+		rows = {i["reservation"]: i for i in c["items"]}
+		self.assertEqual((rows[due.name]["outcome"], rows[due.name]["fee"]),
+		                 ("no_show", "charge"))
+		self.assertGreater(rows[due.name]["fee_amount"], 0)
+		self.assertEqual(rows[ota.name]["fee"], "waived")
+		self.assertEqual(rows[late.name]["outcome"], "hold")
+		frappe.db.set_value("Property", PROP_A, "no_show_timing", "One day later")
+		rows = {i["reservation"]: i for i in self.checks()["arrivals_pending"]["items"]}
+		self.assertEqual(rows[due.name]["outcome"], "defer")
+		# the audit does what the checklist said
+		frappe.db.set_value("Property", PROP_A, "no_show_timing",
+		                    "At audit for arrival date")
+		self.run_manual()
+		self.assertEqual(frappe.db.get_value("Reservation", due.name, "status"), "No Show")
+		self.assertEqual(frappe.db.get_value("Reservation", late.name, "status"), "Confirmed")
+
+	def test_rate_variance_flags_a_room_night_off_the_booked_rate(self):
+		from kamra.folio import post_room_night, save_folios
+		res = self.in_house()
+		post_room_night(res, YESTERDAY)
+		self.assertEqual(self.checks()["rate_variance"]["count"], 0)
+		other = self.in_house(room=1)
+		folio = frappe.get_doc("Folio", guest_folio(other.name))
+		folio.append("charges", {
+			"posting_date": YESTERDAY, "charge_type": "Room",
+			"reservation": other.name, "description": "Room manual", "qty": 1,
+			"rate": 1600, "amount": 1600, "gst_rate": 0, "auto_posted": 0})
+		save_folios({folio.name: folio})
+		c = self.checks()["rate_variance"]
+		self.assertEqual((c["severity"], c["count"]), ("warn", 1))
+		row = c["items"][0]
+		self.assertEqual(row["reservation"], other.name)
+		self.assertTrue(row["manual"])
+		self.assertAlmostEqual(row["difference"], row["posted"] - row["expected"])
+		self.assertGreater(abs(row["difference"]), 1)
+
+	def test_pos_bills_posted_to_rooms_are_listed_never_blocking(self):
+		res = self.in_house()
+		order = self.pos_order(room=res.room, reservation=res.name)
+		order.status = "Delivered"
+		order.save(ignore_permissions=True)
+		c = self.checks()["pos_room_postings"]
+		self.assertEqual((c["severity"], c["count"]), ("info", 1))
+		row = c["items"][0]
+		self.assertEqual((row["bill_no"], row["outlet"], row["room"],
+		                  row["guest_name"]),
+		                 (order.name, "UT Bar", "101", res.guest_name))
+		self.assertFalse(row["room_mismatch"])
+		self.assertTrue(self.checks()["open_pos_bills"]["count"] == 0)
+
+	def test_high_balance_threshold_and_off(self):
+		from kamra.folio import post_room_night
+		res = self.in_house()
+		post_room_night(res, YESTERDAY)
+		self.setting("na_high_balance_threshold", 500)
+		c = self.checks()["high_balance"]
+		self.assertEqual([i["reservation"] for i in c["items"]], [res.name])
+		self.setting("na_high_balance_threshold", 0)
+		c = self.checks()["high_balance"]
+		self.assertEqual((c["count"], c["enabled"]), (0, False))
+
+	def test_company_over_its_credit_limit(self):
+		company = "UT Audit Corp"
+		if not frappe.db.exists("Corporate Account", company):
+			frappe.get_doc({"doctype": "Corporate Account", "company_name": company,
+			                "credit_allowed": 1}).insert(ignore_permissions=True)
+		acc = frappe.get_doc({"doctype": "City Ledger Account", "property": PROP_A,
+		                      "company": company, "credit_limit": 100}
+		                     ).insert(ignore_permissions=True)
+		frappe.get_doc({"doctype": "City Ledger Entry", "account": acc.name,
+		                "property": PROP_A, "posting_date": YESTERDAY,
+		                "kind": "Invoice", "debit": 250}).insert(ignore_permissions=True)
+		c = self.checks()["credit_limit"]
+		self.assertEqual(c["count"], 1)
+		row = c["items"][0]
+		self.assertEqual((row["company"], row["exposure"], row["over_by"]),
+		                 (company, 250, 150))
+
+	def test_room_status_discrepancies_both_ways(self):
+		res = self.in_house()
+		frappe.db.set_value("Room", res.room, "occupancy_status", "Vacant")
+		frappe.db.set_value("Room", self.rooms[3], "occupancy_status", "Occupied")
+		c = self.checks()["room_status"]
+		issues = {i["room"]: i["issue"] for i in c["items"]}
+		self.assertIn("101", issues)
+		self.assertIn("104", issues)
+		self.assertIn("Vacant", issues["101"])
+		self.assertIn("no guest", issues["104"])
+
+	# scheduled run: hold or report ---------------------------------------
+
+	def test_scheduled_run_reports_blockers_by_default(self):
+		self.open_till()
+		out = folio_mod.run_night_audit(PROP_A, mode="scheduled")
+		self.assertEqual(out["status"], "Completed with Warnings")
+		self.assertEqual(self.bd(), TODAY)
+		run = frappe.get_doc("Night Audit Run", out["audit"])
+		self.assertEqual(run.run_trigger, "Scheduled")
+		self.assertIn("open_tills", run.acknowledgements)
+		self.alerts.assert_not_called()
+
+	def test_scheduled_run_holds_and_alerts_when_set(self):
+		self.open_till()
+		self.setting("na_auto_audit_with_blockers", "Hold and alert")
+		out = folio_mod.run_night_audit(PROP_A, mode="scheduled")
+		self.assertTrue(out["held"])
+		self.assertEqual(self.bd(), YESTERDAY)
+		self.assertFalse(frappe.db.exists("Night Audit Run", {"property": PROP_A}))
+		self.assertTrue(frappe.db.exists("Agent Action Log", {
+			"property": PROP_A, "action_type": "night_audit_held"}))
+		roles = {c.args[1] for c in self.alerts.call_args_list}
+		self.assertEqual(roles, {"Hotel Admin", "Finance"})
+		from kamra import night_audit
+		self.assertTrue(night_audit.night_audit_precheck(PROP_A)["held"])
+		# nothing blocking: the scheduled run closes the day even on hold
+		frappe.db.set_value("Cashier Session", {"property": PROP_A}, "status", "Closed")
+		self.assertEqual(folio_mod.run_night_audit(PROP_A, mode="scheduled")["status"],
+		                 "Completed")
+
+	# the audit pack ------------------------------------------------------
+
+	def test_the_pack_is_saved_with_every_section(self):
+		from kamra import night_audit
+		res = self.in_house()
+		ns = make_reservation(PROP_A, self.rt, YESTERDAY, d(1))
+		out = self.run_manual()
+		pack = night_audit.night_audit_pack(out["audit"])
+		self.assertTrue(pack["has_pack"])
+		p = pack["pack"]
+		for key in ("manager_flash", "revenue_by_transaction_code",
+		            "ledger_balances", "statistics", "in_house", "departures",
+		            "arrivals", "no_shows", "high_balance", "credit_limit",
+		            "pos_room_postings", "rate_variance", "cashier_sessions",
+		            "prechecks", "acknowledgements", "journal",
+		            "deposit_ledger", "city_ledger", "cancellations", "reports"):
+			self.assertIn(key, p, key)
+		self.assertNotIn("errors", p)
+		self.assertEqual(p["business_date"], YESTERDAY)
+		self.assertEqual([r["reservation"] for r in p["in_house"]], [res.name])
+		self.assertEqual(p["statistics"]["rooms_sold"], 1)
+		self.assertEqual(p["no_shows"][0]["reservation"], ns.name)
+		self.assertIn("fee posted", p["no_shows"][0]["outcome"])
+		self.assertTrue(p["journal"]["lines"])
+		self.assertEqual([c["key"] for c in p["prechecks"]],
+		                 list(night_audit.ORDER))
+
+	def test_a_run_without_a_pack_says_so(self):
+		from kamra import night_audit
+		frappe.get_doc({"doctype": "Night Audit Run", "property": PROP_A,
+		                "business_date": d(-5), "status": "Completed"}
+		               ).insert(ignore_permissions=True)
+		out = night_audit.night_audit_pack(f"AUDIT-{d(-5)}-{PROP_A}")
+		self.assertFalse(out["has_pack"])
+		self.assertIsNone(out["pack"])
+		self.assertIn("before audit packs", out["message"])
+
+	# End of Day wizard ---------------------------------------------------
+
+	def test_end_of_day_resumes_acknowledges_and_runs_from_the_draft(self):
+		from kamra import night_audit
+		self.open_till()
+		s = night_audit.eod_session(PROP_A)
+		self.assertEqual(s["status"], "Draft")
+		self.assertEqual(s["current_step"], 1)
+		steps = {x["key"]: x for x in s["steps"]}
+		self.assertEqual(len(s["steps"]), 12)
+		self.assertEqual(steps["cashiers"]["status"], "blocked")
+		with self.assertRaises(frappe.ValidationError):
+			night_audit.eod_progress(PROP_A, key="cashiers", status="done")
+		night_audit.eod_progress(PROP_A, step=4, key="arrivals", status="done",
+		                         notes="Heavy rain; lift 2 out of service")
+		with self.assertRaises(frappe.ValidationError):
+			night_audit.eod_acknowledge(PROP_A, "open_tills", "")
+		with self.assertRaises(frappe.ValidationError):
+			night_audit.eod_acknowledge(PROP_A, "departures_due", "nothing open")
+		night_audit.eod_acknowledge(PROP_A, "open_tills", "Till 2 counted tomorrow")
+		night_audit.eod_progress(PROP_A, key="cashiers", status="done")
+		s = night_audit.eod_session(PROP_A)
+		self.assertEqual(s["current_step"], 4)
+		self.assertEqual(s["audit"], s["audit"])
+		steps = {x["key"]: x["status"] for x in s["steps"]}
+		self.assertEqual((steps["arrivals"], steps["cashiers"]), ("done", "done"))
+		self.assertEqual(s["blockers"], [])
+		draft = s["audit"]
+		# the run takes the wizard's acknowledgement - no second reason
+		out = self.run_manual()
+		self.assertEqual(out["audit"], draft)
+		run = frappe.get_doc("Night Audit Run", draft)
+		self.assertEqual(run.status, "Completed with Warnings")
+		self.assertEqual(run.auditor_notes, "Heavy rain; lift 2 out of service")
+		pack = night_audit.night_audit_pack(draft)["pack"]
+		self.assertEqual(pack["notes"], "Heavy rain; lift 2 out of service")
+		self.assertEqual(pack["acknowledgements"][0]["note"], "Till 2 counted tomorrow")
+		# the finished run reopens at its reports; history leaves drafts out
+		done = night_audit.eod_session(PROP_A, audit=draft)
+		self.assertTrue(done["ran"])
+		self.assertGreaterEqual(done["current_step"], 11)
+		names = [r["name"] for r in night_audit.night_audit_history(PROP_A)]
+		self.assertEqual(names, [draft])
+
+	def test_a_draft_is_not_a_closed_day(self):
+		from kamra import night_audit
+		night_audit.eod_session(PROP_A)
+		self.assertFalse(night_audit.night_audit_precheck(PROP_A)["already_ran"])
+		self.assertEqual(night_audit.night_audit_history(PROP_A), [])
+		self.assertFalse(self.run_manual().get("already_ran"))
+
+	def test_mark_no_show_applies_the_policy_now(self):
+		from kamra import night_audit
+		due = make_reservation(PROP_A, self.rt, YESTERDAY, d(1))
+		ota = make_reservation(PROP_A, self.rt, YESTERDAY, d(1),
+		                       source="OTA", channel="Agoda")
+		out = night_audit.eod_mark_no_show(due.name)
+		self.assertGreater(out["fee_amount"], 0)
+		self.assertEqual(frappe.db.get_value("Reservation", due.name, "status"), "No Show")
+		self.assertEqual(night_audit.eod_mark_no_show(ota.name)["fee"], "waived")
+		future = make_reservation(PROP_A, self.rt, d(3), d(4))
+		with self.assertRaises(frappe.ValidationError):
+			night_audit.eod_mark_no_show(future.name)
+
+	def test_overview_lists_the_property(self):
+		from kamra import night_audit
+		self.open_till()
+		rows = {r["property"]: r for r in night_audit.eod_overview()}
+		row = rows[PROP_A]
+		self.assertEqual((row["business_date"], row["open_cashiers"], row["blockers"]),
+		                 (YESTERDAY, 1, 1))
+
+	def test_night_auditor_role_reaches_the_audit(self):
+		from kamra import api, cashier, night_audit
+		user = ensure_user("ut.audit.night@test.local", ["Night Auditor"])
+		for fn in (api.run_night_audit, night_audit.night_audit_precheck,
+		           night_audit.eod_session, night_audit.eod_acknowledge,
+		           api.check_in, api.check_out, cashier.close_session,
+		           api.get_folio):
+			self.assertIn("Night Auditor", fn._kamra_roles, fn.__name__)
+		frappe.set_user(user)  # nosemgrep: frappe-setuser -- acting as the persona
+		out = night_audit.night_audit_precheck(PROP_A)
+		self.assertEqual(out["business_date"], YESTERDAY)
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- restore

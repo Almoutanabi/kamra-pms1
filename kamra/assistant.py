@@ -194,12 +194,25 @@ EXTRA_TOOLS = {
 		"and balances due, back-to-back room conflicts, the demand tier "
 		"pricing is applying, and a 7-day outlook.",
 		{"date": {"type": "string"}}, True, False),
+	"night_audit_precheck": (
+		"night_audit.night_audit_precheck",
+		"The night audit checklist for the current business date (read-only): "
+		"open tills, open restaurant bills, departures still in house, arrivals "
+		"and what the no-show policy will do, rate variances, outlet bills on "
+		"rooms, high balances, companies over credit limit, room status "
+		"discrepancies. Each check has a severity (block | warn | info), a "
+		"count, the rows and a suggested action. Run it before run_night_audit.",
+		{}, True, False),
 	"run_night_audit": (
 		"run_night_audit",
 		"Run end-of-day for the current business date: posts room nights, "
-		"flags & charges no-shows, rolls the business date. business_date is "
-		"optional and must equal the current business date.",
-		{"business_date": {"type": "string"}}, True, True),
+		"flags & charges no-shows, rolls the business date. Refused while a "
+		"blocking pre-check has items: resolve them, or - only when staff "
+		"confirm - pass acknowledge (the check keys) with note (the reason). "
+		"business_date is optional and must equal the current business date.",
+		{"business_date": {"type": "string"},
+		 "acknowledge": {"type": "array", "items": {"type": "string"}},
+		 "note": {"type": "string"}}, True, True),
 }
 
 TOOLS = {

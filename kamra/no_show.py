@@ -19,8 +19,10 @@ All of it is per property (Settings → Front Desk → Night audit & no-shows):
                               arrivals that are not guaranteed are cancelled
                               with no fee (15-minute scheduler).
 
-The night audit (kamra.folio.run_night_audit) is the only writer of No Show;
-this module only answers the policy questions.
+The night audit (kamra.folio.run_night_audit) and the End of Day "Mark
+no-show" action (kamra.night_audit.eod_mark_no_show) are the only writers of
+No Show, both through kamra.folio.apply_no_show; this module only answers the
+policy questions.
 """
 
 from __future__ import annotations
@@ -165,6 +167,41 @@ def late_arrival_reason(res, run_at: datetime) -> str | None:
 	if latest > run_at:
 		return f"ETA {latest:%H:%M} is after the audit ({run_at:%H:%M})"
 	return None
+
+
+def audit_outcome(res, pol, business_date, run_at: datetime) -> frappe._dict:
+	"""What the audit closing `business_date` (running at `run_at`, property
+	time) does with this unarrived Confirmed stay - the one decision both the
+	audit and its pre-check checklist use, so the checklist never promises
+	something the audit then does differently.
+
+	outcome: "defer"   - "One day later" timing: stays Due In tonight
+	         "hold"    - late arrival protected until the next audit
+	         "no_show" - marked No Show tonight
+	fee (no_show only): "none" (policy charges nothing), "waived" (OTA) or
+	"charge" (the policy's basis is posted)."""
+	bd = str(getdate(business_date))
+	ci = str(getdate(res.check_in_date))
+	if pol.timing == ONE_DAY_LATER and ci >= bd:
+		return frappe._dict(outcome="defer", reason="no-show timing is one day later",
+		                    fee=None)
+	if pol.protect_late and ci == bd:
+		why = late_arrival_reason(res, run_at)
+		if why:
+			return frappe._dict(outcome="hold", reason=why, fee=None)
+	return fee_decision(res, pol)
+
+
+def fee_decision(res, pol) -> frappe._dict:
+	"""A stay that is being marked No Show: does the policy charge a fee,
+	charge nothing, or waive it because an OTA collects?"""
+	if pol.charge == "None":
+		return frappe._dict(outcome="no_show", reason="", fee="none")
+	if pol.waive_ota and is_ota_booking(res):
+		return frappe._dict(outcome="no_show",
+		                    reason=f"{res.get('channel') or res.get('source') or 'OTA'} booking",
+		                    fee="waived")
+	return frappe._dict(outcome="no_show", reason="", fee="charge")
 
 
 # --- who pays ----------------------------------------------------------------

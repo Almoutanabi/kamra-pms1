@@ -33,6 +33,8 @@ ROLES = (
 	 "Rates, seasons, guardrails, channels, the booking engine and banquet sales."),
 	("Finance", "Finance",
 	 "Billing, ledgers, night audit, exports, tax and cashier controls."),
+	("Night Auditor", "Night Auditor",
+	 "End of Day: arrivals, departures, cashier closure, room and tax posting, the audit pack."),
 	("Housekeeping Supervisor", "Housekeeping Supervisor",
 	 "The room board, inspections, task deadlines and laundry pricing."),
 	("Housekeeping", "Housekeeping",

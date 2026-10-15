@@ -5,7 +5,7 @@ AGENT_ROLE = "Kamra Agent"
 
 
 # business roles a hotel assigns to staff that no doctype perm creates
-STAFF_ROLES = ("Housekeeping Supervisor",)
+STAFF_ROLES = ("Housekeeping Supervisor", "Night Auditor")
 
 
 def after_install():

@@ -112,7 +112,7 @@ def void_allowance_report(
 
 
 @frappe.whitelist()
-@require_roles("Finance", "Front Desk", "Kamra Agent")
+@require_roles("Finance", "Front Desk", "Night Auditor", "Kamra Agent")
 def manager_flash(property: str, date: str | None = None):
 	"""The daily flash: yesterday's performance, month to date, today's
 	movement, collections by mode, and the 7-day outlook."""
