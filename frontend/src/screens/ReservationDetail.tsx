@@ -16,8 +16,10 @@ import {
 } from "lucide-react"
 
 import {
+  acceptBookingRequest,
   amendStayConfirmed,
   checkIn,
+  declineBookingRequest,
   checkOut,
   idDocumentImage,
   promoteWaitlist,
@@ -33,6 +35,7 @@ import { Button } from "../components/ui/button"
 import CancelPanel from "../components/CancelPanel"
 import LinkedRecords from "../components/LinkedRecords"
 import DepositPanel from "../components/DepositPanel"
+import SecurityDepositPanel from "../components/SecurityDepositPanel"
 import RoomChangeDialog from "../components/RoomChangeDialog"
 import { cur, moneyLocale } from "../lib/money"
 
@@ -189,6 +192,7 @@ export default function ReservationDetail({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [changingRoom, setChangingRoom] = useState(false)
+  const [declineReason, setDeclineReason] = useState("")
 
   const refresh = useCallback(() => {
     reservationDetail(name)
@@ -366,6 +370,18 @@ export default function ReservationDetail({
           deposit={d.deposit}
           guestPhone={d.guest?.phone}
           onChanged={() => refresh()}
+        />
+      )}
+
+      {d.security_deposit && (
+        <SecurityDepositPanel
+          reservation={d.name}
+          deposit={d.security_deposit}
+          canStart={["Confirmed", "Checked In"].includes(d.status)}
+          onChanged={() => {
+            refresh()
+            reload()
+          }}
         />
       )}
 
@@ -615,6 +631,36 @@ export default function ReservationDetail({
         </div>
       )}
 
+      {d.status === "Requested" && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Booking request - waiting for your answer</p>
+          <p className="mt-0.5 text-xs">
+            A request holds no room. Accepting checks availability again and
+            takes a room; declining cancels it with no fee and tells the guest.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button disabled={busy} onClick={() => act(() => acceptBookingRequest(name))}>
+              Accept
+            </Button>
+            <input
+              value={declineReason}
+              onChange={(e) => setDeclineReason(e.target.value)}
+              placeholder="Reason for declining"
+              className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:outline-2 focus:outline-offset-1 focus:outline-brand-600"
+            />
+            <Button
+              variant="outline"
+              disabled={busy || !declineReason.trim()}
+              onClick={() =>
+                act(() => declineBookingRequest(name, declineReason.trim()))
+              }
+            >
+              Decline
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* primary actions */}
       <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-4">
         {d.status === "Waitlist" && (
@@ -641,6 +687,11 @@ export default function ReservationDetail({
           <Button disabled={busy} onClick={() => act(() => checkIn(name))}>
             <LogIn className="size-4" /> Check in
           </Button>
+        )}
+        {d.actions.can_check_out && d.security_deposit?.blocks_checkout && (
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
+            <ShieldCheck className="size-3.5" /> Security deposit still held - withhold or refund it
+          </span>
         )}
         {d.actions.can_check_out && (
           <Button disabled={busy} onClick={() => act(() => checkOut(name))}>

@@ -318,6 +318,8 @@ export interface BookingOptions {
 
 export interface Quote {
   nights: number
+  /** same-day stay: nights is 0 and one date is billed */
+  day_use?: boolean
   nightly: { date: string; rate: number }[]
   room_total: number
   meal_total: number
@@ -443,6 +445,9 @@ export const createBooking = (
     guest_category?: string
     stay_details?: Record<string, unknown>
     instructions?: { department: string; instruction: string }[]
+    /** HH:MM - a day-use slot, or the ETA / ETD of an overnight stay */
+    check_in_time?: string
+    check_out_time?: string
     blacklist_override_reason?: string
   },
 ) =>
@@ -452,6 +457,21 @@ export const createBooking = (
     amount_after_tax: number
     status?: string
   }>("kamra.api.create_booking", { property: getCurrentProperty(), ...params })
+
+/** Request to Book: confirm the stay and take a room (refused, with the
+ * reason, when the dates sold out meanwhile). */
+export const acceptBookingRequest = (reservation: string, room?: string) =>
+  call<{ reservation: string; status: string; room: string | null; notified: string[] }>(
+    "kamra.booking_requests.accept_booking_request",
+    { reservation, ...(room ? { room } : {}) },
+  )
+
+/** Request to Book: decline with a reason (sent to the guest), no fee. */
+export const declineBookingRequest = (reservation: string, reason: string) =>
+  call<{ reservation: string; status: string; notified: string[]; note?: string }>(
+    "kamra.booking_requests.decline_booking_request",
+    { reservation, reason },
+  )
 
 export const promoteWaitlist = (reservation: string) =>
   call<{ ok: boolean; reservation: string; room: string }>(
@@ -1586,6 +1606,8 @@ export interface ReservationDetail {
   }
   /** Deposit before arrival (#114): expected by policy, received, still due. */
   deposit: import("../components/DepositPanel").DepositState
+  /** the refundable security (damage) deposit; null if it could not be read */
+  security_deposit: import("../components/SecurityDepositPanel").SecurityDepositState | null
   guest: {
     name: string
     full_name: string

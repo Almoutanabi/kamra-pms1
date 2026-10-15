@@ -138,7 +138,8 @@ MODULES: tuple[Module, ...] = (
 	Module(
 		"front-desk", "Front Desk", "Arrivals, holds, no-shows and the day view.",
 		editors=("Hotel Admin",),
-		related=(("Rooms", "/rooms"), ("Room types", "/room-types")),
+		related=(("Rooms", "/rooms"), ("Room types", "/room-types"),
+		         ("Room QR codes", "/qr-codes?tab=rooms")),
 		sections=(
 			Section("arrivals", "Arrivals", "Getting guests checked in before they reach the desk.", (
 				S("auto_send_checkin_links", "Send pre-check-in links automatically", "check", 0, P,
@@ -221,7 +222,8 @@ MODULES: tuple[Module, ...] = (
 	Module(
 		"fnb", "F&B", "Restaurant outlets, the menu and table reservations.",
 		editors=("Hotel Admin", "Finance"), toggle=True,
-		related=(("Outlets", "/outlets"), ("Menu", "/menu-items"), ("Kitchen inventory", "/inventory")),
+		related=(("Outlets", "/outlets"), ("Menu", "/menu-items"), ("Kitchen inventory", "/inventory"),
+		         ("QR codes", "/qr-codes")),
 		sections=(
 			Section("tables", "Table reservations", "Which bookings show against a table on the POS floor.", (
 				S("pos_reservation_before_min", "Show a reservation from", "number", 60, min=0, max=480, unit="min before"),

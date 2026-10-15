@@ -12,7 +12,6 @@ trial balance is level (debits == credits) whenever nothing is owed.
 
 from __future__ import annotations
 
-import unittest
 from unittest.mock import patch
 
 import frappe
@@ -178,7 +177,6 @@ class LedgerAuditTestCase(AuditTestCase):
 	# Folio Ledger Entry, so once the company has paid, ledger_balances
 	# still shows the receivable and the trial balance never levels; the
 	# AR ledger and the city ledger disagree forever.
-	@unittest.expectedFailure
 	def test_settled_city_ledger_clears_the_ar_ledger(self):
 		self.charge(500)
 		moved = ledger.transfer_to_city_ledger(self.folio, COMPANY)
@@ -194,7 +192,6 @@ class LedgerAuditTestCase(AuditTestCase):
 	# balance therefore omits all room revenue: after the audit and the
 	# guest paying the bill, the Guest ledger shows a credit balance while
 	# the folio says the guest owes nothing.
-	@unittest.expectedFailure
 	def test_night_audit_room_nights_reach_the_guest_ledger(self):
 		self.set_bd(YESTERDAY)
 		folio_mod.run_night_audit(PROP_A)

@@ -66,6 +66,74 @@ def entire_place_rooms(property: str, room_type: str,
 		""", property, as_dict=True)
 
 
+# Statuses that hold a room (kamra.reservation_state.LIVE_STATUSES), as SQL.
+_LIVE_SQL = "('Confirmed', 'Checked In', 'Held', 'Pending Payment')"
+
+
+def villa_lockout_bookings(property: str, room_type: str | None, check_in,
+                           check_out, exclude: str | None = None,
+                           limit: int | None = None) -> list[dict]:
+	"""Live reservations on the OTHER side of the villa <-> room lockout that
+	overlap [check_in, check_out): for a whole-villa type, any booked
+	non-villa (member) room; for any other type, a booked whole villa.
+
+	The one query behind both the write-time guard (validate_villa_lockout)
+	and every availability read (desk, booking engine, ARI push), so what
+	Kamra refuses to book and what it offers for sale can never disagree.
+	A property with no villa type never matches (the join finds nothing)."""
+	if not room_type:
+		return []
+	side = NON_VILLA_SQL if is_entire_place(room_type) \
+		else "rt.room_category = 'Villa'"
+	return frappe.db.sql(
+		f"""
+		SELECT r.name, r.check_in_date, r.check_out_date FROM `tabReservation` r
+		LEFT JOIN `tabRoom Type` rt ON r.room_type = rt.name
+		WHERE r.property = %(property)s
+		  AND r.name != %(name)s
+		  AND r.status IN {_LIVE_SQL}
+		  AND {side}
+		  AND r.check_in_date < GREATEST(%(check_out)s, DATE_ADD(%(check_in)s, INTERVAL 1 DAY))
+		  AND GREATEST(r.check_out_date, DATE_ADD(r.check_in_date, INTERVAL 1 DAY)) > %(check_in)s
+		ORDER BY r.check_in_date
+		{"LIMIT %d" % int(limit) if limit else ""}
+		""",
+		{
+			"property": property,
+			"name": exclude or "new",
+			"check_in": check_in,
+			"check_out": check_out,
+		},
+		as_dict=True,
+	)
+
+
+def villa_lockout_conflict(property: str, room_type: str | None, check_in,
+                           check_out, exclude: str | None = None) -> str | None:
+	"""The reservation that stops `room_type` selling for the stay under the
+	villa <-> room lockout, or None when it is free to sell."""
+	rows = villa_lockout_bookings(property, room_type, check_in, check_out,
+	                              exclude=exclude, limit=1)
+	return rows[0].name if rows else None
+
+
+def villa_locked_nights(property: str, room_type: str | None, start,
+                        end) -> set[str]:
+	"""The nights in [start, end) on which `room_type` cannot sell because
+	the other side of the villa <-> room lockout is booked."""
+	from frappe.utils import add_days, getdate
+	locked: set[str] = set()
+	lo, hi = getdate(start), getdate(end)
+	for b in villa_lockout_bookings(property, room_type, start, end):
+		ci, co = getdate(b.check_in_date), getdate(b.check_out_date)
+		co = max(co, getdate(add_days(ci, 1)))  # day-use holds its date
+		d = max(ci, lo)
+		while d < co and d < hi:
+			locked.add(str(d))
+			d = getdate(add_days(d, 1))
+	return locked
+
+
 class Reservation(Document):
 	def after_insert(self):
 		# every booking gets a pre-arrival check-in link
@@ -127,8 +195,18 @@ class Reservation(Document):
 		limit = int(total * (1 + pct / 100))
 		from frappe.utils import add_days, date_diff
 		nights = max(1, date_diff(self.check_out_date, self.check_in_date))
-		for i in range(min(int(nights), 366)):
-			d = str(add_days(self.check_in_date, i))
+		dates = [str(add_days(self.check_in_date, i))
+		         for i in range(min(int(nights), 366))]
+		# rooms a confirmed group block holds back (until its cutoff) are
+		# not for general sale; a pickup books against its own block. Only
+		# a stay taking NEW inventory is held to this - a block made after
+		# a booking never stops that booking being edited.
+		held = {}
+		if self._takes_new_inventory():
+			from kamra.group_blocks import block_hold_by_night
+			held = block_hold_by_night(self.property, self.room_type, dates,
+			                           for_group=self.group_booking)
+		for d in dates:
 			cnt = frappe.db.sql(
 				"""SELECT COUNT(*) FROM `tabReservation`
 				   WHERE room_type = %(rt)s AND name != %(name)s
@@ -138,12 +216,32 @@ class Reservation(Document):
 				                  DATE_ADD(check_in_date, INTERVAL 1 DAY)) > %(d)s""",
 				{"rt": self.room_type, "name": self.name or "new", "d": d},
 			)[0][0]
-			if cnt + 1 > limit:
+			hold = held.get(d, 0)
+			if cnt + hold + 1 > limit:
+				if hold:
+					frappe.throw(
+						_("{0} is sold out for {1}: {2} of {3} rooms sold and "
+						  "{4} held for group blocks until their cutoff.").format(
+							self.room_type, d, cnt, total, hold),
+						title=_("Held for a group"), exc=InventoryRefused)
 				frappe.throw(
 					_("{0} is sold out for {1}: {2} of {3} rooms sold and "
 					  "the overbooking allowance ({4}%) is used up.").format(
 						self.room_type, d, cnt, total, pct),
 					title=_("Overbooking limit"), exc=InventoryRefused)
+
+	def _takes_new_inventory(self) -> bool:
+		"""True when this save starts holding rooms it did not hold before:
+		a new live booking, one entering a live status, or a change of
+		dates / room type."""
+		from kamra.reservation_state import holds_inventory
+		if self.is_new():
+			return True
+		old = self.get_doc_before_save()
+		if not old or not holds_inventory(old.status):
+			return True
+		return (str(old.check_in_date), str(old.check_out_date), old.room_type) \
+			!= (str(self.check_in_date), str(self.check_out_date), self.room_type)
 
 	def validate(self):
 		self.validate_dates()
@@ -533,64 +631,26 @@ class Reservation(Document):
 		) or not self.room_type:
 			return
 
+		conflict = villa_lockout_conflict(
+			self.property, self.room_type, self.check_in_date,
+			self.check_out_date, exclude=self.name)
+		if not conflict:
+			return
 		if is_entire_place(self.room_type):
-			# A Villa is being booked. Check if ANY individual/shared room booking is confirmed/checked-in
-			overlap = frappe.db.sql(
-				f"""
-				SELECT r.name FROM `tabReservation` r
-				LEFT JOIN `tabRoom Type` rt ON r.room_type = rt.name
-				WHERE r.property = %(property)s
-				  AND r.name != %(name)s
-				  AND r.status IN ('Confirmed', 'Checked In', 'Held', 'Pending Payment')
-				  AND {NON_VILLA_SQL}
-				  AND r.check_in_date < GREATEST(%(check_out)s, DATE_ADD(%(check_in)s, INTERVAL 1 DAY))
-				  AND GREATEST(r.check_out_date, DATE_ADD(r.check_in_date, INTERVAL 1 DAY)) > %(check_in)s
-				LIMIT 1
-				""",
-				{
-					"property": self.property,
-					"name": self.name or "new",
-					"check_in": self.check_in_date,
-					"check_out": self.check_out_date,
-				}
+			frappe.throw(
+				_("This property cannot be booked as an Entire Villa for these dates because an individual room is already booked at {0} under Reservation {1}.").format(
+					self.property, conflict
+				),
+				title=_("Double Booking Blocked"),
+				exc=InventoryRefused,
 			)
-			if overlap:
-				frappe.throw(
-					_("This property cannot be booked as an Entire Villa for these dates because an individual room is already booked at {0} under Reservation {1}.").format(
-						self.property, overlap[0][0]
-					),
-					title=_("Double Booking Blocked"),
-					exc=InventoryRefused,
-				)
-		else:
-			# An individual room is being booked. Check if the Entire Property (Villa) is booked.
-			overlap = frappe.db.sql(
-				"""
-				SELECT r.name FROM `tabReservation` r
-				LEFT JOIN `tabRoom Type` rt ON r.room_type = rt.name
-				WHERE r.property = %(property)s
-				  AND r.name != %(name)s
-				  AND r.status IN ('Confirmed', 'Checked In', 'Held', 'Pending Payment')
-				  AND rt.room_category = 'Villa'
-				  AND r.check_in_date < GREATEST(%(check_out)s, DATE_ADD(%(check_in)s, INTERVAL 1 DAY))
-				  AND GREATEST(r.check_out_date, DATE_ADD(r.check_in_date, INTERVAL 1 DAY)) > %(check_in)s
-				LIMIT 1
-				""",
-				{
-					"property": self.property,
-					"name": self.name or "new",
-					"check_in": self.check_in_date,
-					"check_out": self.check_out_date,
-				}
-			)
-			if overlap:
-				frappe.throw(
-					_("This room cannot be booked for these dates because the Entire Villa is already booked at {0} under Reservation {1}.").format(
-						self.property, overlap[0][0]
-					),
-					title=_("Double Booking Blocked"),
-					exc=InventoryRefused,
-				)
+		frappe.throw(
+			_("This room cannot be booked for these dates because the Entire Villa is already booked at {0} under Reservation {1}.").format(
+				self.property, conflict
+			),
+			title=_("Double Booking Blocked"),
+			exc=InventoryRefused,
+		)
 
 	def on_update(self):
 		previous = self.get_doc_before_save()

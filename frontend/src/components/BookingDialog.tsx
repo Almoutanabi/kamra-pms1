@@ -183,6 +183,14 @@ export function BookingDialog(props: {
     contact_preference: "Booker",
   })
   const [onBehalf, setOnBehalf] = useState(false)
+  // Day use (hourly): check in and out the same day, inside a time slot.
+  // The server prices it (one billable date) - the quote shows that rate.
+  const [dayUse, setDayUse] = useState(false)
+  const [slot, setSlot] = useState({ from: "10:00", to: "18:00" })
+  const badSlot = dayUse && (!slot.from || !slot.to || slot.to <= slot.from)
+  const slotArgs = dayUse
+    ? { check_in_time: slot.from, check_out_time: slot.to }
+    : {}
   const [moreOpen, setMoreOpen] = useState(false)
   const [moreRooms, setMoreRooms] = useState<ExtraRoom[]>([])
   const [moreQuotes, setMoreQuotes] = useState<(Quote | null)[]>([])
@@ -327,6 +335,7 @@ export function BookingDialog(props: {
   }, [])
 
   const checkOut = (() => {
+    if (dayUse) return form.check_in_date
     const d = new Date(form.check_in_date)
     d.setDate(d.getDate() + Math.max(1, form.nights))
     return d.toISOString().slice(0, 10)
@@ -484,13 +493,14 @@ export function BookingDialog(props: {
           voucher_code: form.voucher_code || undefined,
           company: form.company || undefined,
           waitlist: 1,
+          ...slotArgs,
           blacklist_override_reason: blacklistOverride,
         })
         setDone({ ref: res.reservation, room: null, waitlist: true })
         props.onBooked()
         return
       }
-      if (moreRooms.length > 0) {
+      if (moreRooms.length > 0 && !dayUse) {
         // several rooms → one group booking, billable as a block
         const rooms = [
           {
@@ -582,6 +592,7 @@ export function BookingDialog(props: {
         addons: Object.entries(addonQty)
           .filter(([, q]) => q > 0)
           .map(([experience, qty]) => ({ experience, qty })),
+        ...slotArgs,
         blacklist_override_reason: blacklistOverride,
       })
       setDone({ ref: res.reservation, room: res.room })
@@ -632,6 +643,7 @@ export function BookingDialog(props: {
         payment_amount: amount,
         payment_reference: walk.pay_reference.trim() || undefined,
         idempotency_key: walkInKey,
+        ...slotArgs,
         blacklist_override_reason: blacklistOverride,
       })
       setDone({ ref: res.reservation, room: res.room, walkIn: res })
@@ -734,6 +746,7 @@ export function BookingDialog(props: {
     !form.guest_name ||
     !quote ||
     badPhone ||
+    badSlot ||
     !walk.room ||
     payAmount < 0 ||
     (!!walk.id_number.trim() && !walk.id_type)
@@ -917,8 +930,12 @@ export function BookingDialog(props: {
                   <dd className="mt-1 font-semibold text-zinc-900">{checkOut}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs font-medium text-zinc-400">{t("Nights")}</dt>
-                  <dd className="mt-1 font-semibold text-zinc-900">{form.nights}</dd>
+                  <dt className="text-xs font-medium text-zinc-400">
+                    {dayUse ? t("Day use") : t("Nights")}
+                  </dt>
+                  <dd className="mt-1 font-semibold text-zinc-900">
+                    {dayUse ? `${slot.from}–${slot.to}` : form.nights}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium text-zinc-400">{t("Guests")}</dt>
@@ -1208,6 +1225,33 @@ export function BookingDialog(props: {
                 )}
                 </div>
 
+                <div
+                  role="radiogroup"
+                  aria-label={t("Stay type")}
+                  className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 text-sm"
+                >
+                  {([false, true] as const).map((du) => (
+                    <button
+                      key={String(du)}
+                      type="button"
+                      role="radio"
+                      aria-checked={dayUse === du}
+                      onClick={() => {
+                        setDayUse(du)
+                        if (du) setMoreRooms([])
+                      }}
+                      className={
+                        "rounded-md px-3 py-1.5 font-medium " +
+                        (dayUse === du
+                          ? "bg-white text-brand-800 shadow-sm"
+                          : "text-zinc-500 hover:text-zinc-700")
+                      }
+                    >
+                      {du ? t("Day use") : t("Overnight")}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <Field label={t("Check-in")}>
                     <input
@@ -1225,17 +1269,44 @@ export function BookingDialog(props: {
                       </p>
                     )}
                   </Field>
-                  <Field label={t("Nights")}>
-                    <input
-                      type="number"
-                      min={1}
-                      className={inputCls}
-                      value={form.nights}
-                      onChange={(e) =>
-                        set("nights", Math.max(1, Number(e.target.value)))
-                      }
-                    />
-                  </Field>
+                  {dayUse ? (
+                    <Field label={t("Time slot")}>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="time"
+                          aria-label={t("From")}
+                          className={inputCls + " px-2"}
+                          value={slot.from}
+                          onChange={(e) => setSlot((x) => ({ ...x, from: e.target.value }))}
+                        />
+                        <span className="text-zinc-400" aria-hidden>–</span>
+                        <input
+                          type="time"
+                          aria-label={t("To")}
+                          className={inputCls + " px-2"}
+                          value={slot.to}
+                          onChange={(e) => setSlot((x) => ({ ...x, to: e.target.value }))}
+                        />
+                      </div>
+                      {badSlot && (
+                        <p className="mt-1.5 text-xs text-rose-600">
+                          {t("The slot must end after it starts.")}
+                        </p>
+                      )}
+                    </Field>
+                  ) : (
+                    <Field label={t("Nights")}>
+                      <input
+                        type="number"
+                        min={1}
+                        className={inputCls}
+                        value={form.nights}
+                        onChange={(e) =>
+                          set("nights", Math.max(1, Number(e.target.value)))
+                        }
+                      />
+                    </Field>
+                  )}
                   <Field label={t("Adults")}>
                     <input
                       type="number"
@@ -1500,7 +1571,7 @@ export function BookingDialog(props: {
                   </div>
                 ))}
 
-                <button
+                {!dayUse && <button
                   type="button"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-600 hover:border-brand-500 hover:bg-brand-50/40 hover:text-brand-800"
                   onClick={() =>
@@ -1517,7 +1588,7 @@ export function BookingDialog(props: {
                 >
                   <Plus className="size-4" aria-hidden />
                   {t("Add another room")}
-                </button>
+                </button>}
 
                 <div className="border-t border-zinc-100 pt-2">
                   <button
@@ -1831,8 +1902,10 @@ export function BookingDialog(props: {
                   <div className="space-y-2.5 text-[15px]">
                     <div className="flex justify-between gap-3 text-zinc-600">
                       <span className="min-w-0 truncate">
-                        {roomTypeName} · {quote.nights} night
-                        {quote.nights === 1 ? "" : "s"}
+                        {roomTypeName} ·{" "}
+                        {quote.day_use
+                          ? t("Day use {from}–{to}", { from: slot.from, to: slot.to })
+                          : `${quote.nights} night${quote.nights === 1 ? "" : "s"}`}
                       </span>
                       <span className="shrink-0 tabular-nums">
                         {cur()}
@@ -1906,7 +1979,9 @@ export function BookingDialog(props: {
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-zinc-400">
-                        {form.check_in_date} → {checkOut}
+                        {dayUse
+                          ? `${form.check_in_date} · ${slot.from}–${slot.to}`
+                          : `${form.check_in_date} → ${checkOut}`}
                       </p>
                     </div>
 
@@ -1963,7 +2038,7 @@ export function BookingDialog(props: {
                 <>
                 <Button
                   className="w-full justify-center py-2.5 text-base"
-                  disabled={busy || !form.guest_name || !quote || pastCheckIn || badPhone || blacklistBlocked}
+                  disabled={busy || !form.guest_name || !quote || pastCheckIn || badPhone || badSlot || blacklistBlocked}
                   onClick={() => submit()}
                 >
                   {busy ? t("Booking…") : t("Confirm booking")}
@@ -1979,7 +2054,7 @@ export function BookingDialog(props: {
                   <Button
                     variant="outline"
                     className="justify-center"
-                    disabled={busy || !form.guest_name || pastCheckIn || badPhone || blacklistBlocked}
+                    disabled={busy || !form.guest_name || pastCheckIn || badPhone || badSlot || blacklistBlocked}
                     onClick={() => submit(true)}
                     title={t("Park this stay with no room; promote when inventory frees")}
                   >

@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **278 endpoints**, generated from the source
+the UI and the AI use. **305 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -211,20 +211,40 @@ paid - for demos and training, never on a live gateway.
 | --- | --- | --- |
 | `reservation` | yes |  |
 
+### `kamra.api.security_deposit`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`, `Kamra Agent`
+
+The stay's refundable security (damage) deposit: policy amount, what
+is held, withheld and refunded, its history and which actions are open.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+
 ### `kamra.api.collect_security_deposit`
 
-**GET/POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+Take a refundable security deposit (villas: the damage deposit). Lands
+on the guest folio as a Security Deposit payment and in the Deposit
+ledger - a liability held for the guest, never revenue. Cashier PIN and
+open till as for any payment.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `reservation` | yes |  |
 | `amount` | yes |  |
-| `mode` | no | `'UPI'` |
+| `mode` | no | `'Cash'` |
 | `reference` | no | `None` |
+| `pin` | no | `None` |
 
 ### `kamra.api.waive_security_deposit`
 
-**GET/POST** · roles: `Front Desk`, `Hotel Admin`, `Kamra Agent`
+**POST** · roles: `Front Desk`, `Hotel Admin`, `Kamra Agent`
+
+Waive the property's security deposit for this stay (reason required).
+Refused once money has been taken - refund it instead.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -233,7 +253,11 @@ paid - for demos and training, never on a live gateway.
 
 ### `kamra.api.withhold_security_deposit`
 
-**GET/POST** · roles: `Front Desk`, `Hotel Admin`, `Finance`
+**POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`
+
+Keep all or part of the held deposit against damage (reason required).
+The withheld part posts as a damage charge on the guest folio and moves
+from the Deposit ledger to the Guest ledger to pay it.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -241,16 +265,22 @@ paid - for demos and training, never on a live gateway.
 | `amount` | yes |  |
 | `reason` | yes |  |
 | `evidence` | no | `None` |
+| `pin` | no | `None` |
 
 ### `kamra.api.refund_security_deposit`
 
-**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`
+**POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`
+
+Refund what is still held (all of it by default) through the folio
+refund path - till, folio and a Deposit-ledger debit. Cashier PIN.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `reservation` | yes |  |
 | `amount` | no | `None` |
-| `reference` | no | `None` |
+| `mode` | no | `None` |
+| `note` | no | `None` |
+| `pin` | no | `None` |
 
 ### `kamra.api.release_access_instructions`
 
@@ -1029,6 +1059,8 @@ booking, not a walk-in.
 | `payment_reference` | no | `None` |
 | `pin` | no | `None` |
 | `idempotency_key` | no | `None` |
+| `check_in_time` | no | `None` |
+| `check_out_time` | no | `None` |
 | `blacklist_override_reason` | no | `None` |
 
 ### `kamra.api.upload_occupant_id`
@@ -1414,6 +1446,12 @@ that are sold out or restricted; promote it later when a room frees.
 status / idempotency_key / hold_expires_on support Instant public booking
 (ADR-006 / ADR-007). Desk callers leave them unset → Confirmed.
 
+Day use: check_out_date == check_in_date books a same-day stay, priced
+by the quote engine (one billable date). check_in_time / check_out_time
+(HH:MM) are its slot - they place it on the hourly tape and tell
+housekeeping when the room turns; on an overnight stay they are the
+ETA / ETD.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -1450,6 +1488,8 @@ status / idempotency_key / hold_expires_on support Instant public booking
 | `over_capacity_reason` | no | `None` |
 | `over_capacity_guests` | no | `0` |
 | `over_capacity_charge` | no | `0` |
+| `check_in_time` | no | `None` |
+| `check_out_time` | no | `None` |
 | `blacklist_override_reason` | no | `None` |
 
 ### `kamra.api.waitlist`
@@ -1800,6 +1840,51 @@ for NEFT processing (e.g. Tuesday/Saturday payout batches).
 | `property` | yes |  |
 
 
+## Request to Book (accept / decline)
+
+### `kamra.booking_requests.booking_requests`
+
+**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+
+Pending Request-to-Book stays (status Requested), oldest first, each
+with whether it can be accepted right now. Requests hold no inventory
+until accepted - rooms_free is live availability, not a reservation.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.booking_requests.accept_booking_request`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Accept a Request-to-Book stay: confirm it and take the inventory,
+assigning a free room of its type (or `room`). Every booking rule runs
+again - double-booking guard, villa &lt;-> room lockout, category capacity,
+group-block holds - so a request whose dates sold in the meantime is
+refused with the reason; decline it instead.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `room` | no | `None` |
+
+### `kamra.booking_requests.decline_booking_request`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Decline a Request-to-Book stay with a reason (required). The stay is
+cancelled with no cancellation fee - a request was never confirmed - and
+any room it pointed at is freed. The guest is told by WhatsApp / email
+when the property has them set up; otherwise the decline is just logged.
+An OTA request must also be declined on the OTA's side.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `reason` | yes |  |
+
+
 ## Restaurant POS & kitchen
 
 ### `kamra.pos.outlets`
@@ -1855,6 +1940,19 @@ now, so a captain can juggle several at once.
 | Param | Required | Default |
 | --- | --- | --- |
 | `outlet` | yes |  |
+
+### `kamra.pos.qr_targets`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`, `Kamra Agent`
+
+Everything a printable QR sheet needs: each restaurant outlet's tables
+with their QR-ordering link, and each room with the in-room dining link
+(the Room Service outlet's menu, tagged with the room). The codes are
+drawn in the browser - no QR web service sees these links.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
 
 ### `kamra.pos.table_map`
 
@@ -3491,6 +3589,248 @@ breached if it was resolved after due_by, or is still open past due_by.
 | `property` | yes |  |
 | `from_date` | yes |  |
 | `to_date` | yes |  |
+
+
+## Ledgers (trial balance, city ledger / AR, FX desk)
+
+### `kamra.ledger.ledger_balances`
+
+**GET/POST** · roles: `Finance`, `Front Desk`, `Hotel Admin`, `Kamra Agent`
+
+Four-ledger trial balance for a property (optionally as-of a date).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `business_date` | no | `None` |
+
+### `kamra.ledger.journal_by_transaction_code`
+
+**GET/POST** · roles: `Finance`, `Front Desk`, `Hotel Admin`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `business_date` | no | `None` |
+
+### `kamra.ledger.financial_activity`
+
+**GET/POST** · roles: `Finance`, `Hotel Admin`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `business_date` | no | `None` |
+| `user` | no | `None` |
+
+### `kamra.ledger.city_ledger_transfer`
+
+**POST** · roles: `Finance`, `Front Desk`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `folio` | yes |  |
+| `company` | no | `None` |
+| `pin` | no | `None` |
+
+### `kamra.ledger.city_ledger_settle`
+
+**POST** · roles: `Finance`, `Hotel Admin`, `Kamra Agent`
+
+Record a company's payment against its city ledger account and clear
+the AR it pays. By default it pays the oldest open bills first;
+`allocations` ([{folio, amount}]) names the folios instead. Any excess
+stays on the account as unapplied credit and settles the company's next
+bill.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `account` | yes |  |
+| `amount` | yes |  |
+| `mode` | no | `'Bank Transfer'` |
+| `reference` | no | `None` |
+| `allocations` | no | `None` |
+
+### `kamra.ledger.city_ledger_aging`
+
+**GET/POST** · roles: `Finance`, `Hotel Admin`, `Front Desk`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.ledger.city_ledger_account`
+
+**GET/POST** · roles: `Finance`, `Hotel Admin`, `Front Desk`, `Kamra Agent`
+
+One company's city ledger: balance, aging, each open bill (oldest
+first) and recent payments - what the payment screen needs.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `account` | yes |  |
+
+### `kamra.ledger.force_advance_bill`
+
+**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+Post future room (+ meal) charges ahead of night audit.
+
+nights: 'tonight' | 'entire' | integer string of nights.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `nights` | no | `'entire'` |
+| `pin` | no | `None` |
+
+### `kamra.ledger.generate_proforma`
+
+**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `folio` | yes |  |
+| `notes` | no | `None` |
+
+### `kamra.ledger.issue_credit_note`
+
+**POST** · roles: `Finance`, `Hotel Admin`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `folio` | yes |  |
+| `amount` | yes |  |
+| `reason` | yes |  |
+| `pin` | no | `None` |
+
+### `kamra.ledger.record_folio_reprint`
+
+**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `folio` | yes |  |
+| `document` | no | `'Guest Folio'` |
+| `reason` | no | `None` |
+
+### `kamra.ledger.folio_history`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `query` | no | `None` |
+| `status` | no | `None` |
+
+### `kamra.ledger.batch_post_charge`
+
+**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+Post the same charge to many folios (group / event).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `folios` | yes |  |
+| `charge_type` | yes |  |
+| `amount` | yes |  |
+| `description` | no | `None` |
+| `pin` | no | `None` |
+
+### `kamra.ledger.batch_print_folios`
+
+**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `folios` | yes |  |
+
+### `kamra.ledger.quick_checkout`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Settle + close folio + check out in one step when balance is zero
+or fully covered by company credit.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `pin` | no | `None` |
+
+### `kamra.ledger.group_checkout`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Quick-checkout every Checked In reservation on a group.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `group` | yes |  |
+| `pin` | no | `None` |
+
+### `kamra.ledger.list_exchange_rates`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.ledger.upsert_exchange_rate`
+
+**POST** · roles: `Finance`, `Hotel Admin`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `currency` | yes |  |
+| `buy_rate` | yes |  |
+| `sell_rate` | yes |  |
+| `service_tax_pct` | no | `0` |
+| `max_exchange` | no | `None` |
+
+### `kamra.ledger.currency_calculator`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `currency` | yes |  |
+| `fx_amount` | yes |  |
+| `direction` | no | `'Buy'` |
+
+### `kamra.ledger.post_exchange`
+
+**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `currency` | yes |  |
+| `fx_amount` | yes |  |
+| `direction` | no | `'Buy'` |
+| `folio` | no | `None` |
+| `guest` | no | `None` |
+| `pin` | no | `None` |
+
+### `kamra.ledger.exchange_history`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `business_date` | no | `None` |
+
+### `kamra.ledger.list_reason_codes`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `category` | no | `None` |
 
 
 ## Activity ledger

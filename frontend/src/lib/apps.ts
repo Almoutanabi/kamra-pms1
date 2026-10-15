@@ -60,6 +60,7 @@ import {
   History,
   Banknote,
   Calculator,
+  QrCode,
 } from "lucide-react"
 
 /** Shared tile treatment for switcher and launcher. One quiet system, not a rainbow. */
@@ -169,6 +170,7 @@ export const APPS: AppDef[] = [
       { to: "/menu-items", label: "Menu", icon: ClipboardList },
       { to: "/inventory", label: "Kitchen Inventory", icon: PackageSearch },
       { to: "/outlets", label: "Outlets", icon: Store },
+      { to: "/qr-codes", label: "QR Codes", icon: QrCode },
       { to: "/settings/fnb", label: "Settings", icon: SettingsIcon,
         roles: ["Finance", "Hotel Admin", "System Manager", "Administrator"] },
     ],

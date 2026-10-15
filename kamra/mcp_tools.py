@@ -251,6 +251,36 @@ TOOLS: tuple[ToolSpec, ...] = (
 		bools=("waive_fee",),
 	),
 	_t(
+		"booking_requests",
+		"booking_requests.booking_requests",
+		"""Pending Request-to-Book stays (status Requested) waiting for the
+		host, with whether each can be accepted right now (rooms_free,
+		blocker). A request holds NO room until it is accepted.""",
+		{},
+		property=True,
+	),
+	_t(
+		"accept_booking_request",
+		"booking_requests.accept_booking_request",
+		"""Accept a Request-to-Book stay: confirms it and takes a room of its
+		type (or the room given). Refused when the dates sold out meanwhile,
+		the villa/room lockout applies or a group block holds the rooms -
+		then decline it or offer other dates.""",
+		{"reservation": _p("string"), "room": _p("string")},
+		required=("reservation",),
+		mutating=True,
+	),
+	_t(
+		"decline_booking_request",
+		"booking_requests.decline_booking_request",
+		"""Decline a Request-to-Book stay. A reason is required and is sent
+		to the guest (WhatsApp / email when the property has them set up).
+		No cancellation fee - the stay was never confirmed.""",
+		{"reservation": _p("string"), "reason": _p("string")},
+		required=("reservation", "reason"),
+		mutating=True,
+	),
+	_t(
 		"check_in",
 		"api.check_in",
 		"Check a guest in (opens their folio, marks the room occupied).",
@@ -734,6 +764,44 @@ TOOLS: tuple[ToolSpec, ...] = (
 		confirms a held booking. Returns the link and a ready-to-send message.""",
 		{"reservation": _p("string"), "amount": _p("number")},
 		required=("reservation",),
+		mutating=True,
+		group="Billing",
+	),
+	_t(
+		"security_deposit_status",
+		"api.security_deposit",
+		"""The stay's refundable security (damage) deposit: the property's
+		policy amount, what is held, withheld and refunded, and whether it is
+		still holding up check-out. Withholding and refunding are done by
+		staff at the desk (cashier PIN) - not by an agent.""",
+		{"reservation": _p("string")},
+		required=("reservation",),
+		group="Billing",
+	),
+	_t(
+		"collect_security_deposit",
+		"api.collect_security_deposit",
+		"""Record a refundable security deposit the guest has paid (villas:
+		the damage deposit). It is held on the guest folio as a liability,
+		not revenue, and refunded or withheld at check-out. mode: one of the
+		property's payment modes. Confirm the amount with staff first.""",
+		{
+			"reservation": _p("string"),
+			"amount": _p("number"),
+			"mode": _p("string"),
+			"reference": _p("string"),
+		},
+		required=("reservation", "amount", "mode"),
+		mutating=True,
+		group="Billing",
+	),
+	_t(
+		"waive_security_deposit",
+		"api.waive_security_deposit",
+		"""Waive the property's security deposit for one stay. A reason is
+		required and goes on the record; refused once money was taken.""",
+		{"reservation": _p("string"), "reason": _p("string")},
+		required=("reservation", "reason"),
 		mutating=True,
 		group="Billing",
 	),

@@ -41,6 +41,8 @@ scheduler_events = {
 		"*/15 * * * *": [
 			"kamra.housekeeping.escalate_overdue_tasks",
 			"kamra.reservation_state.expire_holds",
+			# group blocks past their cutoff give unpicked rooms back to sale
+			"kamra.group_blocks.release_expired_blocks",
 			"kamra.no_show.release_non_guaranteed_arrivals",
 		],
 		# 08:30 - the banquet team's morning list: follow-ups gone quiet,
