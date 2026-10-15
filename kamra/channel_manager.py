@@ -107,6 +107,9 @@ def ari_snapshot(property: str, connection: str, days: int = 90) -> list[dict]:
 			else:
 				free = _available_rooms_raw(property, m.room_type, d, d2)
 				avail = max(0, len(free) - (hold or 0))
+			# Both paths must account for stays without a room number.
+			if meta[m.room_type]["total"]:
+				avail = min(avail, _sellable(property, m.room_type, d, d2))
 			rate = 0.0
 			try:
 				q = quote(property, m.room_type, str(d), str(d2), 2, 0)
