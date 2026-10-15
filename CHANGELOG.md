@@ -61,6 +61,57 @@ upgrade-breaking changes (removed doctypes / API contracts).
 * **demo:** a demo reset keeps the agent service user, so website bookings
   keep working afterwards ([#188](https://github.com/Kamra-PMS/kamra-pms/pull/188))
 
+## [2.6.13](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.12...v2.6.13) (2026-10-15)
+
+
+### Features
+
+* **pos:** auto-accept and print the KOT when an order is sent ([8bb30a0](https://github.com/Kamra-PMS/kamra-pms/commit/8bb30a065074cd76f4d661bb7cd828522e8f4f5b))
+* **pos:** auto-accept and print the KOT when an order is sent ([3565805](https://github.com/Kamra-PMS/kamra-pms/commit/3565805d7af3ffc8c28393e5666485040e7b8ca3))
+* **pricing:** tiered cancellation, peak-date rules and whole-place o… ([08bfc01](https://github.com/Kamra-PMS/kamra-pms/commit/08bfc01d30314a7d6eb863e0fa2c69fb0bf42da0))
+* **pricing:** tiered cancellation, peak-date rules and whole-place occupancy ([930e1cd](https://github.com/Kamra-PMS/kamra-pms/commit/930e1cd5c086221da26254008c5e1ca9a5b75137))
+* **settings:** settings hub with per-module pages, staff & access ([baadcce](https://github.com/Kamra-PMS/kamra-pms/commit/baadcce937e2099b159e528ae87382334c069f3a))
+* **settings:** settings hub with per-module pages, staff & access ([77f136e](https://github.com/Kamra-PMS/kamra-pms/commit/77f136ecbfef1a157e60b50bdaa81f47374850af))
+* **verify:** keep Kamra Verify unreleased until its hub service is live ([21b9be2](https://github.com/Kamra-PMS/kamra-pms/commit/21b9be2976e11ab1a1777277b939f104e922b9b2))
+
+
+### Bug Fixes
+
+* **agent:** resolve booking refs by name, idempotent agent bookings, log Chat/MCP actions ([44690bf](https://github.com/Kamra-PMS/kamra-pms/commit/44690bfdb54564d38f08d8d016a1c1c1773b69ae))
+* **agent:** resolve booking refs by name, make agent bookings idempotent, log Chat/MCP actions ([b1ab61c](https://github.com/Kamra-PMS/kamra-pms/commit/b1ab61c867ccb686ab773dd2108dd2511bc18139))
+* **agent:** review follow-ups for agent bookings ([#193](https://github.com/Kamra-PMS/kamra-pms/issues/193)) ([9d4a3b1](https://github.com/Kamra-PMS/kamra-pms/commit/9d4a3b108332389799ce0bceaed2afc08aa0915b))
+* **agent:** review follow-ups for agent bookings ([#193](https://github.com/Kamra-PMS/kamra-pms/issues/193)) ([23f30e4](https://github.com/Kamra-PMS/kamra-pms/commit/23f30e473f459b49fe4d8facbb6aefa966a46957))
+* apply strict property scope to frappe reads ([bbadf36](https://github.com/Kamra-PMS/kamra-pms/commit/bbadf36f0cdb3fe24ce5a6ccaf52ee037ea4fbfd))
+* **booking:** cap the party at what the room can sleep ([9918998](https://github.com/Kamra-PMS/kamra-pms/commit/9918998bd3e85153903d15df7efb513d4e3f4b90))
+* **booking:** cap the party at what the room can sleep ([b18d893](https://github.com/Kamra-PMS/kamra-pms/commit/b18d89392fd8362fa24a177acfb7b744999c76f0))
+* cancel retained OTA bookings and flag inventory refusals ([e9c1fbe](https://github.com/Kamra-PMS/kamra-pms/commit/e9c1fbe8a1a70331b998260409338845eb7db63d))
+* count unassigned stays in OTA inventory ([9e2222f](https://github.com/Kamra-PMS/kamra-pms/commit/9e2222ff393f6590feaa7eabf364f4e59b5c185c))
+* count unassigned stays in OTA inventory ([d33d85c](https://github.com/Kamra-PMS/kamra-pms/commit/d33d85c9dc607d94cabd6361a3607911c806aca3))
+* **demo:** keep the agent service user across demo resets ([d515a21](https://github.com/Kamra-PMS/kamra-pms/commit/d515a219aa56d3b77093ade61c0e6e444bb2f2d7))
+* **demo:** keep the agent service user across demo resets ([0a0618e](https://github.com/Kamra-PMS/kamra-pms/commit/0a0618e7fb11ccdbe94055181e5fc3904f070b0f))
+* **front-desk:** let a whole-villa booking check in without a room ([4cff7de](https://github.com/Kamra-PMS/kamra-pms/commit/4cff7de95a0d64953bd97d99c11db757c2d685ed))
+* **front-desk:** let a whole-villa booking check in without a room ([b1c9405](https://github.com/Kamra-PMS/kamra-pms/commit/b1c94059e42241b8c43327eea8bd696959a5d30c))
+* honor supervisor role when property pin is off ([e941cfc](https://github.com/Kamra-PMS/kamra-pms/commit/e941cfc8404681862d26fa2d533c150eefe21158))
+* honor supervisor role when property pin is off ([87ee184](https://github.com/Kamra-PMS/kamra-pms/commit/87ee1846fcbcab92b9f77b430d04f7842143a34f))
+* **housekeeping:** keep the staff session after HK charges and laundry delivery ([a7d4627](https://github.com/Kamra-PMS/kamra-pms/commit/a7d462712039588edba2e4c94f39256d3ba53dba))
+* **housekeeping:** keep the staff session after HK charges and laundry delivery ([3b6912d](https://github.com/Kamra-PMS/kamra-pms/commit/3b6912db918b3f11a251107b6588e3547d5c1fe9))
+* **ledger:** credit the guest ledger when transferring to city ledger ([3bb73ab](https://github.com/Kamra-PMS/kamra-pms/commit/3bb73ab660621a07e45701769d103dd5d51bb40d))
+* **ledger:** credit the guest ledger when transferring to city ledger ([59d3448](https://github.com/Kamra-PMS/kamra-pms/commit/59d3448bf19dfd090b23af6d3a86ee9ba6fba8ce))
+* lock room type before capacity checks ([8626b8e](https://github.com/Kamra-PMS/kamra-pms/commit/8626b8e64326a5a079eb36f8e2aa16de7b0f73b7))
+* lock room type before capacity checks ([d167b93](https://github.com/Kamra-PMS/kamra-pms/commit/d167b93c6f7d56b34ac33e62b863bba72b829dad))
+* make strict property scope fail closed ([c13c60b](https://github.com/Kamra-PMS/kamra-pms/commit/c13c60b428373816e16095c03b1b6559a5306789))
+* make strict property scope fail closed ([dcd03e7](https://github.com/Kamra-PMS/kamra-pms/commit/dcd03e70a816da5e48a356ad9811f9345bf8ca57))
+* **marketplace:** keep the act_as note from looking like a set_user call ([a513b20](https://github.com/Kamra-PMS/kamra-pms/commit/a513b2038e5b2dfe5684df35f25a49ab895eb517))
+* **mcp:** point WWW-Authenticate resource_metadata at the served RFC 9728 path ([49c32d2](https://github.com/Kamra-PMS/kamra-pms/commit/49c32d2ff1136cd9c5c98b1aa70ed41d911ec675))
+* **mcp:** point WWW-Authenticate resource_metadata at the served RFC 9728 path ([5ceaa63](https://github.com/Kamra-PMS/kamra-pms/commit/5ceaa6384e16428c81d25e0e80e19d7d3a6664a5))
+* **night-audit:** never close a business date ahead of today; no-show due from folio ([d264b4b](https://github.com/Kamra-PMS/kamra-pms/commit/d264b4b3249c294802e8be4f98a905b453c630e4))
+* **night-audit:** never close a business date ahead of today; no-show due from folio ([ff265f2](https://github.com/Kamra-PMS/kamra-pms/commit/ff265f29a1b84c70c531efcdc882fa38b232b1bc))
+* retain refused OTA sales as requested bookings ([09c2ee6](https://github.com/Kamra-PMS/kamra-pms/commit/09c2ee68f54076ab11478bddbb495f2b2d5a15eb))
+* retain refused OTA sales as requested bookings ([0fb4f88](https://github.com/Kamra-PMS/kamra-pms/commit/0fb4f88ccc1c663a059e6ecb3f0d706fb3fe8dd7))
+* review follow-ups for night audit, money, whole-villa and agent sessions ([10333e8](https://github.com/Kamra-PMS/kamra-pms/commit/10333e8313fe6e60855a886b3483a0e2c9efdaee))
+* review follow-ups for night audit, money, whole-villa and agent sessions ([edea0a0](https://github.com/Kamra-PMS/kamra-pms/commit/edea0a03db7a6d1ebffc919b97b940fab2217ab2))
+* **ui:** give every dropdown a padded chevron instead of the flush native arrow ([9297665](https://github.com/Kamra-PMS/kamra-pms/commit/929766581dc03856157e142195aec50cf91d6fa9))
+
 ## [2.6.12](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.11...v2.6.12) (2026-10-12)
 
 
