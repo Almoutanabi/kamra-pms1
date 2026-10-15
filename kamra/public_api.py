@@ -319,6 +319,7 @@ def search_stay(property: str, check_in_date: str, check_out_date: str,
 	if date_diff(check_out_date, check_in_date) > 30:
 		frappe.throw("Stays longer than 30 nights: please contact the hotel.")
 
+	prop = frappe.get_cached_doc("Property", property)
 	results = []
 	for rt in frappe.get_all(
 		"Room Type",
@@ -342,6 +343,8 @@ def search_stay(property: str, check_in_date: str, check_out_date: str,
 					property, rt, check_in_date, check_out_date,
 					int(adults), int(children),
 				)
+				row["quote"].update(_payment_split(
+					prop, row["quote"].get("amount_after_tax")))
 			except Exception:
 				pass  # still list the room type even if this date range cannot be quoted
 		results.append(row)
@@ -644,16 +647,29 @@ def _advance_terms(prop, total: float) -> tuple[float, str]:
 	a later policy change never re-bills an existing guest."""
 	mode = prop.get("booking_payment_mode") or "Pay at hotel"
 	total = float(total or 0)
+	sym = _public_locale(prop.name).get("currency_symbol", "") if prop.get("name") else ""
 	if mode == "Advance percent":
 		pct = float(prop.get("advance_percent") or 0)
 		due = round(total * pct / 100, 2)
-		return due, f"{pct:g}% advance (₹{due:,.0f}) now, rest at the hotel"
+		return due, f"{pct:g}% advance ({sym}{due:,.0f}) now, rest at the hotel"
 	if mode == "Registration fee":
 		due = min(float(prop.get("registration_fee") or 0), total)
-		return due, f"₹{due:,.0f} registration fee now, rest at the hotel"
+		return due, f"{sym}{due:,.0f} registration fee now, rest at the hotel"
 	if mode == "Full online":
 		return total, "Full amount paid online"
 	return 0.0, "Pay at the hotel"
+
+
+def _payment_split(prop, total: float) -> dict:
+	"""Server-computed split the booking page shows: what is due now and
+	what is left to pay at the hotel. The browser never derives these."""
+	total = float(total or 0)
+	due, policy = _advance_terms(prop, total)
+	return {
+		"advance_due": due,
+		"balance_at_hotel": round(max(0.0, total - due), 2),
+		"payment_policy": policy,
+	}
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -775,6 +791,8 @@ def book(property: str, room_type: str, check_in_date: str,
 		"reservation": result["reservation"],
 		"amount_after_tax": result["amount_after_tax"],
 		"advance_due": advance_due,
+		"balance_at_hotel": round(
+			max(0.0, float(result["amount_after_tax"] or 0) - advance_due), 2),
 		"payment_policy": policy,
 		"pay_at_hotel": advance_due <= 0,
 		"status": final_status,

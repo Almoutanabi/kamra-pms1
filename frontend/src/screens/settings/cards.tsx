@@ -425,6 +425,23 @@ type AiPreset = {
   processor_note?: string
 }
 
+/** Which preset a saved base URL belongs to. The provider isn't stored -
+ *  only the URL is - so on load the dropdown is derived from it rather than
+ *  defaulting to OpenAI (which then showed the wrong provider). */
+function presetForBaseUrl(presets: AiPreset[], baseUrl: string): string | null {
+  const norm = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase()
+  const url = norm(baseUrl || "")
+  if (!presets.length) return null
+  const has = (id: string) => presets.some((p) => p.id === id)
+  if (!url) return has("openai") ? "openai" : presets[0].id
+  const exact = presets.find((p) => p.base_url && norm(p.base_url) === url)
+  if (exact) return exact.id
+  if (url.includes(".openai.azure.com") && has("azure")) return "azure"
+  if (url.includes(":11434") && has("ollama")) return "ollama"
+  if (has("custom")) return "custom"
+  return presets[0].id
+}
+
 function AiAssistantCard({
   property,
   doc,
@@ -480,6 +497,13 @@ function AiAssistantCard({
     )
     setApiKey("")
   }, [doc])
+
+  // initialise the provider from what was saved, once presets are known
+  const savedBaseUrl = String(doc.base_url ?? "")
+  useEffect(() => {
+    const id = presetForBaseUrl(presets, savedBaseUrl || "https://api.openai.com/v1")
+    if (id) setProvider(id)
+  }, [presets, savedBaseUrl])
 
   const activePreset = presets.find((p) => p.id === provider)
   const activeHint = activePreset?.hint || "Any OpenAI-compatible Chat Completions host"
@@ -790,7 +814,8 @@ export function AiSection({ property }: { property: string }) {
   const [ai, setAi] = useState<Doc | null>(null)
   const load = useCallback(() => {
     listResource("AI Assistant Settings", {
-      fields: ["name", "enabled", "base_url", "model", "extra_instructions"],
+      fields: ["name", "enabled", "base_url", "model", "extra_instructions",
+               "redact_guest_contact_details"],
       filters: [["property", "=", property]],
     }).then((rows) => setAi(rows[0] ?? {}))
   }, [property])

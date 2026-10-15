@@ -4888,6 +4888,117 @@ def t115():
 	assert frappe.db.get_value("Reservation", out["reservation"], "source") == "Website"
 
 
+@check("booking page: advance due now + balance at hotel come from the server, on search and on book")
+def t150():
+	from kamra import public_api
+	frappe.db.set_value("Property", P, {"booking_payment_mode": "Advance percent",
+	                                    "advance_percent": 25})
+	frappe.clear_document_cache("Property", P)
+	try:
+		rows = public_api.search_stay(P, "2031-05-10", "2031-05-11", 1, 0)
+		q = next(r["quote"] for r in rows if r["room_type"] == RT and r["quote"])
+		total = float(q["amount_after_tax"])
+		assert abs(q["advance_due"] - round(total * 0.25, 2)) < 0.01, q
+		assert abs(q["balance_at_hotel"] - (total - q["advance_due"])) < 0.01, q
+		out = public_api.book(
+			property=P, room_type=RT, check_in_date="2031-05-10",
+			check_out_date="2031-05-11", guest_name="Web Advance Guest",
+			phone="+919812300150", adults=1, children=0,
+		)
+		total = float(out["amount_after_tax"])
+		assert out["advance_due"] > 0 and not out["pay_at_hotel"], out
+		assert abs(out["advance_due"] + out["balance_at_hotel"] - total) < 0.01, out
+		assert "₹" not in out["payment_policy"] or public_api._public_locale(P)[
+			"currency_symbol"] == "₹", out["payment_policy"]
+	finally:
+		frappe.db.set_value("Property", P, "booking_payment_mode", "Pay at hotel")
+		frappe.clear_document_cache("Property", P)
+
+
+@check("blacklist: Hotel Admin only, reason required, logged; guest_alert flags the profile by pick or phone")
+def t151():
+	from kamra import api
+	g = _guest("Eval Blacklist Guest", "+91 70000 00151")
+	me = frappe.session.user
+	try:
+		frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		try:
+			api.set_guest_blacklist(g, 1, "damaged room")
+			raise AssertionError("Front Desk blacklisted a guest")
+		except frappe.PermissionError:
+			pass
+	finally:
+		frappe.set_user(me)  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+	try:
+		api.set_guest_blacklist(g, 1, "  ")
+		raise AssertionError("blacklisted without a reason")
+	except frappe.ValidationError:
+		pass
+	api.set_guest_blacklist(g, 1, "damaged room")
+	assert frappe.db.get_value("Guest", g, ["blacklisted", "blacklist_reason"]) == (1, "damaged room")
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_doctype": "Guest", "reference_name": g,
+		"action_type": "guest_blacklisted"})
+	by_pick = api.guest_alert(guest=g)
+	by_phone = api.guest_alert(phone="+91 70000 00151")
+	assert by_pick["blacklisted"] == 1 and by_pick["blacklist_reason"] == "damaged room", by_pick
+	assert by_phone["guest"] == g and by_phone["blacklisted"] == 1, by_phone
+	assert api.guest_alert(phone="+91 70000 09999")["blacklisted"] == 0
+	api.set_guest_blacklist(g, 0, "paid for damage")
+	assert frappe.db.get_value("Guest", g, "blacklisted") == 0
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_name": g, "action_type": "guest_blacklist_removed"})
+
+
+@check("blacklisted guest: booking refused; only a Hotel Admin with a reason may override (logged)")
+def t152():
+	from kamra import api
+	g = _guest("Eval Blacklist Book", "+91 70000 00152")
+	frappe.db.set_value("Guest", g, {"blacklisted": 1, "blacklist_reason": "fraud"})
+	kw = dict(property=P, room_type=RT, check_in_date="2031-06-01",
+	          check_out_date="2031-06-02", guest_name="Eval Blacklist Book", guest=g)
+	try:
+		api.create_booking(**kw)
+		raise AssertionError("blacklisted guest booked without override")
+	except frappe.ValidationError as e:
+		assert "blacklisted" in str(e).lower(), e
+	me = frappe.session.user
+	try:
+		frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		try:
+			api.create_booking(**kw, blacklist_override_reason="regular, settled")
+			raise AssertionError("Front Desk overrode a blacklist")
+		except frappe.PermissionError:
+			pass
+	finally:
+		frappe.set_user(me)  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		frappe.flags.kamra_blacklist_override = None
+	try:
+		out = api.create_booking(**kw, blacklist_override_reason="GM approved")
+	finally:
+		frappe.flags.kamra_blacklist_override = None
+	assert frappe.db.get_value("Reservation", out["reservation"], "guest") == g
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_name": g, "action_type": "blacklist_override"})
+
+
+@check("reservation_detail returns the meal plan's label, not its ID")
+def t153():
+	from kamra import api
+	frappe.db.delete("Meal Plan", {"property": P, "code": "EP"})  # rolled back after the run
+	mp = frappe.get_doc({"doctype": "Meal Plan", "property": P, "code": "EP",
+	                     "label": "Eval Breakfast 153", "price_per_adult": 0,
+	                     }).insert(ignore_permissions=True).name
+	g = _guest("Eval Meal Plan Guest", "+91 70000 00153")
+	res = frappe.get_doc({
+		"doctype": "Reservation", "property": P, "guest": g, "room_type": RT,
+		"check_in_date": "2031-07-01", "check_out_date": "2031-07-02",
+		"adults": 1, "meal_plan": mp,
+	}).insert(ignore_permissions=True)
+	d = api.reservation_detail(res.name)
+	assert d["meal_plan"] == mp and d["meal_plan_name"] == "Eval Breakfast 153", d["meal_plan_name"]
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4906,7 +5017,8 @@ def execute():
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
-		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115):
+		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115,
+		           t150, t151, t152, t153):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
