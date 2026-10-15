@@ -761,6 +761,33 @@ def night_audit_history(property: str, limit: int = 20):
 
 # --- scheduled hold ------------------------------------------------------------
 
+def alert_staff(property: str, roles: tuple[str, ...], subject: str, body: str) -> int:
+	"""In-app notification (the bell) plus email to every enabled user holding
+	one of `roles`. WhatsApp is deliberately not used here. Best effort: one
+	recipient failing never stops the rest. Returns the recipient count."""
+	users = set(frappe.get_all("Has Role", filters={
+		"role": ("in", list(roles)), "parenttype": "User"}, pluck="parent"))
+	users = frappe.get_all("User", filters={
+		"name": ("in", list(users) or [""]), "enabled": 1,
+		"user_type": "System User"}, fields=["name", "email"])
+	for u in users:
+		try:
+			frappe.get_doc({"doctype": "Notification Log", "for_user": u.name,
+			                "type": "Alert", "subject": subject,
+			                "email_content": body,
+			                "document_type": "Property", "document_name": property,
+			                }).insert(ignore_permissions=True)
+		except Exception:
+			frappe.log_error(title=f"Night audit alert (in-app) failed: {u.name}")
+		if u.email:
+			try:
+				frappe.sendmail(recipients=[u.email], subject=subject,
+				                message=body, delayed=True)
+			except Exception:
+				frappe.log_error(title=f"Night audit alert (email) failed: {u.name}")
+	return len(users)
+
+
 def hold_and_alert(property: str, bd: str, blockers: list[dict]) -> dict:
 	"""Scheduled run on "Hold and alert": leave the business date, write an
 	Activity log row and message Hotel Admin and Finance."""
@@ -768,7 +795,7 @@ def hold_and_alert(property: str, bd: str, blockers: list[dict]) -> dict:
 	summary = "; ".join(f"{c['title']}: {c['count']}" for c in blockers)
 	msg = (f"Night audit for {bd} was held - {summary}. The business date was "
 	       f"not rolled. Resolve or acknowledge the checks and run the audit "
-	       f"from Billing.")
+	       f"from End of Day.")
 	log_action("night_audit_held", "Property", property, property,
 	           rationale=msg, agent_name="Night Audit", autonomy="Full",
 	           channel="API",
@@ -776,10 +803,9 @@ def hold_and_alert(property: str, bd: str, blockers: list[dict]) -> dict:
 	                           "blockers": [{"key": c["key"], "count": c["count"]}
 	                                        for c in blockers]})
 	try:
-		from kamra.housekeeping import _notify_role
 		name = frappe.db.get_value("Property", property, "property_name") or property
-		for role in ("Hotel Admin", "Finance"):
-			_notify_role(property, role, f"{name}: {msg}")
+		alert_staff(property, ("Hotel Admin", "Finance"),
+		            f"Night audit held - {name}", f"{name}: {msg}")
 	except Exception:
 		frappe.log_error(title=f"Night audit hold alert failed: {property}")
 	return {"held": True, "business_date": bd,

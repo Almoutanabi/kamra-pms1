@@ -175,7 +175,7 @@ Settings → **Front Desk** → **Night audit checklist**:
 | Departures still in house block the audit | On | Off lists them as a warning. |
 | Flag in-house folios owing more than | 50,000 | 0 turns the high-balance check off. |
 | Rate variance tolerance | 1 | How far (in currency units) a posted room night may be from the booked rate. |
-| Scheduled 03:00 audit when checks block | Run and report exceptions | *Run and report exceptions* always rolls the date and lists the open items as exceptions in the pack. *Hold and alert* leaves the business date and alerts Hotel Admin and Finance. |
+| Scheduled 03:00 audit when checks block | Run and report exceptions | *Run and report exceptions* always rolls the date and lists the open items as exceptions in the pack. *Hold and alert* leaves the business date and alerts Hotel Admin and Finance (in-app notification and email). |
 
 The **Night Auditor** role can run End of Day and acknowledge blockers,
 check guests in and out (quick check-out too), close cashier sessions,

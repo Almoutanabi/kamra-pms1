@@ -1100,7 +1100,7 @@ class NightAuditChecklistTestCase(AuditTestCase):
 		self._stack.enter_context(patch.object(
 			folio_mod, "audit_clock", return_value=at_time(YESTERDAY, "23:00")))
 		self.alerts = self._stack.enter_context(
-			patch("kamra.housekeeping._notify_role"))
+			patch("kamra.night_audit.alert_staff"))
 		from kamra import settings
 		settings.clear_cache(PROP_A)
 		self.addCleanup(settings.clear_cache, PROP_A)
@@ -1357,8 +1357,9 @@ class NightAuditChecklistTestCase(AuditTestCase):
 		self.assertFalse(frappe.db.exists("Night Audit Run", {"property": PROP_A}))
 		self.assertTrue(frappe.db.exists("Agent Action Log", {
 			"property": PROP_A, "action_type": "night_audit_held"}))
-		roles = {c.args[1] for c in self.alerts.call_args_list}
-		self.assertEqual(roles, {"Hotel Admin", "Finance"})
+		# one in-app + email alert to Hotel Admin and Finance (no WhatsApp)
+		self.alerts.assert_called_once()
+		self.assertEqual(set(self.alerts.call_args.args[1]), {"Hotel Admin", "Finance"})
 		from kamra import night_audit
 		self.assertTrue(night_audit.night_audit_precheck(PROP_A)["held"])
 		# nothing blocking: the scheduled run closes the day even on hold
