@@ -19,6 +19,7 @@ class POSOrder(Document):
 		# but the bill is zero
 		self.order_total = 0.0 if self.nc else subtotal - discount
 		self.guard_room_posting()
+		self.guard_bill_close()
 
 	def charges_to_room(self) -> bool:
 		"""The bill is meant for a guest's room: room service, or any order
@@ -50,6 +51,44 @@ class POSOrder(Document):
 			frappe.throw(_(
 				"{0} has no checked-in guest to post to. Take payment at the "
 				"outlet (Cash, Card or UPI) to close it.").format(where))
+
+	def guard_bill_close(self):
+		"""Delivered means the BILL is closed, not that the food left the
+		pass (the kitchen tracks that per line: kot_status Prepared). A bill
+		closes only when it is settled one of three ways:
+
+		- paid at the outlet (pay_order: Cash / Card / UPI),
+		- signed to a checked-in guest's room (guard_room_posting checks the
+		  stay; on_update posts it to the folio),
+		- complimentary (NC) authorized through mark_nc.
+
+		A bill with nothing left to charge (every line voided) also closes.
+		Anything else was food served with nothing billed and nothing paid."""
+		if self.status != "Delivered":
+			return
+		previous = self.get_doc_before_save()
+		if previous and previous.status == "Delivered":
+			return
+		if self.paid:
+			if not self.payment_mode:
+				frappe.throw(_("A paid bill needs its payment mode "
+				              "(Cash, Card or UPI)."))
+			return
+		if self.nc:
+			if not (self.nc_authorized_by or "").strip():
+				frappe.throw(_("An NC (complimentary) bill needs who "
+				              "authorized it before it can close."))
+			return
+		if self.posted_to_folio or self.charges_to_room():
+			# room bills: guard_room_posting has already insisted on a
+			# checked-in stay; on_update posts the bill to its folio
+			return
+		if not any(not it.voided for it in self.items):
+			return
+		frappe.throw(_(
+			"This bill is not settled. Take payment (Cash, Card or UPI), "
+			"charge it to an in-house guest's room, or mark it NC with "
+			"an authorization before closing it."))
 
 	def on_update(self):
 		previous = self.get_doc_before_save()

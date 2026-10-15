@@ -91,7 +91,12 @@ nothing is saved and the screen tells you why.
 
 Every stay has a folio; corporate stays may have Company/Group folios
 that charges route to automatically (set per company under Corporate →
-billing rules; alcohol always bills to the guest).
+billing rules; alcohol always bills to the guest). A credit company with
+no rules of its own uses the property default in **Settings → Finance →
+Corporate billing**: by default the company pays the room, its meal plan,
+levies and food & beverage, and the guest pays liquor and personal extras
+(laundry, minibar, spa, misc). Pick **Nothing** to bill a company only
+through its own rules.
 
 - **Post a charge** or **record a payment** from the folio screen.
 - **Nationality** on the folio header is editable (**edit** → Save) and

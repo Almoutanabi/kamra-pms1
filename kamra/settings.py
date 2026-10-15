@@ -282,6 +282,17 @@ MODULES: tuple[Module, ...] = (
 				S("cleaning_fee", "Cleaning fee per stay", "number", 0, P, min=0),
 				S("cleaning_fee_taxable", "Cleaning fee is taxable", "check", 1, P),
 			)),
+			Section("corporate", "Corporate billing",
+			        "Who pays what on a credit company's stay when that company has no billing rules of its own. "
+			        "A company's own rules always win, and liquor never bills to a company.", (
+				S("default_company_billing", "When a credit company has no billing rules", "select",
+				  "Room and F&B (liquor to guest)", P,
+				  options=("Room and F&B (liquor to guest)", "Room only", "Everything except liquor",
+				           "Nothing (guest pays unless rules say so)"),
+				  hint="Room covers the room night, its meal plan, levies, early check-in / late checkout and the "
+				       "cleaning fee. Laundry, minibar, spa and misc extras stay with the guest unless "
+				       "'Everything except liquor' is chosen."),
+			)),
 			Section("cashier", "Cashier controls", "", (
 				S("require_cashier_pin", "Require cashier PIN on money actions", "check", 0, P,
 				  hint="Payments, invoices, allowances and settlements re-confirm who is acting. Agents are exempt."),
