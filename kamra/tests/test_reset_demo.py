@@ -29,3 +29,27 @@ class ResetDemoAgentUserTestCase(IntegrationTestCase):
 		user = frappe.get_doc("User", AGENT_EMAIL)
 		self.assertTrue(user.enabled)
 		self.assertIn(AGENT_ROLE, {r.role for r in user.roles})
+
+	def test_reset_leaves_an_enabled_agent(self):
+		# the whole reset, with the destructive steps stubbed: even when the
+		# wipe takes the agent out, reset() ends with it enabled and holding
+		# its role, so the reseeded demo's /book still has a writer
+		def wipe_users():
+			frappe.delete_doc("User", AGENT_EMAIL, force=1, ignore_permissions=True,
+				delete_permanently=True)
+			return 1
+
+		with patch.object(reset_demo, "is_playground", return_value=True), \
+				patch.object(reset_demo, "_wipe_kamra_doctypes", return_value=0), \
+				patch.object(reset_demo, "_wipe_core", return_value=0), \
+				patch.object(reset_demo, "_wipe_extra_users", side_effect=wipe_users), \
+				patch.object(reset_demo, "_reset_demo_passwords"), \
+				patch("kamra.scripts.seed_demo.execute"), \
+				patch.object(reset_demo.frappe.db, "commit"), \
+				patch.object(reset_demo.frappe.db, "set_default"):
+			out = reset_demo.reset()
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["wiped"]["users"], 1)
+		user = frappe.get_doc("User", AGENT_EMAIL)
+		self.assertTrue(user.enabled)
+		self.assertIn(AGENT_ROLE, {r.role for r in user.roles})

@@ -1551,8 +1551,11 @@ export interface ReservationDetail {
     paid: number
     due: number
     has_folio: boolean
-    // "folio" once the stay has started or ended (no-show, cancelled)
-    source?: "folio" | "booking"
+    // "folio" once the stay has started or ended with a folio; "none" when
+    // a no-show / cancellation never opened one (nothing owed)
+    source?: "folio" | "booking" | "none"
+    /** No-show / cancelled with no folio: the advance to hand back. */
+    refund_due?: number
   }
   /** Deposit before arrival (#114): expected by policy, received, still due. */
   deposit: import("../components/DepositPanel").DepositState

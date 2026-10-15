@@ -11,31 +11,59 @@ class InventoryRefused(frappe.ValidationError):
 	"""No room left to sell: category sold out, room or villa already taken."""
 
 
+# The SQL test for "a room type that is not a whole villa" (rt = Room Type).
+# One definition shared by the villa <-> room lockout and the member-room
+# fallback, so the two can never drift apart.
+NON_VILLA_SQL = "(rt.room_category != 'Villa' OR rt.room_category IS NULL)"
+
+
 def is_entire_place(room_type: str | None) -> bool:
 	"""An entire-place (whole villa) stay: its room type is Villa-category,
 	sold as one unit - the same test validate_villa_lockout uses."""
-	return bool(room_type) and frappe.db.get_value(
+	return bool(room_type) and frappe.get_cached_value(
 		"Room Type", room_type, "room_category") == "Villa"
 
 
-def entire_place_rooms(property: str, room_type: str) -> list[str]:
-	"""The physical rooms a whole-villa stay occupies without a room of its
-	own: the rooms under the villa's type, or - when the villa listing sits
-	over member rooms (hybrid estate) - every non-villa room on the
-	property, mirroring the villa <-> room lockout. Empty for an entire
-	place set up with no rooms at all."""
-	rooms = frappe.get_all(
-		"Room", filters={"property": property, "room_type": room_type},
-		pluck="name")
-	if rooms:
-		return rooms
-	return [r[0] for r in frappe.db.sql(
-		"""
-		SELECT r.name FROM `tabRoom` r
+def uses_member_rooms(property: str, room_type: str | None) -> bool:
+	"""True when a whole-villa stay has no Room of its own to assign and
+	instead takes the property's member rooms (the hybrid estate). A villa
+	type with its own Room records checks in to one of them like any room."""
+	return is_entire_place(room_type) and not frappe.db.exists(
+		"Room", {"property": property, "room_type": room_type})
+
+
+def entire_place_rooms(property: str, room_type: str,
+                       include_out_of_order: bool = False) -> list[dict]:
+	"""The member rooms (name, room_number) a whole-villa stay occupies when
+	its villa type has no rooms of its own: every non-villa room on the
+	property, mirroring the villa <-> room lockout. Out of Order rooms are
+	left out - they are not sold and must not be touched (check-out asks
+	for them only to free one that went out of order mid-stay).
+
+	Only safe when this is the property's ONLY Villa type: with two villa
+	listings there is no telling which rooms belong to which, so it refuses
+	and asks for the rooms to be set up under the villa type."""
+	other_villas = frappe.db.count("Room Type", {
+		"property": property, "room_category": "Villa",
+		"name": ("!=", room_type)})
+	if other_villas:
+		frappe.throw(
+			_("{0} has no rooms of its own and the property has other villa "
+			  "types, so Kamra can't tell which rooms it takes. Add Room "
+			  "records under {0}, or assign a room before check-in.").format(
+				room_type),
+			title=_("Villa has no rooms"))
+	ooo = "" if include_out_of_order else \
+		"AND COALESCE(r.housekeeping_status, '') != 'Out of Order'"
+	return frappe.db.sql(
+		f"""
+		SELECT r.name, r.room_number FROM `tabRoom` r
 		LEFT JOIN `tabRoom Type` rt ON rt.name = r.room_type
 		WHERE r.property = %s
-		  AND (rt.room_category != 'Villa' OR rt.room_category IS NULL)
-		""", property)]
+		  AND {NON_VILLA_SQL}
+		  {ooo}
+		ORDER BY r.room_number
+		""", property, as_dict=True)
 
 
 class Reservation(Document):
@@ -429,19 +457,16 @@ class Reservation(Document):
 		) or not self.room_type:
 			return
 
-		# Get Room Category of the requested Room Type
-		category = frappe.db.get_value("Room Type", self.room_type, "room_category")
-
-		if category == "Villa":
+		if is_entire_place(self.room_type):
 			# A Villa is being booked. Check if ANY individual/shared room booking is confirmed/checked-in
 			overlap = frappe.db.sql(
-				"""
+				f"""
 				SELECT r.name FROM `tabReservation` r
 				LEFT JOIN `tabRoom Type` rt ON r.room_type = rt.name
 				WHERE r.property = %(property)s
 				  AND r.name != %(name)s
 				  AND r.status IN ('Confirmed', 'Checked In', 'Held', 'Pending Payment')
-				  AND (rt.room_category != 'Villa' OR rt.room_category IS NULL)
+				  AND {NON_VILLA_SQL}
 				  AND r.check_in_date < GREATEST(%(check_out)s, DATE_ADD(%(check_in)s, INTERVAL 1 DAY))
 				  AND GREATEST(r.check_out_date, DATE_ADD(r.check_in_date, INTERVAL 1 DAY)) > %(check_in)s
 				LIMIT 1
@@ -515,11 +540,14 @@ class Reservation(Document):
 			)
 	def _occupied_rooms(self, checking_in=True) -> list[str]:
 		"""The rooms this stay holds: its assigned room, or for a whole-villa
-		booking (no single room to assign) every room of the villa."""
+		booking whose villa type has no rooms of its own, the member rooms
+		(Out of Order ones excluded)."""
 		if self.room:
 			return [self.room]
-		if is_entire_place(self.room_type):
-			return entire_place_rooms(self.property, self.room_type)
+		if uses_member_rooms(self.property, self.room_type):
+			return [r.name for r in entire_place_rooms(
+				self.property, self.room_type,
+				include_out_of_order=not checking_in)]
 		if checking_in:
 			frappe.throw(_("Assign a room before check-in."))
 		return []
@@ -540,6 +568,14 @@ class Reservation(Document):
 
 		post_remaining_nights(self)
 		for room in self._occupied_rooms(checking_in=False):
+			hk, occ = frappe.db.get_value(
+				"Room", room, ["housekeeping_status", "occupancy_status"]) or (None, None)
+			if hk == "Out of Order":
+				# out of service: never flipped to Dirty, no checkout clean.
+				# Only one that went out of order mid-stay is freed.
+				if occ == "Occupied":
+					frappe.db.set_value("Room", room, "occupancy_status", "Vacant")
+				continue
 			frappe.db.set_value(
 				"Room",
 				room,

@@ -48,6 +48,45 @@ See [`RELEASING.md`](RELEASING.md) for the full release process.
 - CI runs both automatically on every PR; a fresh-install check also verifies
   a brand-new site installs cleanly with your change.
 
+### What your PR needs, and what it doesn't
+
+You **do** need to:
+
+- **Add an eval check for a backend fix.** Write a check in
+  `kamra/scripts/eval_harness.py` that fails without your fix, and add it to
+  the list in `execute()`. Before you pick a name (`t<number>`), check the
+  open PRs as well as `develop`. Two functions with the same name don't
+  error: the second silently replaces the first. When you resolve a merge
+  conflict in that list, keep every entry from both sides.
+- **Leave state as you found it in that check.** The harness only rolls a
+  check back when it fails. Restore any Property setting you change (business
+  date, PIN, policies) in a `finally` block. Use a guest phone number no other
+  check uses.
+- **Use `kamra.authz.act_as(user)` to run code as another user,** for example
+  the agent user (`kamra.install.AGENT_EMAIL`). A bare `frappe.set_user()`
+  swap wipes the caller's session and logs staff out.
+- **Annotate `frappe.set_user(` or `frappe.db.commit(` calls** with the
+  `nosemgrep` comment on the same line. The install check also flags a
+  comment or docstring line that *starts* with either call, so word those
+  differently.
+- **Commit the rebuilt frontend** (`kamra/public/frontend`) when you change
+  the UI, and re-run `docs-site/gen_api.py` and `docs-site/gen_mcp_tools.py`
+  when you change an endpoint or an MCP tool.
+- **Add a patch in `kamra/patches.txt`** when a fix changes how new records
+  are written and old records need the same correction. The patch must be
+  safe to run twice.
+
+You **don't** need to:
+
+- Edit `CHANGELOG.md`, the README's "What's new", or the version. Maintainers
+  write the release notes when they cut a train (see
+  [`RELEASING.md`](RELEASING.md)). A clear Conventional Commit title is
+  enough.
+- Merge `develop` into your branch again and again. Do it once if CI or
+  GitHub reports a conflict.
+- Target `main`. Every PR goes to `develop`, except a hotfix that a
+  maintainer has asked for.
+
 ## Commit messages
 
 Please use [Conventional Commits](https://www.conventionalcommits.org/):
