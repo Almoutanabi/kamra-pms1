@@ -121,6 +121,9 @@ interface StayResult {
     discount: number
     cleaning_fee?: number
     totals?: { deposit_required?: number }
+    /** Server-computed from the property's payment policy - never derived here. */
+    advance_due?: number
+    balance_at_hotel?: number
   } | null
 }
 
@@ -228,7 +231,13 @@ export default function PublicBooking() {
   const [addons, setAddons] = useState<Record<string, number>>({})
   const [voucher, setVoucher] = useState("")
   const [voucherMsg, setVoucherMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  const [done, setDone] = useState<{ reservation: string; amount: number } | null>(null)
+  const [done, setDone] = useState<{
+    reservation: string
+    amount: number
+    advance_due: number
+    balance_at_hotel: number
+    status: string
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -378,7 +387,13 @@ export default function PublicBooking() {
     setBusy(true)
     setError(null)
     try {
-      const res = await callGuest<{ reservation: string; amount_after_tax: number }>("kamra.public_api.book",
+      const res = await callGuest<{
+        reservation: string
+        amount_after_tax: number
+        advance_due: number
+        balance_at_hotel: number
+        status: string
+      }>("kamra.public_api.book",
         {
           property,
           room_type: booking,
@@ -393,7 +408,13 @@ export default function PublicBooking() {
             .map(([experience, qty]) => ({ experience, qty })),
         },
       )
-      setDone({ reservation: res.reservation, amount: res.amount_after_tax })
+      setDone({
+        reservation: res.reservation,
+        amount: res.amount_after_tax,
+        advance_due: Number(res.advance_due || 0),
+        balance_at_hotel: Number(res.balance_at_hotel ?? res.amount_after_tax ?? 0),
+        status: res.status,
+      })
     } catch (e) {
       setError(serverError(e))
     } finally {
@@ -820,6 +841,14 @@ export default function PublicBooking() {
                                   separately
                                 </p>
                               )}
+                              {(r.quote.advance_due || 0) > 0 && (
+                                <p className="text-xs font-medium text-zinc-700">
+                                  {cur()}{inr(r.quote.advance_due || 0)} due now
+                                  {(r.quote.balance_at_hotel || 0) > 0
+                                    ? ` · ${cur()}${inr(r.quote.balance_at_hotel || 0)} at the hotel`
+                                    : ""}
+                                </p>
+                              )}
                               {r.rooms_left <= 2 && (
                                 <p className="text-xs font-medium text-rose-600">
                                   Only {r.rooms_left} left for these dates
@@ -1057,10 +1086,29 @@ export default function PublicBooking() {
             <div className="space-y-3">
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-emerald-800">
                 <p className="text-lg font-semibold">{done.reservation}</p>
-                <p className="mt-1 text-sm">
-                  Total {cur()}{inr(done.amount)} - payable at the hotel. We've saved
-                  your number; the front desk will reach out before arrival.
-                </p>
+                {done.advance_due > 0 ? (
+                  <div className="mt-1 space-y-1 text-sm">
+                    <p>Total {cur()}{inr(done.amount)}</p>
+                    <p className="font-semibold">
+                      Advance due now: {cur()}{inr(done.advance_due)}
+                    </p>
+                    {done.balance_at_hotel > 0 && (
+                      <p>Balance payable at the hotel: {cur()}{inr(done.balance_at_hotel)}</p>
+                    )}
+                    <p>
+                      {done.status === "Pending Payment"
+                        ? "Your rooms are held until the advance is received. "
+                        : ""}
+                      We've saved your number; the front desk will reach out with
+                      payment details and before arrival.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm">
+                    Total {cur()}{inr(done.amount)} - payable at the hotel. We've saved
+                    your number; the front desk will reach out before arrival.
+                  </p>
+                )}
               </div>
             </div>
           ) : (

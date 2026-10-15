@@ -341,6 +341,42 @@ def validate_voucher(property: str, voucher_code: str, nights: int,
 	return v
 
 
+def apply_rate_plan(rate_plan: str | None, room_total: Decimal) -> Decimal:
+	"""The stay's room total after its rate plan's modifier.
+
+	The plan works on the whole stay's (season- and occupancy-priced) room
+	total: Percent scales it, Amount adds to it, Absolute replaces it. The
+	quote calls this, and so does the folio when it posts a night, so a
+	booking and its room nights can never disagree about the plan.
+	"""
+	room_total = _dec(room_total)
+	if not rate_plan:
+		return room_total
+	rp = frappe.get_doc("Rate Plan", rate_plan)
+	v = _dec(rp.modifier_value)
+	if rp.modifier_type == "Percent":
+		return room_total * (Decimal(1) + v / Decimal(100))
+	if rp.modifier_type == "Amount":
+		return room_total + v
+	if rp.modifier_type == "Absolute":
+		return v
+	return room_total
+
+
+def rate_plan_factor(rate_plan: str | None, room_total: Decimal) -> Decimal:
+	"""What each night of a stay is multiplied by under its rate plan.
+
+	The quote applies the plan to the stay total and scales the room tax by
+	the same ratio, which spreads the plan over the nights in proportion to
+	their rates. A night's share of the planned total is therefore its rate
+	times this factor - the folio uses it so each posted room night is
+	exactly the night the guest was quoted."""
+	room_total = _dec(room_total)
+	if not rate_plan or not room_total:
+		return Decimal(1)
+	return apply_rate_plan(rate_plan, room_total) / room_total
+
+
 def quote(
 	property: str,
 	room_type: str,
@@ -397,15 +433,8 @@ def quote(
 		room_tax += rate * gst / Decimal(100)
 
 	if rate_plan:
-		rp = frappe.get_doc("Rate Plan", rate_plan)
-		v = _dec(rp.modifier_value)
 		old_room_total = room_total
-		if rp.modifier_type == "Percent":
-			room_total *= Decimal(1) + v / Decimal(100)
-		elif rp.modifier_type == "Amount":
-			room_total += v
-		elif rp.modifier_type == "Absolute":
-			room_total = v
+		room_total = apply_rate_plan(rate_plan, room_total)
 		if old_room_total:
 			room_tax *= room_total / old_room_total
 

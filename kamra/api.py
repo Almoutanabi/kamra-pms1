@@ -9,7 +9,7 @@ import math
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, get_datetime, getdate, now_datetime, nowdate
+from frappe.utils import add_days, cint, get_datetime, getdate, now_datetime, nowdate
 
 from kamra.authz import act_as, require_it_admin, require_roles
 from kamra.install import AGENT_EMAIL
@@ -356,6 +356,19 @@ def _apply_country_defaults(p: dict):
 		p["room_levy_label"] = pack.ROOM_LEVY_LABEL
 
 
+def default_floor(room_number: str) -> str:
+	"""Best-guess floor for a room the wizard creates without one.
+
+	Hotel numbering puts the floor before the last two digits (101 -> 1,
+	1205 -> 12). Floor 0 and anything that isn't hotel numbering (1, G01,
+	"Room 3", "Villa A") is a small place's ground floor.
+	"""
+	n = str(room_number or "").strip()
+	if n.isdigit() and len(n) >= 3 and int(n[:-2]):
+		return str(int(n[:-2]))
+	return "Ground"
+
+
 @frappe.whitelist()
 def setup_property(payload):
 	"""One-call property onboarding - the wizard's submit button and the
@@ -452,9 +465,12 @@ def setup_property(payload):
 		if not rt_name:
 			frappe.throw(f"Unknown room type code {spec['room_type_code']}")
 		for num in spec["numbers"]:
+			num = str(num).strip()
 			frappe.get_doc({
 				"doctype": "Room", "property": prop.name,
-				"room_number": str(num).strip(), "room_type": rt_name,
+				"room_number": num, "room_type": rt_name,
+				# the Today room board groups by floor - never leave it blank
+				"floor": str(spec.get("floor") or "").strip() or default_floor(num),
 			}).insert()
 			rooms_created += 1
 
@@ -729,6 +745,15 @@ def _deposit_state(res) -> dict:
 	}
 
 
+def _security_deposit_state(res) -> dict | None:
+	try:
+		from kamra.deposit import deposit_state
+		return deposit_state(res)
+	except Exception:
+		frappe.log_error(title="security deposit state failed")
+		return None
+
+
 def _deposit_reservation(reservation: str):
 	res = frappe.get_doc("Reservation", reservation)
 	from kamra.crs import assert_property_access
@@ -829,34 +854,58 @@ def simulate_payment_link(reservation: str):
 
 
 @frappe.whitelist()
+@require_roles("Front Desk", "Finance", "Hotel Admin", "Kamra Agent")
+def security_deposit(reservation: str):
+	"""The stay's refundable security (damage) deposit: policy amount, what
+	is held, withheld and refunded, its history and which actions are open."""
+	from kamra.deposit import _reservation, deposit_state
+	return deposit_state(_reservation(reservation))
+
+
+@frappe.whitelist(methods=["POST"])
 @require_roles("Front Desk", "Finance", "Kamra Agent")
 def collect_security_deposit(reservation: str, amount: float,
-                             mode: str = "UPI", reference: str | None = None):
+                             mode: str = "Cash", reference: str | None = None,
+                             pin: str | None = None):
+	"""Take a refundable security deposit (villas: the damage deposit). Lands
+	on the guest folio as a Security Deposit payment and in the Deposit
+	ledger - a liability held for the guest, never revenue. Cashier PIN and
+	open till as for any payment."""
 	from kamra.deposit import collect_deposit
-	return collect_deposit(reservation, amount, mode=mode, reference=reference)
+	return collect_deposit(reservation, amount, mode=mode, reference=reference,
+	                       pin=pin)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @require_roles("Front Desk", "Hotel Admin", "Kamra Agent")
 def waive_security_deposit(reservation: str, reason: str):
+	"""Waive the property's security deposit for this stay (reason required).
+	Refused once money has been taken - refund it instead."""
 	from kamra.deposit import waive_deposit
 	return waive_deposit(reservation, reason)
 
 
-@frappe.whitelist()
-@require_roles("Front Desk", "Hotel Admin", "Finance")
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", "Finance", "Hotel Admin")
 def withhold_security_deposit(reservation: str, amount: float, reason: str,
-                              evidence: str | None = None):
+                              evidence: str | None = None,
+                              pin: str | None = None):
+	"""Keep all or part of the held deposit against damage (reason required).
+	The withheld part posts as a damage charge on the guest folio and moves
+	from the Deposit ledger to the Guest ledger to pay it."""
 	from kamra.deposit import withhold_deposit
-	return withhold_deposit(reservation, amount, reason, evidence)
+	return withhold_deposit(reservation, amount, reason, evidence, pin=pin)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @require_roles("Front Desk", "Finance", "Hotel Admin")
 def refund_security_deposit(reservation: str, amount: float | None = None,
-                            reference: str | None = None):
+                            mode: str | None = None, note: str | None = None,
+                            pin: str | None = None):
+	"""Refund what is still held (all of it by default) through the folio
+	refund path - till, folio and a Deposit-ledger debit. Cashier PIN."""
 	from kamra.deposit import refund_deposit
-	return refund_deposit(reservation, amount, reference)
+	return refund_deposit(reservation, amount, mode=mode, note=note, pin=pin)
 
 
 @frappe.whitelist()
@@ -1413,6 +1462,12 @@ def add_folio_payment(folio: str, mode: str, amount: float,
 		record_payment_ledger(doc, pay.as_dict(), session=sess)
 	except Exception:
 		frappe.log_error(title="ledger payment write failed")
+	if kind == "Security Deposit" and doc.reservation and \
+	   (doc.folio_type or "Guest") == "Guest":
+		# keep the stay's Security Deposit record in step, whichever screen
+		# took the money (the deposit panel or the folio's own payment form)
+		from kamra.deposit import record_collected
+		record_collected(doc.reservation, float(amount), mode)
 	return doc.as_dict()
 
 
@@ -1425,6 +1480,19 @@ def refund_folio_payment(folio: str, amount: float, mode: str,
 	"""Give money back on an open folio - a held security deposit at
 	checkout, or an over-collected advance. Stored as a negative ledger
 	row so every balance still sums exactly; a reason is mandatory."""
+	return _refund_folio_payment(folio, amount, mode, reason, pin=pin,
+	                             reason_code=reason_code,
+	                             supervisor_pin=supervisor_pin)
+
+
+def _refund_folio_payment(folio: str, amount: float, mode: str, reason: str,
+                          pin: str | None = None,
+                          reason_code: str | None = None,
+                          supervisor_pin: str | None = None,
+                          ledger: str | None = None):
+	"""The one refund writer (folio row, till, ledger). Not whitelisted:
+	ledger lets a security-deposit refund release the Deposit ledger -
+	callers that pass it have already checked the deposit's balance."""
 	if float(amount) <= 0:
 		frappe.throw("Refund amount must be positive.")
 	if not (reason or "").strip() and not reason_code:
@@ -1471,7 +1539,7 @@ def refund_folio_payment(folio: str, amount: float, mode: str,
 		folio=doc.name, reference=str(reason_text)[:140], session=sess)
 	try:
 		from kamra.ledger import record_payment_ledger
-		record_payment_ledger(doc, pay.as_dict(), session=sess)
+		record_payment_ledger(doc, pay.as_dict(), session=sess, ledger=ledger)
 	except Exception:
 		frappe.log_error(title="ledger refund write failed")
 	return {"ok": True, "balance": doc.balance}
@@ -2089,6 +2157,7 @@ def guest_search(q: str):
 	return frappe.db.sql(  # nosemgrep: frappe-sql-format-injection -- values are parameterized; the interpolated scope clause is a constant from authz
 		f"""
 		SELECT g.name, g.full_name, g.phone, g.email, g.vip, g.blacklisted,
+		       g.blacklist_reason,
 		       COUNT(r.name) AS stays, MAX(r.check_in_date) AS last_stay
 		FROM `tabGuest` g
 		LEFT JOIN `tabReservation` r
@@ -2100,6 +2169,77 @@ def guest_search(q: str):
 		""",
 		params, as_dict=True,
 	)
+
+
+@frappe.whitelist()
+@require_roles("Front Desk", "Kamra Agent")
+def guest_alert(guest: str | None = None, phone: str | None = None):
+	"""Is the guest a booking would attach to blacklisted? The desk asks
+	before booking so the warning shows up front, not as a refusal at the
+	end. Resolves exactly like create_booking: the chosen profile, else the
+	profile with this phone number."""
+	name = guest or (frappe.db.get_value("Guest", {"phone": phone}) if phone else None)
+	if not name:
+		return {"guest": None, "blacklisted": 0, "blacklist_reason": None}
+	g = frappe.db.get_value(
+		"Guest", name, ["name", "full_name", "blacklisted", "blacklist_reason"],
+		as_dict=True)
+	if not g:
+		return {"guest": None, "blacklisted": 0, "blacklist_reason": None}
+	from kamra.authz import assert_guest_access
+	try:
+		assert_guest_access(g.name)
+		visible = True
+	except frappe.PermissionError:
+		visible = False
+	return {
+		"guest": g.name if visible else None,
+		"full_name": g.full_name if visible else None,
+		"blacklisted": 1 if g.blacklisted else 0,
+		"blacklist_reason": g.blacklist_reason if visible else None,
+		"can_override": 1 if _is_admin() else 0,
+	}
+
+
+def _is_admin() -> bool:
+	from kamra.authz import ADMIN
+	return bool(set(ADMIN) & set(frappe.get_roles()))
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles(scope={"guest": "Guest"})
+def set_guest_blacklist(guest: str, blacklisted: int, reason: str):
+	"""Blacklist a guest, or lift it. Hotel Admin only; a reason is required
+	either way and lands in the activity log with the before/after."""
+	reason = (reason or "").strip()
+	if not reason:
+		frappe.throw(_("A reason is required."))
+	flag = 1 if cint(blacklisted) else 0
+	before = frappe.db.get_value(
+		"Guest", guest, ["blacklisted", "blacklist_reason"], as_dict=True)
+	if before is None:
+		frappe.throw(_("Guest profile {0} not found.").format(guest))
+	frappe.db.set_value("Guest", guest, {
+		"blacklisted": flag,
+		# the standing reason is the one that put them on the list
+		"blacklist_reason": reason[:500] if flag else None,
+	})
+	last_property = frappe.db.get_value(
+		"Reservation", {"guest": guest}, "property", order_by="creation desc")
+	from kamra.savings import log_action
+	log_action(
+		action_type="guest_blacklisted" if flag else "guest_blacklist_removed",
+		reference_doctype="Guest",
+		reference_name=guest,
+		property=last_property,
+		rationale=reason,
+		before_snapshot={"blacklisted": cint(before.blacklisted),
+		                 "blacklist_reason": before.blacklist_reason},
+		after_snapshot={"blacklisted": flag,
+		                "blacklist_reason": reason if flag else None},
+	)
+	return {"guest": guest, "blacklisted": flag,
+	        "blacklist_reason": reason if flag else None}
 
 
 _GUEST_LINKS = [  # every doctype that points at a Guest
@@ -2559,6 +2699,10 @@ def reservation_detail(reservation: str):
 		"room_type": res.room_type,
 		"room_type_name": frappe.db.get_value(
 			"Room Type", res.room_type, "room_type_name") if res.room_type else None,
+		# the plan's label ("Breakfast"), not its internal ID
+		"meal_plan_name": (frappe.db.get_value(
+			"Meal Plan", res.meal_plan, "label") or res.meal_plan)
+			if res.meal_plan else None,
 		"meal_plan": res.meal_plan,
 		"rate_plan": res.rate_plan,
 		"special_requests": res.special_requests,
@@ -2581,6 +2725,7 @@ def reservation_detail(reservation: str):
 		"folio_name": folio.name if folio else None,
 		"money": money,
 		"deposit": _deposit_state(res),
+		"security_deposit": _security_deposit_state(res),
 		"guest": guest,
 		"booker": booker,
 		"cancellation": cancellation,
@@ -2786,7 +2931,10 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
             id_number: str | None = None, nationality: str | None = None,
             payment_mode: str | None = None, payment_amount: float = 0,
             payment_reference: str | None = None, pin: str | None = None,
-            idempotency_key: str | None = None):
+            idempotency_key: str | None = None,
+            check_in_time: str | None = None,
+            check_out_time: str | None = None,
+            blacklist_override_reason: str | None = None):
 	"""Walk-in in one step: book, register the ID, check into the chosen
 	room and take the money - the counter flow that used to be four screens.
 
@@ -2809,9 +2957,10 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
 	validate_id_type(property, id_type)
 
 	check_in_date = nowdate()
-	if str(check_out_date) <= check_in_date:
-		frappe.throw(_("Check-out must be after today ({0}).").format(
-			check_in_date))
+	# a same-day check-out is a day-use walk-in (hourly), never the past
+	if str(check_out_date) < check_in_date:
+		frappe.throw(_("Check-out must be today (day use) or later ({0}).")
+		             .format(check_in_date))
 
 	r = frappe.db.get_value("Room", room, ["property", "room_type"],
 	                        as_dict=True)
@@ -2835,7 +2984,9 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
 		voucher_code=voucher_code, company=company,
 		booking_type="Corporate" if company else "Individual",
 		source="Walk-in", room=room, assign_room=0,
-		idempotency_key=idempotency_key)
+		idempotency_key=idempotency_key,
+		check_in_time=check_in_time, check_out_time=check_out_time,
+		blacklist_override_reason=blacklist_override_reason)
 	reservation = booked["reservation"]
 	folio_filter = {"reservation": reservation, "folio_type": "Guest"}
 
@@ -3239,6 +3390,10 @@ def _assert_settled(doc):
 def check_out(reservation: str):
 	doc = frappe.get_doc("Reservation", reservation)
 	_assert_settled(doc)
+	# a held security deposit that the settled bill used up is recorded as
+	# applied, so the Deposit ledger doesn't keep a departed guest's money
+	from kamra.deposit import apply_held_to_bill
+	apply_held_to_bill(doc)
 	doc.status = "Checked Out"
 	doc.save()
 	_scrub_stay_ids(doc)
@@ -3312,7 +3467,8 @@ def room_board(property: str):
 			"Reservation",
 			filters={"property": property, "status": "Checked In",
 			         "room": ("is", "set")},
-			fields=["room", "guest_name", "check_out_date"])}
+			fields=["room", "guest_name", "check_out_date", "is_day_use",
+			        "planned_check_out_time"])}
 	due_out = str(nowdate())
 	tasks = {}
 	for t in frappe.get_all(
@@ -3331,6 +3487,10 @@ def room_board(property: str):
 		stay = in_house.get(r.name)
 		r["guest_name"] = stay.guest_name if stay else None
 		r["due_out"] = bool(stay and str(stay.check_out_date) <= due_out)
+		# a day-use room turns the same day: housekeeping plans on its slot
+		r["day_use"] = bool(stay and stay.is_day_use)
+		r["etd"] = str(stay.planned_check_out_time)[:5] \
+			if stay and stay.planned_check_out_time else None
 		t = tasks.get(r.name)
 		r["task"] = {
 			"name": t.name, "type": t.task_type, "status": t.status,
@@ -3345,6 +3505,8 @@ def room_board(property: str):
 def availability_calendar(property: str, start_date: str | None = None, days: int = 14):
 	"""Per room-type, per date: rooms available and the 2-adult rate.
 	Powers the calendar view and, later, the agent's availability tool."""
+	from kamra.group_blocks import block_hold_by_night
+	from kamra.kamra.doctype.reservation.reservation import villa_locked_nights
 	from kamra.pricing import occupancy_rate, season_adjust
 	from kamra.siu.availability import capacity_by_night, has_active_sius
 
@@ -3372,14 +3534,19 @@ def availability_calendar(property: str, start_date: str | None = None, days: in
 			return float(season_adjust(
 				property, date, occupancy_rate(rt_doc, 2, 0, date), rt_name))
 
+		# nights the villa <-> room lockout or a group block takes off sale
+		locked = villa_locked_nights(property, rt.name, start, end)
+		held = block_hold_by_night(property, rt.name, dates)
 		if has_active_sius(property, rt.name):
 			caps = capacity_by_night(property, rt.name, start, end)
 			total = max(caps) if caps else 0
 			cells = []
 			for i, date in enumerate(dates):
+				cap = caps[i] if i < len(caps) else 0
 				cells.append({
 					"date": str(date),
-					"available": caps[i] if i < len(caps) else 0,
+					"available": 0 if str(date) in locked
+					else max(0, cap - held.get(str(date), 0)),
 					"rate": _display_rate(date),
 				})
 		else:
@@ -3406,7 +3573,8 @@ def availability_calendar(property: str, start_date: str | None = None, days: in
 				)
 				cells.append({
 					"date": str(date),
-					"available": max(0, total - taken),
+					"available": 0 if str(date) in locked
+					else max(0, total - taken - held.get(str(date), 0)),
 					"rate": _display_rate(date),
 				})
 		rows.append({
@@ -4055,6 +4223,31 @@ def _find_or_create_guest(guest_name: str, phone: str | None,
 	return guest.name
 
 
+def _blacklist_gate(guest: str, property: str, override_reason: str | None):
+	"""A blacklisted guest is refused unless a Hotel Admin confirms with a
+	reason. The override is scoped to this guest for this request only and
+	is logged; Reservation.validate_blacklist still refuses everyone else."""
+	flagged, reason = frappe.db.get_value(
+		"Guest", guest, ["blacklisted", "blacklist_reason"]) or (0, None)
+	if not flagged:
+		return
+	override_reason = (override_reason or "").strip()
+	if not override_reason:
+		return  # validate_blacklist refuses with the standing reason
+	if not _is_admin():
+		frappe.throw(_("Only a Hotel Admin can book a blacklisted guest."),
+		             frappe.PermissionError)
+	frappe.flags.kamra_blacklist_override = guest
+	from kamra.savings import log_action
+	log_action(
+		action_type="blacklist_override",
+		reference_doctype="Guest",
+		reference_name=guest,
+		property=property,
+		rationale=f"Booked despite blacklist ({reason or 'no reason'}): {override_reason}",
+	)
+
+
 # How long an identical agent booking counts as a retry of the first one.
 from kamra.reservation_state import AGENT_DUPLICATE_WINDOW_MINUTES  # noqa: E402
 
@@ -4187,6 +4380,28 @@ def _recent_agent_duplicate(property: str, room_type: str, check_in_date: str,
 	return rows[0][0] if rows else None
 
 
+def _stay_slot(check_in_date, check_out_date, t_in=None, t_out=None):
+	"""Normalise a booking's planned times to HH:MM:SS (or None). A day-use
+	slot must end after it starts - the room is only the guest's for those
+	hours."""
+	def norm(v):
+		if not v:
+			return None
+		parts = str(v).strip().split(":")
+		try:
+			h, m = int(parts[0]), int(parts[1] if len(parts) > 1 else 0)
+		except ValueError:
+			frappe.throw(_("Times are HH:MM, e.g. 10:00."))
+		if not (0 <= h <= 23 and 0 <= m <= 59):
+			frappe.throw(_("Times are HH:MM, e.g. 10:00."))
+		return f"{h:02d}:{m:02d}:00"
+	t_in, t_out = norm(t_in), norm(t_out)
+	if str(check_in_date) == str(check_out_date) and t_in and t_out \
+			and t_out <= t_in:
+		frappe.throw(_("A day-use slot must end after it starts."))
+	return t_in, t_out
+
+
 @frappe.whitelist()
 @require_roles("Front Desk", "Kamra Agent")
 def create_booking(property: str, room_type: str, check_in_date: str,
@@ -4216,7 +4431,10 @@ def create_booking(property: str, room_type: str, check_in_date: str,
                    hold_expires_on: str | None = None,
                    over_capacity_reason: str | None = None,
                    over_capacity_guests: int = 0,
-                   over_capacity_charge: float = 0):
+                   over_capacity_charge: float = 0,
+                   check_in_time: str | None = None,
+                   check_out_time: str | None = None,
+                   blacklist_override_reason: str | None = None):
 	"""One-call booking: attach to an existing guest profile when given,
 	else dedup by phone / create one. Optional auto room assignment,
 	voucher applied, price computed by the engine.
@@ -4225,10 +4443,18 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 	that are sold out or restricted; promote it later when a room frees.
 
 	status / idempotency_key / hold_expires_on support Instant public booking
-	(ADR-006 / ADR-007). Desk callers leave them unset → Confirmed."""
+	(ADR-006 / ADR-007). Desk callers leave them unset → Confirmed.
+
+	Day use: check_out_date == check_in_date books a same-day stay, priced
+	by the quote engine (one billable date). check_in_time / check_out_time
+	(HH:MM) are its slot - they place it on the hourly tape and tell
+	housekeeping when the room turns; on an overnight stay they are the
+	ETA / ETD."""
 	from kamra.crs import assert_property_access
 	from kamra.reservation_state import find_by_idempotency, lock_sius_for_booking
 	assert_property_access(property)
+	check_in_time, check_out_time = _stay_slot(
+		check_in_date, check_out_date, check_in_time, check_out_time)
 
 	# names ("Deluxe", "Breakfast") or codes resolve to this property's IDs;
 	# unknown / ambiguous values are refused with the valid options
@@ -4290,6 +4516,7 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 			frappe.throw(f"Guest profile {guest} not found.")
 	else:
 		guest = _find_or_create_guest(guest_name, phone, property)
+	_blacklist_gate(guest, property, blacklist_override_reason)
 	if guest_category:
 		frappe.db.set_value("Guest", guest, "guest_category", guest_category)
 		if guest_category == "VIP":
@@ -4334,6 +4561,8 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 		"group_booking": group_booking or None,
 		"source": source,
 		"is_day_use": 1 if check_in_date == check_out_date else 0,
+		"planned_check_in_time": check_in_time,
+		"planned_check_out_time": check_out_time,
 		"travel_agent": travel_agent or None,
 		"booked_by_name": booked_by_name or None,
 		"booked_by_phone": booked_by_phone or None,
@@ -4545,34 +4774,12 @@ def create_group_booking(property: str, group_name: str, check_in_date: str,
 def _block_hold(property: str, room_type: str, check_in_date: str,
                 check_out_date: str, for_group: str | None = None) -> int:
 	"""Rooms held by confirmed group blocks overlapping the window that
-	haven't been picked up yet. A block stops holding inventory once its
-	cutoff date passes (unsold rooms flow back - no release step needed).
+	haven't been picked up yet (kamra.group_blocks). A block stops holding
+	once its cutoff passes; the scheduler then writes the release record.
 	The group's own pickups see their held rooms, not a shortage."""
-	from frappe.utils import getdate
-
-	hold = 0
-	for gb in frappe.get_all(
-		"Group Booking",
-		filters={"property": property, "status": "Confirmed",
-		         "check_in_date": ("<", check_out_date),
-		         "check_out_date": (">", check_in_date)},
-		fields=["name", "cutoff_date"],
-	):
-		if gb.name == for_group:
-			continue
-		if gb.cutoff_date and getdate(gb.cutoff_date) < getdate(nowdate()):
-			continue
-		blocked = frappe.db.get_value(
-			"Group Room Block",
-			{"parent": gb.name, "room_type": room_type},
-			"rooms_blocked") or 0
-		if not blocked:
-			continue
-		picked = frappe.db.count("Reservation", {
-			"group_booking": gb.name, "room_type": room_type,
-			"status": ("in", ["Confirmed", "Checked In"])})
-		hold += max(0, int(blocked) - int(picked))
-	return hold
+	from kamra.group_blocks import block_hold
+	return block_hold(property, room_type, check_in_date, check_out_date,
+	                  for_group=for_group)
 
 
 @frappe.whitelist()
@@ -4622,6 +4829,12 @@ def available_rooms(property: str, room_type: str, check_in_date: str,
 
 def _available_rooms_raw(property: str, room_type: str, check_in_date: str,
                          check_out_date: str):
+	# villa <-> room lockout: a booked whole villa takes its member rooms off
+	# sale and any booked member room takes the villa off sale - the same
+	# query validate_villa_lockout refuses a booking on
+	from kamra.kamra.doctype.reservation.reservation import villa_lockout_conflict
+	if villa_lockout_conflict(property, room_type, check_in_date, check_out_date):
+		return []
 	return frappe.db.sql(
 		"""
 		SELECT r.name, r.room_number, r.housekeeping_status
@@ -4804,7 +5017,10 @@ def verify_cashier_pin(property: str, pin: str):
 def group_detail(group_booking: str):
 	"""Everything Group Rooms Control needs: the block, per-type pickup,
 	the rooming list, the tied event and the master folio."""
+	from kamra.group_blocks import effective_cutoff
 	gb = frappe.get_doc("Group Booking", group_booking)
+	released_on = frappe.db.get_value("Group Booking", gb.name, "released_on") \
+		if frappe.db.has_column("Group Booking", "released_on") else None
 	pickup = []
 	for b in gb.blocks:
 		picked = frappe.db.count("Reservation", {
@@ -4816,6 +5032,9 @@ def group_detail(group_booking: str):
 			"block_rate": b.block_rate,
 			"picked_up": picked,
 			"remaining": max(0, int(b.rooms_blocked) - picked),
+			"rooms_released": int(frappe.db.get_value(
+				"Group Room Block", b.name, "rooms_released") or 0)
+			if released_on else 0,
 		})
 	rooming = frappe.get_all(
 		"Reservation",
@@ -4838,6 +5057,10 @@ def group_detail(group_booking: str):
 			"check_in_date": str(gb.check_in_date),
 			"check_out_date": str(gb.check_out_date),
 			"cutoff_date": str(gb.cutoff_date) if gb.cutoff_date else None,
+			"released_on": str(released_on) if released_on else None,
+			"holds_inventory": gb.status == "Confirmed" and not released_on
+			and effective_cutoff(gb.cutoff_date, gb.check_in_date)
+			>= getdate(nowdate()),
 			"notes": gb.notes,
 		},
 		"pickup": pickup,
@@ -4867,6 +5090,14 @@ def save_group_blocks(group_booking: str, blocks, cutoff_date: str | None = None
 		})
 	if cutoff_date is not None:
 		gb.cutoff_date = cutoff_date or None
+		# a cutoff pushed back into the future re-opens a released block:
+		# its unpicked rooms are held again until the new date
+		from kamra.group_blocks import effective_cutoff
+		if gb.get("released_on") and effective_cutoff(
+				gb.cutoff_date, gb.check_in_date) >= getdate(nowdate()):
+			gb.released_on = None
+			frappe.db.set_value("Group Booking", gb.name, "released_on", None,
+			                    update_modified=False)
 	if status:
 		gb.status = status
 	gb.save(ignore_permissions=True)
