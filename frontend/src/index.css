@@ -177,6 +177,12 @@ select:disabled {
   }
 }
 
+/* The audit pack and other report sheets print on A4. */
+@page {
+  size: A4;
+  margin: 14mm 12mm;
+}
+
 @media print {
   aside,
   header {

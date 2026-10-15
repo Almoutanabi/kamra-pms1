@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **307 endpoints**, generated from the source
+the UI and the AI use. **315 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -156,7 +156,7 @@ Everything the printed GRC (guest registration card) needs.
 
 ### `kamra.api.cash_summary`
 
-**GET/POST** · roles: `Finance`, `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Finance`, `Front Desk`, `Night Auditor`, `Kamra Agent`
 
 Cashier reconciliation: what the system says was collected today,
 per payment mode - the number the drawer must match at shift close.
@@ -490,7 +490,7 @@ Create a guest-request ticket. This is also the agent tool for
 
 ### `kamra.api.get_folio`
 
-**GET/POST** · roles: `Finance`, `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Finance`, `Front Desk`, `Night Auditor`, `Kamra Agent`
 
 Folio for a reservation - opens one if the guest is checked in.
 
@@ -787,12 +787,18 @@ prints a bill - the folio screen, a PDF, an email - agrees.
 
 ### `kamra.api.run_night_audit`
 
-**GET/POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**GET/POST** · roles: `Front Desk`, `Finance`, `Night Auditor`, `Kamra Agent`
+
+Close the current business date. Refused while a blocking pre-check
+(kamra.night_audit.night_audit_precheck) has items, unless each is
+listed in `acknowledge` (check keys) with a `note` giving the reason.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
 | `business_date` | no | `None` |
+| `acknowledge` | no | `None` |
+| `note` | no | `None` |
 
 ### `kamra.api.gstr1_rows`
 
@@ -902,7 +908,7 @@ User Permissions, so a property-restricted user sees only theirs.
 
 ### `kamra.api.front_desk_snapshot`
 
-**GET/POST** · roles: `Front Desk`, `Kamra Agent`, `Finance`, `Revenue Manager`
+**GET/POST** · roles: `Front Desk`, `Night Auditor`, `Kamra Agent`, `Finance`, `Revenue Manager`
 
 Everything the front desk needs for one day, in one call.
 
@@ -1004,7 +1010,7 @@ moment this lands; that guard was clearly written for this.
 
 ### `kamra.api.checkin_context`
 
-**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Front Desk`, `Night Auditor`, `Kamra Agent`
 
 Everything the check-in flow needs in one round trip: how complete
 the guest's registration is, the assigned room - or the allocator's
@@ -1016,7 +1022,7 @@ suggestion plus every room the desk may hand over instead.
 
 ### `kamra.api.check_in`
 
-**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Front Desk`, `Night Auditor`, `Kamra Agent`
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1134,7 +1140,7 @@ Everything the printable cancellation confirmation needs.
 
 ### `kamra.api.check_out`
 
-**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Front Desk`, `Night Auditor`, `Kamra Agent`
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -3550,7 +3556,7 @@ cannot drift from what actually happened.
 
 ### `kamra.reports.manager_flash`
 
-**GET/POST** · roles: `Finance`, `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Finance`, `Front Desk`, `Night Auditor`, `Kamra Agent`
 
 The daily flash: yesterday's performance, month to date, today's
 movement, collections by mode, and the 7-day outlook.
@@ -3621,7 +3627,7 @@ breached if it was resolved after due_by, or is still open past due_by.
 
 ### `kamra.ledger.ledger_balances`
 
-**GET/POST** · roles: `Finance`, `Front Desk`, `Hotel Admin`, `Kamra Agent`
+**GET/POST** · roles: `Finance`, `Front Desk`, `Hotel Admin`, `Night Auditor`, `Kamra Agent`
 
 Four-ledger trial balance for a property (optionally as-of a date).
 
@@ -3632,7 +3638,7 @@ Four-ledger trial balance for a property (optionally as-of a date).
 
 ### `kamra.ledger.journal_by_transaction_code`
 
-**GET/POST** · roles: `Finance`, `Front Desk`, `Hotel Admin`, `Kamra Agent`
+**GET/POST** · roles: `Finance`, `Front Desk`, `Hotel Admin`, `Night Auditor`, `Kamra Agent`
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -3679,7 +3685,7 @@ bill.
 
 ### `kamra.ledger.city_ledger_aging`
 
-**GET/POST** · roles: `Finance`, `Hotel Admin`, `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Finance`, `Hotel Admin`, `Front Desk`, `Night Auditor`, `Kamra Agent`
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -3742,7 +3748,7 @@ nights: 'tonight' | 'entire' | integer string of nights.
 
 ### `kamra.ledger.folio_history`
 
-**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`, `Kamra Agent`
+**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`, `Night Auditor`, `Kamra Agent`
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -3774,7 +3780,7 @@ Post the same charge to many folios (group / event).
 
 ### `kamra.ledger.quick_checkout`
 
-**POST** · roles: `Front Desk`, `Kamra Agent`
+**POST** · roles: `Front Desk`, `Night Auditor`, `Kamra Agent`
 
 Check out and close the guest folio in one step. check_out settles the
 stay the one way: the company's folio (Company, or the group master)
@@ -3860,6 +3866,111 @@ Quick-checkout every Checked In reservation on a group.
 | Param | Required | Default |
 | --- | --- | --- |
 | `category` | no | `None` |
+
+
+## Night audit (End of Day checklist, audit pack)
+
+### `kamra.night_audit.night_audit_precheck`
+
+**GET/POST**
+
+The night audit checklist for the property's current business date.
+Read-only. Each check: key, title, severity (block | warn | info),
+count, items (with reservation / folio / room / guest / amount /
+outlet and bill no where they apply) and a suggested action. A manual
+audit refuses while a blocking check has items, unless each one is
+acknowledged with a reason (run_night_audit acknowledge=[keys], note).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.night_audit.night_audit_pack`
+
+**GET/POST**
+
+The saved audit pack of one Night Audit Run. A run from before packs
+were saved answers has_pack: false with a message, not an error.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `audit` | yes |  |
+
+### `kamra.night_audit.night_audit_history`
+
+**GET/POST**
+
+Recent Night Audit Runs of a property, newest first, with whether
+each has a saved audit pack.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `limit` | no | `20` |
+
+### `kamra.night_audit.eod_session`
+
+**POST**
+
+Open (or resume) End of Day for the property's current business date:
+the draft run that keeps the wizard's progress, every pre-check and
+the step list with each step's status (pending, done, blocked). With
+`audit`, a finished run is shown at its final reports.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `audit` | no | `None` |
+
+### `kamra.night_audit.eod_progress`
+
+**POST**
+
+Save the wizard's place: the current step (1-based), a step's status
+(`key` + `status`: done | skipped | pending) and the manager notes.
+A blocked step cannot be marked done - acknowledge it first.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `step` | no | `None` |
+| `status` | no | `None` |
+| `key` | no | `None` |
+| `notes` | no | `None` |
+
+### `kamra.night_audit.eod_acknowledge`
+
+**POST**
+
+Acknowledge a blocking check with a reason so End of Day can go on.
+Who and when are recorded on the run and in the Activity log.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `key` | yes |  |
+| `reason` | yes |  |
+
+### `kamra.night_audit.eod_mark_no_show`
+
+**POST** · roles: `Front Desk`, `Night Auditor`, `Hotel Admin`, `Kamra Agent`
+
+End of Day: mark an arrival that did not come a No Show now, with the
+property's no-show fee policy applied exactly as the audit applies it
+(fee posted on the business date, or waived for an OTA booking).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `reason` | no | `None` |
+
+### `kamra.night_audit.eod_overview`
+
+**GET/POST**
+
+Manage End of Day: one row per property the user can access - the
+business date, the property's local time, arrivals and departures
+pending, open cashiers and POS bills, and the number of blockers.
 
 
 ## Activity ledger

@@ -36,6 +36,7 @@ MODULES = [
     ("dashboards", "Dashboards", ""),
     ("reports", "Reports", ""),
     ("ledger", "Ledgers (trial balance, city ledger / AR, FX desk)", ""),
+    ("night_audit", "Night audit (End of Day checklist, audit pack)", ""),
     ("agents_api", "Activity ledger", ""),
     ("settings", "Settings hub (module settings)", ""),
     ("staff", "Staff & access", ""),

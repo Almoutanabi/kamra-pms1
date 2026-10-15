@@ -61,7 +61,11 @@ import {
   Banknote,
   Calculator,
   QrCode,
+  MoonStar,
 } from "lucide-react"
+
+/** "Night audit" is what most hotels call End of Day; EOD is what they type. */
+const EOD_KEYWORDS = ["Night audit", "End of day", "EOD", "Close the day"]
 
 /** Shared tile treatment for switcher and launcher. One quiet system, not a rainbow. */
 export const APP_TILE =
@@ -75,6 +79,8 @@ export interface AppNavItem {
   roles?: string[] // per-item gate on top of the app's gate
   /** Sidebar section label within an app (e.g. Cashier / Billing / Books). */
   group?: string
+  /** Other words search (Ctrl/Cmd+K) finds this page by. */
+  keywords?: string[]
 }
 
 export interface AppDef {
@@ -99,7 +105,7 @@ export const APPS: AppDef[] = [
     icon: Building2,
     tint: APP_TILE,
     description: "Arrivals, departures, bookings and guests - the day's work.",
-    roles: ["Front Desk", "Hotel Admin", "System Manager", "Administrator"],
+    roles: ["Front Desk", "Night Auditor", "Hotel Admin", "System Manager", "Administrator"],
     items: [
       { to: "/", label: "Today", icon: Home },
       { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -110,6 +116,8 @@ export const APPS: AppDef[] = [
       { to: "/calendar", label: "Calendar", icon: CalendarDays },
       { to: "/guests", label: "Guests", icon: Users },
       { to: "/room-blocks", label: "Room Blocks", icon: Lock },
+      { to: "/end-of-day", label: "End of Day", icon: MoonStar,
+        keywords: EOD_KEYWORDS },
       { to: "/settings/front-desk", label: "Settings", icon: SettingsIcon,
         roles: ["Hotel Admin", "System Manager", "Administrator"] },
     ],
@@ -226,7 +234,8 @@ export const APPS: AppDef[] = [
     tint: APP_TILE,
     description: "Cashier till, folios, ledgers, night audit and books export.",
     roles: [
-      "Finance", "Front Desk", "Hotel Admin", "System Manager", "Administrator",
+      "Finance", "Front Desk", "Night Auditor", "Hotel Admin", "System Manager",
+      "Administrator",
     ],
     items: [
       // Cashier
@@ -237,6 +246,8 @@ export const APPS: AppDef[] = [
       { to: "/shifts", label: "Shift Handover", icon: Clock, group: "Cashier" },
       { to: "/cashier/fx", label: "Currency Desk", icon: Calculator, group: "Cashier" },
       // Billing
+      { to: "/end-of-day", label: "End of Day", icon: MoonStar, group: "Billing",
+        keywords: EOD_KEYWORDS },
       { to: "/billing", label: "Billing", icon: Receipt, group: "Billing" },
       { to: "/folio-history", label: "Folio History", icon: History, group: "Billing" },
       { to: "/laundry", label: "Laundry", icon: Shirt, group: "Billing" },
@@ -247,7 +258,7 @@ export const APPS: AppDef[] = [
       { to: "/settings/finance", label: "Settings", icon: SettingsIcon, group: "Books",
         roles: ["Finance", "Hotel Admin", "System Manager", "Administrator"] },
     ],
-    extraPrefixes: ["/billing/", "/cashier/", "/ledgers", "/folio-history"],
+    extraPrefixes: ["/billing/", "/cashier/", "/ledgers", "/folio-history", "/end-of-day", "/night-audit"],
   },
   {
     id: "booking-engine",
