@@ -42,13 +42,19 @@ def _mappings(connection: str) -> list[dict]:
 def _sellable(property: str, room_type: str, check_in, check_out) -> int:
 	"""Rooms of a type actually sellable for [check_in, check_out): physical
 	rooms (not out of order) minus every overlapping confirmed/checked-in
-	reservation of that type - ASSIGNED OR NOT - minus unpicked group holds.
+	reservation of that type - ASSIGNED OR NOT - minus unpicked group holds,
+	and nothing at all while the villa <-> room lockout applies.
 
 	Counting unassigned reservations is the point: an OTA booking arrives
 	without a room number, and it must still lower what we offer the OTAs, or
 	the same room sells twice. (The front-desk availability query is a separate
 	path and is unchanged.)"""
 	from kamra.api import _block_hold
+	from kamra.kamra.doctype.reservation.reservation import villa_lockout_conflict
+	# the villa <-> room lockout: a booked whole villa leaves its member
+	# rooms nothing to sell, and a booked member room leaves the villa none
+	if villa_lockout_conflict(property, room_type, check_in, check_out):
+		return 0
 	total = frappe.db.count("Room", {
 		"property": property, "room_type": room_type,
 		"housekeeping_status": ("!=", "Out of Order")})
@@ -72,7 +78,7 @@ def ari_snapshot(property: str, connection: str, days: int = 90) -> list[dict]:
 	double-booking guard uses; the rate is the pricing engine's one-night
 	sell rate (base occupancy, demand premiums and hurdle floors applied)."""
 	from kamra.api import _available_rooms_raw, _block_hold
-	from kamra.pricing import quote
+	from kamra.kamra.doctype.reservation.reservation import villa_locked_nights
 	from kamra.siu.availability import capacity_by_night, has_active_sius
 
 	mappings = _mappings(connection)
@@ -97,9 +103,16 @@ def ari_snapshot(property: str, connection: str, days: int = 90) -> list[dict]:
 			capacity_by_night(property, m.room_type, start, end)
 			if use_siu else []
 		)
+		# nights the villa <-> room lockout takes this type off sale: a
+		# booked villa zeroes its member rooms, a booked room the villa
+		locked = villa_locked_nights(property, m.room_type, start, end)
 		for i in range(days):
 			d = add_days(start, i)
 			d2 = add_days(d, 1)
+			if str(d) in locked:
+				row["days"].append({"date": str(d), "available": 0,
+				                    "rate": _one_night_rate(property, m.room_type, d, d2)})
+				continue
 			hold = _block_hold(property, m.room_type, d, d2)
 			if use_siu:
 				base = siu_caps[i] if i < len(siu_caps) else 0
@@ -110,17 +123,22 @@ def ari_snapshot(property: str, connection: str, days: int = 90) -> list[dict]:
 			# Both paths must account for stays without a room number.
 			if meta[m.room_type]["total"]:
 				avail = min(avail, _sellable(property, m.room_type, d, d2))
-			rate = 0.0
-			try:
-				q = quote(property, m.room_type, str(d), str(d2), 2, 0)
-				rate = float(q["nightly"][0]["rate"])
-			except Exception:
-				pass  # keep availability for the day even when the rate cannot be quoted
 			row["days"].append({"date": str(d), "available": avail,
-			                    "rate": round(rate, 2)})
+			                    "rate": _one_night_rate(property, m.room_type, d, d2)})
 		out.append(row)
 	_apply_villa_lockout(out, meta)
 	return out
+
+
+def _one_night_rate(property: str, room_type: str, d, d2) -> float:
+	"""The pricing engine's one-night sell rate (2 adults), 0 when the
+	night cannot be quoted - availability still goes out for that day."""
+	from kamra.pricing import quote
+	try:
+		q = quote(property, room_type, str(d), str(d2), 2, 0)
+		return round(float(q["nightly"][0]["rate"]), 2)
+	except Exception:
+		return 0.0
 
 
 def _apply_villa_lockout(rows: list[dict], meta: dict) -> None:

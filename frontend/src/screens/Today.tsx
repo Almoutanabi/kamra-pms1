@@ -33,6 +33,7 @@ import { RoomMediaButton } from "../components/HkMedia"
 import { cn } from "../lib/utils"
 import type { ShellContext } from "../AppShell"
 import CheckInDialog from "../components/CheckInDialog"
+import BookingRequests from "../components/BookingRequests"
 import { serverError } from "../lib/resource"
 import { cur, moneyLocale } from "../lib/money"
 import { useT } from "../lib/i18n"
@@ -499,6 +500,7 @@ export default function Today() {
 
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="space-y-4 lg:col-span-2">
+          <BookingRequests refreshKey={refreshKey} onChanged={refresh} />
           <Card>
             <CardHeader>
               <CardTitle>{t("Arrivals")}</CardTitle>

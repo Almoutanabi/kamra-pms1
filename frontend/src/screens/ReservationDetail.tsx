@@ -16,8 +16,10 @@ import {
 } from "lucide-react"
 
 import {
+  acceptBookingRequest,
   amendStay,
   checkIn,
+  declineBookingRequest,
   checkOut,
   idDocumentImage,
   promoteWaitlist,
@@ -189,6 +191,7 @@ export default function ReservationDetail({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [changingRoom, setChangingRoom] = useState(false)
+  const [declineReason, setDeclineReason] = useState("")
 
   const refresh = useCallback(() => {
     reservationDetail(name)
@@ -585,6 +588,36 @@ export default function ReservationDetail({
           >
             Cancellation letter
           </Link>
+        </div>
+      )}
+
+      {d.status === "Requested" && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Booking request - waiting for your answer</p>
+          <p className="mt-0.5 text-xs">
+            A request holds no room. Accepting checks availability again and
+            takes a room; declining cancels it with no fee and tells the guest.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button disabled={busy} onClick={() => act(() => acceptBookingRequest(name))}>
+              Accept
+            </Button>
+            <input
+              value={declineReason}
+              onChange={(e) => setDeclineReason(e.target.value)}
+              placeholder="Reason for declining"
+              className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:outline-2 focus:outline-offset-1 focus:outline-brand-600"
+            />
+            <Button
+              variant="outline"
+              disabled={busy || !declineReason.trim()}
+              onClick={() =>
+                act(() => declineBookingRequest(name, declineReason.trim()))
+              }
+            >
+              Decline
+            </Button>
+          </div>
         </div>
       )}
 

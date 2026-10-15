@@ -3505,6 +3505,8 @@ def room_board(property: str):
 def availability_calendar(property: str, start_date: str | None = None, days: int = 14):
 	"""Per room-type, per date: rooms available and the 2-adult rate.
 	Powers the calendar view and, later, the agent's availability tool."""
+	from kamra.group_blocks import block_hold_by_night
+	from kamra.kamra.doctype.reservation.reservation import villa_locked_nights
 	from kamra.pricing import occupancy_rate, season_adjust
 	from kamra.siu.availability import capacity_by_night, has_active_sius
 
@@ -3532,14 +3534,19 @@ def availability_calendar(property: str, start_date: str | None = None, days: in
 			return float(season_adjust(
 				property, date, occupancy_rate(rt_doc, 2, 0, date), rt_name))
 
+		# nights the villa <-> room lockout or a group block takes off sale
+		locked = villa_locked_nights(property, rt.name, start, end)
+		held = block_hold_by_night(property, rt.name, dates)
 		if has_active_sius(property, rt.name):
 			caps = capacity_by_night(property, rt.name, start, end)
 			total = max(caps) if caps else 0
 			cells = []
 			for i, date in enumerate(dates):
+				cap = caps[i] if i < len(caps) else 0
 				cells.append({
 					"date": str(date),
-					"available": caps[i] if i < len(caps) else 0,
+					"available": 0 if str(date) in locked
+					else max(0, cap - held.get(str(date), 0)),
 					"rate": _display_rate(date),
 				})
 		else:
@@ -3566,7 +3573,8 @@ def availability_calendar(property: str, start_date: str | None = None, days: in
 				)
 				cells.append({
 					"date": str(date),
-					"available": max(0, total - taken),
+					"available": 0 if str(date) in locked
+					else max(0, total - taken - held.get(str(date), 0)),
 					"rate": _display_rate(date),
 				})
 		rows.append({
@@ -4766,34 +4774,12 @@ def create_group_booking(property: str, group_name: str, check_in_date: str,
 def _block_hold(property: str, room_type: str, check_in_date: str,
                 check_out_date: str, for_group: str | None = None) -> int:
 	"""Rooms held by confirmed group blocks overlapping the window that
-	haven't been picked up yet. A block stops holding inventory once its
-	cutoff date passes (unsold rooms flow back - no release step needed).
+	haven't been picked up yet (kamra.group_blocks). A block stops holding
+	once its cutoff passes; the scheduler then writes the release record.
 	The group's own pickups see their held rooms, not a shortage."""
-	from frappe.utils import getdate
-
-	hold = 0
-	for gb in frappe.get_all(
-		"Group Booking",
-		filters={"property": property, "status": "Confirmed",
-		         "check_in_date": ("<", check_out_date),
-		         "check_out_date": (">", check_in_date)},
-		fields=["name", "cutoff_date"],
-	):
-		if gb.name == for_group:
-			continue
-		if gb.cutoff_date and getdate(gb.cutoff_date) < getdate(nowdate()):
-			continue
-		blocked = frappe.db.get_value(
-			"Group Room Block",
-			{"parent": gb.name, "room_type": room_type},
-			"rooms_blocked") or 0
-		if not blocked:
-			continue
-		picked = frappe.db.count("Reservation", {
-			"group_booking": gb.name, "room_type": room_type,
-			"status": ("in", ["Confirmed", "Checked In"])})
-		hold += max(0, int(blocked) - int(picked))
-	return hold
+	from kamra.group_blocks import block_hold
+	return block_hold(property, room_type, check_in_date, check_out_date,
+	                  for_group=for_group)
 
 
 @frappe.whitelist()
@@ -4843,6 +4829,12 @@ def available_rooms(property: str, room_type: str, check_in_date: str,
 
 def _available_rooms_raw(property: str, room_type: str, check_in_date: str,
                          check_out_date: str):
+	# villa <-> room lockout: a booked whole villa takes its member rooms off
+	# sale and any booked member room takes the villa off sale - the same
+	# query validate_villa_lockout refuses a booking on
+	from kamra.kamra.doctype.reservation.reservation import villa_lockout_conflict
+	if villa_lockout_conflict(property, room_type, check_in_date, check_out_date):
+		return []
 	return frappe.db.sql(
 		"""
 		SELECT r.name, r.room_number, r.housekeeping_status
@@ -5025,7 +5017,10 @@ def verify_cashier_pin(property: str, pin: str):
 def group_detail(group_booking: str):
 	"""Everything Group Rooms Control needs: the block, per-type pickup,
 	the rooming list, the tied event and the master folio."""
+	from kamra.group_blocks import effective_cutoff
 	gb = frappe.get_doc("Group Booking", group_booking)
+	released_on = frappe.db.get_value("Group Booking", gb.name, "released_on") \
+		if frappe.db.has_column("Group Booking", "released_on") else None
 	pickup = []
 	for b in gb.blocks:
 		picked = frappe.db.count("Reservation", {
@@ -5037,6 +5032,9 @@ def group_detail(group_booking: str):
 			"block_rate": b.block_rate,
 			"picked_up": picked,
 			"remaining": max(0, int(b.rooms_blocked) - picked),
+			"rooms_released": int(frappe.db.get_value(
+				"Group Room Block", b.name, "rooms_released") or 0)
+			if released_on else 0,
 		})
 	rooming = frappe.get_all(
 		"Reservation",
@@ -5059,6 +5057,10 @@ def group_detail(group_booking: str):
 			"check_in_date": str(gb.check_in_date),
 			"check_out_date": str(gb.check_out_date),
 			"cutoff_date": str(gb.cutoff_date) if gb.cutoff_date else None,
+			"released_on": str(released_on) if released_on else None,
+			"holds_inventory": gb.status == "Confirmed" and not released_on
+			and effective_cutoff(gb.cutoff_date, gb.check_in_date)
+			>= getdate(nowdate()),
 			"notes": gb.notes,
 		},
 		"pickup": pickup,
@@ -5088,6 +5090,14 @@ def save_group_blocks(group_booking: str, blocks, cutoff_date: str | None = None
 		})
 	if cutoff_date is not None:
 		gb.cutoff_date = cutoff_date or None
+		# a cutoff pushed back into the future re-opens a released block:
+		# its unpicked rooms are held again until the new date
+		from kamra.group_blocks import effective_cutoff
+		if gb.get("released_on") and effective_cutoff(
+				gb.cutoff_date, gb.check_in_date) >= getdate(nowdate()):
+			gb.released_on = None
+			frappe.db.set_value("Group Booking", gb.name, "released_on", None,
+			                    update_modified=False)
 	if status:
 		gb.status = status
 	gb.save(ignore_permissions=True)

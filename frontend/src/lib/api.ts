@@ -458,6 +458,21 @@ export const createBooking = (
     status?: string
   }>("kamra.api.create_booking", { property: getCurrentProperty(), ...params })
 
+/** Request to Book: confirm the stay and take a room (refused, with the
+ * reason, when the dates sold out meanwhile). */
+export const acceptBookingRequest = (reservation: string, room?: string) =>
+  call<{ reservation: string; status: string; room: string | null; notified: string[] }>(
+    "kamra.booking_requests.accept_booking_request",
+    { reservation, ...(room ? { room } : {}) },
+  )
+
+/** Request to Book: decline with a reason (sent to the guest), no fee. */
+export const declineBookingRequest = (reservation: string, reason: string) =>
+  call<{ reservation: string; status: string; notified: string[]; note?: string }>(
+    "kamra.booking_requests.decline_booking_request",
+    { reservation, reason },
+  )
+
 export const promoteWaitlist = (reservation: string) =>
   call<{ ok: boolean; reservation: string; room: string }>(
     "kamra.api.promote_waitlist",
