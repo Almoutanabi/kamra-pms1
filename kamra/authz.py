@@ -34,7 +34,7 @@ def act_as(user: str):
 	"""Run a block as another user (e.g. the governed agent@kamra.local) and
 	hand the caller's own session back untouched afterwards.
 
-	frappe.set_user() rewrites the live session in place - sid becomes the
+	A bare frappe.set_user() rewrites the live session in place - sid becomes the
 	user name and session.data (csrf_token, expiry, ...) is wiped. A plain
 	set_user(me) afterwards keeps the user but not the rest, and Frappe's
 	after-request Session.update() then caches that wiped record under the
