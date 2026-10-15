@@ -4556,6 +4556,125 @@ def t97():
 	assert frappe.db.count("Error Log") > errs, "failure not reported"
 
 
+@check("group pickup: an agent picks up a second room for the same party; a key makes the retry safe")
+def t100():
+	from kamra.mcp_tools import BY_NAME, call_tool
+
+	frappe.db.set_value("Property", P, "overbooking_pct", 400)
+	block = call_tool(BY_NAME["create_group_block"], {
+		"group_name": "EVAL Pickup Party", "check_in_date": "2031-06-01",
+		"check_out_date": "2031-06-03",
+		"blocks": [{"room_type": "Eval Room", "rooms_blocked": 3}]}, P)
+	gb = block.get("group_booking") or block.get("name")
+	assert gb, block
+	frappe.db.set_value("Group Booking", gb, "status", "Confirmed")
+	pick = BY_NAME["pickup_group_room"]
+	args = {"group_booking": gb, "room_type": "Eval Room",
+	        "guest_name": "Eval Pickup Lead"}
+	one = call_tool(pick, dict(args), P)
+	two = call_tool(pick, dict(args), P)  # a second room for the same party
+	assert one["reservation"] != two["reservation"], (one, two)
+	assert not two.get("idempotent_replay"), two
+	assert frappe.db.count("Reservation", {"group_booking": gb}) == 2
+	# with a key, a retried pickup returns the first one
+	k1 = call_tool(pick, dict(args, idempotency_key="eval-pick-1"), P)
+	k1b = call_tool(pick, dict(args, idempotency_key="eval-pick-1"), P)
+	assert k1b["reservation"] == k1["reservation"] and k1b.get("idempotent_replay"), k1b
+	assert frappe.db.count("Reservation", {"group_booking": gb}) == 3
+
+
+@check("agent duplicate guard: a changed meal plan or party size is a new booking; only live stays count")
+def t101():
+	from kamra.mcp_tools import BY_NAME, call_tool
+
+	frappe.db.set_value("Property", P, "overbooking_pct", 400)
+	mp = frappe.db.get_value("Meal Plan", {"property": P, "disabled": 0}) or \
+		frappe.get_doc({"doctype": "Meal Plan", "property": P, "code": "EP",
+		                "label": "Eval Room Only", "price_per_adult": 0,
+		                }).insert(ignore_permissions=True).name
+	spec = BY_NAME["create_booking"]
+	args = {"guest_name": "Eval  Changed Mind ", "room_type": "Eval Room",
+	        "check_in_date": "2031-07-01", "check_out_date": "2031-07-02",
+	        "adults": 2}
+	first = call_tool(spec, dict(args), P)
+	# the same request, spelt with other whitespace and case: a retry
+	again = call_tool(spec, dict(args, guest_name="eval changed mind"), P)
+	assert again["reservation"] == first["reservation"] and again.get("duplicate_of_recent"), again
+	meal = call_tool(spec, dict(args, meal_plan=mp), P)
+	assert meal["reservation"] != first["reservation"] and not meal.get("idempotent_replay"), meal
+	fewer = call_tool(spec, dict(args, adults=1), P)
+	assert fewer["reservation"] not in (first["reservation"], meal["reservation"]), fewer
+	assert not fewer.get("idempotent_replay"), fewer
+	# a cancelled (or Inquiry) stay is not a booking to hand back
+	frappe.db.set_value("Reservation", fewer["reservation"], "status", "Inquiry")
+	redo = call_tool(spec, dict(args, adults=1), P)
+	assert redo["reservation"] != fewer["reservation"] and not redo.get("idempotent_replay"), redo
+
+
+@check("idempotency_key: a key reused for a different booking is refused, not replayed")
+def t102():
+	from kamra.mcp_tools import BY_NAME, call_tool
+
+	frappe.db.set_value("Property", P, "overbooking_pct", 400)
+	spec = BY_NAME["create_booking"]
+	args = {"guest_name": "Eval Key Owner", "room_type": "Eval Room",
+	        "check_in_date": "2031-08-01", "check_out_date": "2031-08-03",
+	        "idempotency_key": "eval-reuse-1"}
+	first = call_tool(spec, dict(args), P)
+	same = call_tool(spec, dict(args, guest_name="eval  key owner"), P)
+	assert same["reservation"] == first["reservation"] and same.get("idempotent_replay"), same
+	for change in ({"check_out_date": "2031-08-04"},
+	               {"guest_name": "Somebody Else"}):
+		try:
+			call_tool(spec, dict(args, **change), P)
+			raise AssertionError(f"reused key replayed for {change}")
+		except frappe.ValidationError as e:
+			assert "already used for a different booking" in str(e), e
+
+
+@check("copilot duplicate: caught on the Chat path, logged as Chat, no phantom Executed row")
+def t103():
+	from kamra import assistant
+
+	frappe.db.set_value("Property", P, "overbooking_pct", 400)
+	args = {"guest_name": "Eval Chat Retry", "room_type": "EVL",
+	        "check_in_date": "2031-09-01", "check_out_date": "2031-09-02"}
+	before = frappe.db.count("Agent Action Log", {"action_type": "copilot_create_booking"})
+	first = assistant._run_tool("create_booking", dict(args), P)
+	again = assistant._run_tool("create_booking", dict(args), P)
+	assert again["reservation"] == first["reservation"] and again.get("duplicate_of_recent"), again
+	assert frappe.db.get_value("Reservation", first["reservation"], "source") == "AI Agent"
+	assert frappe.db.count("Agent Action Log", {
+		"action_type": "copilot_create_booking"}) == before + 1, "replay logged as executed"
+	live = frappe.get_meta("Agent Action Log").get_field("action_channel").options.split("\n")
+	for action in ("create_reservation", "agent_duplicate_booking_blocked"):
+		got = frappe.db.get_value("Agent Action Log", {
+			"action_type": action, "reference_name": first["reservation"]},
+			["action_channel", "rationale"], as_dict=True)
+		assert got, f"no {action} row"
+		if "Chat" in live:
+			assert got.action_channel == "Chat", (action, got)
+		else:  # an unmigrated site maps Chat to API and keeps the name
+			assert "[channel: Chat]" in got.rationale, (action, got)
+
+
+@check("create_group_block resolves room type names and codes; unknown is refused")
+def t104():
+	from kamra import api
+
+	out = api.create_group_block(P, "EVAL Named Block", "2031-10-01", "2031-10-02",
+	                             [{"room_type": "Eval Room", "rooms_blocked": 2},
+	                              {"room_type": "evl", "rooms_blocked": 1}])
+	gb = frappe.get_doc("Group Booking", out.get("group_booking") or out.get("name"))
+	assert [b.room_type for b in gb.blocks] == [RT, RT], [b.room_type for b in gb.blocks]
+	try:
+		api.create_group_block(P, "EVAL Bad Block", "2031-10-01", "2031-10-02",
+		                       [{"room_type": "Presidential", "rooms_blocked": 1}])
+		raise AssertionError("unknown room type accepted")
+	except frappe.ValidationError as e:
+		assert "Eval Room" in str(e), e
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4574,7 +4693,7 @@ def execute():
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
-		           t96, t97, t98):
+		           t96, t97, t98, t100, t101, t102, t103, t104):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

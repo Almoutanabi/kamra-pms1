@@ -13,6 +13,11 @@ from __future__ import annotations
 # kamra.siu.availability.LIVE_STATUSES).
 LIVE_STATUSES = ("Confirmed", "Checked In", "Held", "Pending Payment")
 
+# How long an identical agent booking (no idempotency_key) counts as a retry
+# of the first one. Lives here, not in api.py, so the frappe-free MCP
+# registry can quote it in the tool docs.
+AGENT_DUPLICATE_WINDOW_MINUTES = 10
+
 NON_INVENTORY = (
 	"Waitlist",
 	"Inquiry",
