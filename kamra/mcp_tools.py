@@ -811,15 +811,39 @@ TOOLS: tuple[ToolSpec, ...] = (
 		"""Run the end-of-day for the property's current business date: post
 		the night's room charges for in-house guests at their confirmed
 		nightly rates, flag no-shows per the property's no-show policy, then
-		roll the business date forward. Late arrivals due on the closed date
-		(flagged late, or ETA after the run) may be held as Due In and are
-		listed in held_late_arrivals; OTA no-shows may carry no fee
-		(no_show_fees_waived). business_date is optional; if given it must
-		equal the current business date. A day that already closed returns
-		already_ran instead of posting again.""",
-		{"business_date": _p("string", description="Optional. Must equal the current business date.")},
+		roll the business date forward. Call night_audit_precheck first: the
+		run is refused while a blocking check (open tills, open restaurant
+		bills, departures still in house) has items. Resolve them, or - only
+		when a staff member confirms and gives the reason - pass acknowledge
+		(the blocking check keys) and note (the reason); who acknowledged it
+		is recorded on the run. Late arrivals due on the closed date may be
+		held as Due In (held_late_arrivals); OTA no-shows may carry no fee
+		(no_show_fees_waived). Each run saves an audit pack (has_pack).
+		business_date is optional; if given it must equal the current
+		business date. A day that already closed returns already_ran.""",
+		{
+			"business_date": _p("string", description="Optional. Must equal the current business date."),
+			"acknowledge": _p("array", items=_p("string"),
+			                  description="Blocking check keys to acknowledge, e.g. open_tills."),
+			"note": _p("string", description="Reason for acknowledging the blocking checks."),
+		},
 		property=True,
 		mutating=True,
+		group="Night audit",
+	),
+	_t(
+		"night_audit_precheck",
+		"night_audit.night_audit_precheck",
+		"""The night audit checklist for the current business date, read-only.
+		Checks: open_tills, open_pos_bills, departures_due (blocking by
+		default), arrivals_pending (with what the no-show policy will do),
+		rate_variance, pos_room_postings, high_balance, credit_limit and
+		room_status. Each has severity (block | warn | info), count, items
+		(reservation, folio, room, guest, amount, outlet / bill no) and a
+		suggested action. blockers lists the checks stopping a manual run;
+		can_run is true when there are none.""",
+		{},
+		property=True,
 		group="Night audit",
 	),
 	_t(

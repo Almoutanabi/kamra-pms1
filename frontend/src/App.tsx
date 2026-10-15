@@ -14,6 +14,9 @@ import { useAuth } from "./lib/auth"
 import { t, useT } from "./lib/i18n"
 import { toFullPath } from "./lib/routing"
 const Billing = lazy(() => import("./screens/Billing"))
+const EndOfDay = lazy(() => import("./screens/EndOfDay"))
+const EndOfDayWizard = lazy(() => import("./screens/EndOfDayWizard"))
+const AuditPack = lazy(() => import("./screens/AuditPack"))
 const PublicBooking = lazy(() => import("./screens/PublicBooking"))
 const PublicListing = lazy(() => import("./screens/PublicListing"))
 const PublicCheckin = lazy(() => import("./screens/PublicCheckin"))
@@ -243,6 +246,10 @@ export default function App() {
             element={<ConfiguredScreen config="mealPlansConfig" />}
           />
           <Route path="billing" element={<Billing />} />
+          <Route path="end-of-day" element={<EndOfDay />} />
+          <Route path="end-of-day/pack/:audit" element={<AuditPack />} />
+          <Route path="end-of-day/:property" element={<EndOfDayWizard />} />
+          <Route path="night-audit" element={<Navigate to="/end-of-day" replace />} />
           <Route path="billing/:name" element={<FolioView />} />
           <Route path="cashier" element={<CashierTill />} />
           <Route path="cashier/sessions" element={<CashierSessions />} />

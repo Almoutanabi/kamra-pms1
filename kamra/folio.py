@@ -5,6 +5,7 @@ per line so a folio can mix rates (room 5/18%, F&B 5%) and still produce
 a correct multi-rate invoice - the PRD's FR-60.
 """
 
+import json
 from decimal import Decimal
 
 import frappe
@@ -897,6 +898,30 @@ def cancel_invoice(folio_name: str, reason: str) -> dict:
 	return {"cancelled": old, "folio": folio.name}
 
 
+def apply_no_show(res, pol, decision, business_date) -> dict:
+	"""Mark one stay No Show and apply the property's no-show fee policy
+	(`decision` from kamra.no_show.audit_outcome): the fee is posted on
+	the business date being closed, or waived for an OTA booking. Used by
+	the night audit and by the End of Day "Mark no-show" action, so both
+	charge the same way. Returns the audit pack's no-show row."""
+	frappe.db.set_value("Reservation", res.name, "status", "No Show")
+	ns = {"reservation": res.name, "guest_name": res.guest_name,
+	      "room_type": (res.room_type or "").split("-")[-1],
+	      "check_in_date": str(res.check_in_date),
+	      "source": res.get("channel") or res.get("source"),
+	      "fee": decision.fee, "fee_amount": 0.0,
+	      "outcome": "No show - no fee"}
+	if decision.fee == "waived":
+		ns["outcome"] = f"No show - fee waived ({decision.reason})"
+	elif decision.fee == "charge":
+		fee = post_policy_fee(res, pol.charge,
+		                      f"No-show charge ({pol.charge})",
+		                      posting_date=business_date)
+		ns["fee_amount"] = float(fee or 0)
+		ns["outcome"] = f"No show - {pol.charge.lower()} fee posted"
+	return ns
+
+
 def audit_clock(property: str):
 	"""When the audit is running, on the property's clock - what a late
 	arrival's ETA is compared with. Its own function so tests can pin it."""
@@ -904,11 +929,27 @@ def audit_clock(property: str):
 	return property_now(property)
 
 
-def run_night_audit(property: str, business_date: str | None = None) -> dict:
+def run_night_audit(property: str, business_date: str | None = None,
+                    acknowledge=None, note: str | None = None,
+                    mode: str | None = None) -> dict:
 	"""Automated end-of-day: open missing folios, post the night's room
 	charges for every in-house guest, flag no-shows. Closes only the
 	property's current business date; a retry for a date that already
-	closed returns ``already_ran`` instead of posting twice."""
+	closed returns ``already_ran`` instead of posting twice.
+
+	The night audit checklist (kamra.night_audit) runs first:
+
+	mode "manual" (Billing, REST, MCP): refused while a blocking check has
+	  items, unless every one is listed in ``acknowledge`` with a ``note``
+	  (the reason) - who acknowledged it and when is stored on the run.
+	mode "scheduled" (03:00): follows the property's
+	  na_auto_audit_with_blockers - "Run and report exceptions" closes the
+	  day and records the blockers as exceptions; "Hold and alert" leaves
+	  the business date and alerts Hotel Admin and Finance.
+	mode None (an internal call): never gated; open blockers are recorded
+	  as exceptions.
+
+	Every run saves its audit pack (night_audit.build_pack) on the record."""
 	# In non-request contexts (the 3 AM scheduler, bench console) frappe.local.lang
 	# is unset, which makes Frappe's number/currency formatting raise
 	# UnboundLocalError. Default it so the audit runs everywhere.
@@ -922,11 +963,18 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 	# second property's audit silently no-op every night. Checked before
 	# the date guards so a retry after success answers already_ran.
 	audit_name = f"AUDIT-{business_date}-{property}"
-	if frappe.db.exists("Night Audit Run", audit_name) or \
-			frappe.db.exists("Night Audit Run",
-			                 {"property": property,
-			                  "business_date": business_date}):
-		return {"already_ran": True, "audit": audit_name}
+	# an End of Day draft (status Draft) is the wizard's progress for the
+	# date, not a closed day
+	done = frappe.db.get_value(
+		"Night Audit Run",
+		{"property": property, "business_date": business_date,
+		 "status": ("!=", "Draft")}, "name")
+	if done:
+		return {"already_ran": True, "audit": done}
+	draft_name = frappe.db.get_value(
+		"Night Audit Run",
+		{"property": property, "business_date": business_date,
+		 "status": "Draft"}, "name")
 	# The audit only ever closes the property's current business date. A
 	# different date would post into a closed day or skip days, and then
 	# set the business date to that date + 1.
@@ -941,9 +989,45 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		               "Night audit for it can run once that day has "
 		               "started.").format(business_date, nowdate()))
 
+	# the checklist, as it stands before anything is posted
+	from kamra import night_audit as na
+	run_at = audit_clock(property)
+	checks = na.run_checks(property, business_date, run_at)
+	blockers = na.open_blockers(checks)
+	acks: list[dict] = []
+	if mode == "manual":
+		# acknowledged in the End of Day wizard (each with its own reason)
+		drafted = {a["key"]: a for a in na.draft_acknowledgements(draft_name)}
+		keys = na.parse_keys(acknowledge)
+		missing = [c for c in blockers
+		           if c["key"] not in keys and c["key"] not in drafted]
+		if missing:
+			frappe.throw(
+				frappe._("Night audit is blocked: {0}. Resolve them, or acknowledge "
+				         "each with a reason to run anyway.").format(
+					"; ".join(f"{c['title']} ({c['count']})" for c in missing)),
+				title=frappe._("Night audit pre-checks"))
+		fresh = [c for c in blockers if c["key"] not in drafted]
+		if fresh and len((note or "").strip()) < 3:
+			frappe.throw(frappe._("Give a reason for acknowledging the blocking "
+			                      "checks."))
+		acks = [drafted[c["key"]] for c in blockers if c["key"] in drafted] + \
+			na.acknowledgement_rows(fresh, keys, (note or "").strip())
+	elif mode == "scheduled" and blockers:
+		from kamra.settings import get_setting
+		if get_setting(property, "na_auto_audit_with_blockers") == na.HOLD_AND_ALERT:
+			out = na.hold_and_alert(property, business_date, blockers)
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduler job persists the hold alert per property; reviewed as intentional
+			return out
+		acks = na.acknowledgement_rows(
+			blockers, [c["key"] for c in blockers],
+			"Scheduled audit: run and reported as exceptions", by="Administrator",
+			auto=True)
+
 	log_lines = []
 	folios_opened = charges_posted = no_shows = 0
 	amount_posted = Decimal(0)
+	no_show_rows: list[dict] = []
 
 	in_house = frappe.get_all(
 		"Reservation",
@@ -978,7 +1062,6 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 	pol = no_show.policy(property)
 	cutoff = business_date if pol.timing != no_show.ONE_DAY_LATER \
 		else str(add_days(business_date, -1))
-	run_at = audit_clock(property)
 	held_late: list[dict] = []
 	fees_waived = 0
 	stale = frappe.get_all(
@@ -993,33 +1076,28 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 	)
 	for row in stale:
 		res = frappe.get_doc("Reservation", row.name)
-		if pol.protect_late and str(res.check_in_date) == business_date:
-			why = no_show.late_arrival_reason(res, run_at)
-			if why:
-				held_late.append({"reservation": res.name,
-				                  "guest_name": res.guest_name,
-				                  "eta": res.get("eta") or None,
-				                  "reason": why})
-				log_lines.append(f"held late arrival: {res.name} ({why})")
-				continue
-		frappe.db.set_value("Reservation", row.name, "status", "No Show")
-		no_shows += 1
-		log_lines.append(f"flagged no-show: {row.name}")
-		if pol.charge == "None":
+		decision = no_show.audit_outcome(res, pol, business_date, run_at)
+		if decision.outcome == "defer":
 			continue
-		if pol.waive_ota and no_show.is_ota_booking(res):
+		if decision.outcome == "hold":
+			held_late.append({"reservation": res.name,
+			                  "guest_name": res.guest_name,
+			                  "eta": res.get("eta") or None,
+			                  "reason": decision.reason})
+			log_lines.append(f"held late arrival: {res.name} ({decision.reason})")
+			continue
+		ns = apply_no_show(res, pol, decision, business_date)
+		no_shows += 1
+		no_show_rows.append(ns)
+		log_lines.append(f"flagged no-show: {row.name}")
+		if decision.fee == "waived":
 			fees_waived += 1
 			log_lines.append(
-				f"no-show fee waived for {row.name}: "
-				f"{res.get('channel') or res.get('source') or 'OTA'} booking")
-			continue
-		fee = post_policy_fee(res, pol.charge,
-		                      f"No-show charge ({pol.charge})",
-		                      posting_date=business_date)
-		if fee:
-			amount_posted += Decimal(str(fee))
+				f"no-show fee waived for {row.name}: {decision.reason}")
+		if ns["fee_amount"]:
+			amount_posted += Decimal(str(ns["fee_amount"]))
 			log_lines.append(
-				f"posted no-show charge {fee:,.2f} for {row.name}")
+				f"posted no-show charge {ns['fee_amount']:,.2f} for {row.name}")
 
 	# purge stale waitlist entries - two days after their requested departure
 	from frappe.utils import add_days as _add_days
@@ -1032,20 +1110,61 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 	if purged:
 		log_lines.append(f"purged {purged} stale waitlist entries")
 
-	audit = frappe.get_doc({
-		"doctype": "Night Audit Run",
-		"property": property,
-		"business_date": business_date,
-		"status": "Completed",
+	for a in acks:
+		log_lines.append(f"acknowledged {a['key']} ({a['count']}) by {a['by']}: "
+		                 f"{a['note']}")
+	unacked = [c for c in blockers if c["key"] not in {a["key"] for a in acks}]
+	for c in unacked:
+		log_lines.append(f"exception: {c['title']} ({c['count']})")
+	trigger = {"manual": "Manual", "scheduled": "Scheduled"}.get(mode or "", "System")
+	summary = {
 		"room_charges_posted": charges_posted,
 		"amount_posted": float(amount_posted),
 		"no_shows_flagged": no_shows,
 		"late_arrivals_held": len(held_late),
 		"no_show_fees_waived": fees_waived,
 		"folios_opened": folios_opened,
+		"trigger": trigger,
+		"run_by": frappe.session.user,
+		"exceptions": len(blockers),
+		"notes": (frappe.db.get_value("Night Audit Run", draft_name,
+		                              "auditor_notes") if draft_name else None),
+	}
+	try:
+		pack = na.build_pack(property, business_date, checks=checks,
+		                     acknowledgements=acks, summary=summary,
+		                     no_shows=no_show_rows, held_late=held_late)
+		report_pack = json.dumps(pack, default=str)
+	except Exception:
+		frappe.log_error(title=f"Night audit pack failed: {property}")
+		report_pack = None
+
+	values = {
+		"status": "Completed with Warnings" if blockers else "Completed",
+		"room_charges_posted": charges_posted,
+		"amount_posted": float(amount_posted),
+		"no_shows_flagged": no_shows,
+		"late_arrivals_held": len(held_late),
+		"no_show_fees_waived": fees_waived,
+		"folios_opened": folios_opened,
+		"run_trigger": trigger,
+		"run_by": frappe.session.user,
+		"exceptions": len(blockers),
+		"acknowledgements": json.dumps(acks) if acks else None,
+		"report_pack": report_pack,
 		"log": "\n".join(log_lines) or "Nothing to do.",
-	})
-	audit.insert(ignore_permissions=True)
+		"eod_step": 11,
+	}
+	if draft_name:
+		# the wizard's draft becomes the run: its notes and progress stay
+		audit = frappe.get_doc("Night Audit Run", draft_name)
+		audit.update(values)
+		audit.save(ignore_permissions=True)
+	else:
+		audit = frappe.get_doc({"doctype": "Night Audit Run",
+		                        "property": property,
+		                        "business_date": business_date, **values})
+		audit.insert(ignore_permissions=True)
 
 	# Advance the front-office business date (Opera End of Day roll).
 	from kamra.business_date import advance_business_date, ensure_business_date
@@ -1066,9 +1185,25 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		autonomy="Full",
 		channel="API",
 	)
+	if acks and mode == "manual":
+		log_action(
+			action_type="night_audit_acknowledged",
+			reference_doctype="Night Audit Run",
+			reference_name=audit.name,
+			property=property,
+			rationale="Blocking checks acknowledged: "
+			          + "; ".join(f"{a['title']} ({a['count']})" for a in acks)
+			          + f" - {acks[0]['note']}",
+			channel="MCP" if frappe.flags.get("kamra_agent_call") else "Desk",
+			after_snapshot=acks,
+		)
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- persists the completed operation before returning to an external/public caller; reviewed as intentional
 	return {
 		"audit": audit.name,
+		"status": audit.status,
+		"exceptions": len(blockers),
+		"acknowledged": [a["key"] for a in acks],
+		"has_pack": bool(report_pack),
 		"room_charges_posted": charges_posted,
 		"amount_posted": float(amount_posted),
 		"no_shows_flagged": no_shows,
@@ -1097,6 +1232,6 @@ def nightly_audit_all_properties():
 					f"Night audit skipped for {p.name}: business date {bd} "
 					f"is not before today ({today})")
 				continue
-			run_night_audit(p.name)
+			run_night_audit(p.name, mode="scheduled")
 		except Exception:
 			frappe.log_error(title=f"Night audit failed: {p.name}")

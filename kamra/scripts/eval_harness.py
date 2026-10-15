@@ -6627,6 +6627,229 @@ def t204():
 	doc = frappe.get_doc("POS Order", p["order"])
 	doc.paid, doc.status = 1, "Delivered"
 	_refused(doc.save)
+# --- night audit checklist, blocker acknowledgement, audit pack (t205-t214) ---
+
+def _na_setting(key, value):
+	import json as _json
+
+	from kamra import settings
+	name = frappe.db.get_value("Property Setting", {"property": P, "setting_key": key})
+	if name:
+		frappe.db.set_value("Property Setting", name, "value", _json.dumps(value))
+	else:
+		frappe.get_doc({"doctype": "Property Setting", "property": P,
+		                "setting_key": key, "value": _json.dumps(value)}
+		               ).insert(ignore_permissions=True)
+	settings.clear_cache(P)
+
+
+def _na_reset():
+	from kamra import settings
+	frappe.db.delete("Property Setting", {"property": P, "setting_key": ("like", "na_%")})
+	settings.clear_cache(P)
+
+
+def _na_till():
+	from kamra import cashier
+	return cashier.open_session(P, opening_float=100)["name"]
+
+
+def _na_blockers():
+	from kamra import night_audit
+	return night_audit.night_audit_precheck(P)["blockers"]
+
+
+@check("night audit checklist: every check reports a severity, count and action; tills, POS bills and departures block")
+def t205():
+	from kamra import night_audit
+	_na_reset()
+	frappe.db.set_value("Property", P, "business_date", nowdate())
+	out = night_audit.night_audit_precheck(P)
+	keys = [c["key"] for c in out["checks"]]
+	assert keys == list(night_audit.ORDER), keys
+	sev = {c["key"]: c["severity"] for c in out["checks"]}
+	for k in ("open_tills", "open_pos_bills", "departures_due"):
+		assert sev[k] == "block", (k, sev[k])
+	assert sev["pos_room_postings"] in ("info", "warn")
+	assert all(c["action"] and isinstance(c["count"], int) for c in out["checks"])
+	assert out["can_run"] == (not out["blockers"])
+
+
+@check("a manual night audit is refused with an open till until acknowledged with a reason")
+def t206():
+	from kamra import api
+	_na_reset()
+	_na_till()
+
+	def run():
+		blockers = _na_blockers()
+		assert "open_tills" in blockers, blockers
+		try:
+			api.run_night_audit(P)
+			raise AssertionError("ran with an open till")
+		except frappe.ValidationError as e:
+			assert "blocked" in str(e).lower(), e
+		try:
+			api.run_night_audit(P, acknowledge=blockers, note="")
+			raise AssertionError("acknowledged without a reason")
+		except frappe.ValidationError:
+			pass
+		return api.run_night_audit(P, acknowledge=blockers, note="Eval: counted in the morning")
+	out = _audit_eval(nowdate(), f"{nowdate()} 23:00", run)
+	assert "open_tills" in out["acknowledged"], out
+	import json as _json
+	acks = _json.loads(frappe.db.get_value("Night Audit Run", out["audit"], "acknowledgements"))
+	row = next(a for a in acks if a["key"] == "open_tills")
+	assert row["by"] == frappe.session.user and row["at"] and "counted" in row["note"], row
+
+
+@check("a blocking check switched to warn no longer blocks")
+def t207():
+	from kamra import night_audit
+	_na_reset()
+	frappe.db.set_value("Property", P, "business_date", nowdate())
+	_na_till()
+	_na_setting("na_block_open_tills", 0)
+	try:
+		c = {x["key"]: x for x in night_audit.night_audit_precheck(P)["checks"]}["open_tills"]
+		assert c["severity"] == "warn" and c["count"] >= 1, c
+		assert "open_tills" not in _na_blockers()
+	finally:
+		_na_reset()
+
+
+@check("scheduled audit on Hold and alert leaves the business date and writes an alert")
+def t208():
+	from unittest.mock import patch
+
+	from kamra.folio import run_night_audit
+	_na_reset()
+	_na_till()
+	_na_setting("na_auto_audit_with_blockers", "Hold and alert")
+	try:
+		with patch("kamra.night_audit.alert_staff") as alert:
+			out = _audit_eval(nowdate(), f"{nowdate()} 03:00",
+			                  lambda: run_night_audit(P, mode="scheduled"))
+		assert out.get("held"), out
+		assert str(frappe.db.get_value("Property", P, "business_date")) == nowdate()
+		assert not frappe.db.exists("Night Audit Run", {"property": P,
+		                            "business_date": nowdate(), "status": ("!=", "Draft")})
+		assert frappe.db.exists("Agent Action Log", {"property": P,
+		                        "action_type": "night_audit_held"})
+		assert alert.called
+	finally:
+		_na_reset()
+
+
+@check("scheduled audit by default runs and reports blockers as exceptions")
+def t209():
+	from kamra.folio import run_night_audit
+	_na_reset()
+	_na_till()
+	out = _audit_eval(nowdate(), f"{nowdate()} 03:00",
+	                  lambda: run_night_audit(P, mode="scheduled"))
+	assert out.get("status") == "Completed with Warnings", out
+	assert out["exceptions"] >= 1
+	assert frappe.db.get_value("Night Audit Run", out["audit"], "run_trigger") == "Scheduled"
+
+
+@check("every night audit run saves an audit pack with all its sections")
+def t210():
+	from kamra import night_audit
+	from kamra.folio import run_night_audit
+	_na_reset()
+	out = _audit_eval(nowdate(), f"{nowdate()} 23:00", lambda: run_night_audit(P))
+	assert out["has_pack"], out
+	pack = night_audit.night_audit_pack(out["audit"])
+	assert pack["has_pack"]
+	p = pack["pack"]
+	for key in ("manager_flash", "revenue_by_transaction_code", "ledger_balances",
+	            "statistics", "in_house", "departures", "arrivals", "no_shows",
+	            "high_balance", "credit_limit", "pos_room_postings",
+	            "rate_variance", "cashier_sessions", "prechecks", "journal",
+	            "deposit_ledger", "city_ledger", "cancellations"):
+		assert key in p, key
+	assert not p.get("errors"), p.get("errors")
+	for k in ("occupancy_pct", "adr", "revpar"):
+		assert k in p["statistics"], p["statistics"]
+
+
+@check("a night audit run from before packs answers has_pack false, not an error")
+def t211():
+	from kamra import night_audit
+	day = add_days(FAR, 40)
+	frappe.db.delete("Night Audit Run", {"property": P, "business_date": day})
+	name = frappe.get_doc({"doctype": "Night Audit Run", "property": P,
+	                       "business_date": day, "status": "Completed"}
+	                      ).insert(ignore_permissions=True).name
+	out = night_audit.night_audit_pack(name)
+	assert out["has_pack"] is False and out["pack"] is None, out
+	assert out["message"], out
+
+
+@check("the checklist's no-show forecast matches what the audit does (OTA fee waived)")
+def t212():
+	from kamra import night_audit
+	from kamra.folio import run_night_audit
+	_na_reset()
+	saved = frappe.db.get_value("Property", P, ["no_show_charge",
+	                            "waive_no_show_fee_for_ota"], as_dict=True)
+	frappe.db.set_value("Property", P, {"no_show_charge": "First Night",
+	                                    "waive_no_show_fee_for_ota": 1,
+	                                    "business_date": nowdate()})
+	try:
+		ota = _res(_guest("Eval NA OTA", "+91 70000 00212"), nowdate(),
+		           add_days(nowdate(), 1))
+		frappe.db.set_value("Reservation", ota.name, {"source": "OTA", "channel": "Agoda"})
+		checks = {c["key"]: c for c in night_audit.night_audit_precheck(P)["checks"]}
+		row = next(i for i in checks["arrivals_pending"]["items"]
+		           if i["reservation"] == ota.name)
+		assert (row["outcome"], row["fee"]) == ("no_show", "waived"), row
+		_audit_eval(nowdate(), f"{nowdate()} 23:59", lambda: run_night_audit(P))
+		assert frappe.db.get_value("Reservation", ota.name, "status") == "No Show"
+	finally:
+		frappe.db.set_value("Property", P, dict(saved))
+
+
+@check("End of Day: a wizard acknowledgement and notes carry into the run; a draft is not a closed day")
+def t213():
+	from kamra import api, night_audit
+	_na_reset()
+	frappe.db.set_value("Property", P, "business_date", nowdate())
+	frappe.db.delete("Night Audit Run", {"property": P, "business_date": nowdate()})
+	_na_till()
+	s = night_audit.eod_session(P)
+	assert s["status"] == "Draft" and len(s["steps"]) == 12, s["steps"]
+	assert not night_audit.night_audit_precheck(P)["already_ran"]
+	for key in s["blockers"]:
+		night_audit.eod_acknowledge(P, key, "Eval: acknowledged in the wizard")
+	night_audit.eod_progress(P, step=9, notes="Eval notes for the GM")
+	from datetime import datetime
+	from unittest.mock import patch
+
+	from kamra import folio
+	with patch.object(folio, "audit_clock",
+	                  return_value=datetime.strptime(f"{nowdate()} 23:00", "%Y-%m-%d %H:%M")):
+		out = api.run_night_audit(P)
+	assert out["audit"] == s["audit"], out
+	assert frappe.db.get_value("Night Audit Run", out["audit"], "auditor_notes") == "Eval notes for the GM"
+	pack = night_audit.night_audit_pack(out["audit"])["pack"]
+	assert pack["notes"] == "Eval notes for the GM"
+
+
+@check("Night Auditor role reaches End of Day; MCP night_audit_precheck is read-only in Night audit")
+def t214():
+	from kamra import api, cashier, ledger, night_audit
+	from kamra.mcp_tools import BY_NAME
+	for fn in (api.run_night_audit, night_audit.night_audit_precheck,
+	           night_audit.eod_session, night_audit.eod_acknowledge,
+	           night_audit.night_audit_pack, api.check_in, api.check_out,
+	           ledger.quick_checkout, cashier.close_session, api.get_folio):
+		assert "Night Auditor" in fn._kamra_roles, fn.__name__
+	assert frappe.db.exists("Role", "Night Auditor")
+	spec = BY_NAME["night_audit_precheck"]
+	assert spec.group == "Night audit" and not spec.mutating and spec.inject_property
+	assert "acknowledge" in BY_NAME["run_night_audit"].parameters
 
 
 def execute():
@@ -6654,7 +6877,8 @@ def execute():
 		           t177, t178, t179, t160, t161, t162, t163, t164, t165, t166, t167, t130,
 		           t131, t132, t133, t134, t135, t136, t137, t138, t139, t180, t181, t182,
 		           t183, t184, t185, t186, t190, t191, t192, t193, t194,
-		           t200, t201, t202, t203, t204):
+		           t200, t201, t202, t203, t204,
+		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

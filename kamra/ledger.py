@@ -305,7 +305,7 @@ def reverse_ledger_for_charge(property: str, folio: str, charge_row_name: str,
 
 
 @frappe.whitelist()
-@require_roles("Finance", "Front Desk", "Hotel Admin", "Kamra Agent")
+@require_roles("Finance", "Front Desk", "Hotel Admin", "Night Auditor", "Kamra Agent")
 def ledger_balances(property: str, business_date: str | None = None):
 	"""Four-ledger trial balance for a property (optionally as-of a date)."""
 	date = business_date or get_business_date(property)
@@ -342,7 +342,7 @@ def ledger_balances(property: str, business_date: str | None = None):
 
 
 @frappe.whitelist()
-@require_roles("Finance", "Front Desk", "Hotel Admin", "Kamra Agent")
+@require_roles("Finance", "Front Desk", "Hotel Admin", "Night Auditor", "Kamra Agent")
 def journal_by_transaction_code(property: str, business_date: str | None = None):
 	date = business_date or get_business_date(property)
 	rows = frappe.db.sql(
@@ -757,7 +757,7 @@ def _account_position(account: str) -> dict:
 
 
 @frappe.whitelist()
-@require_roles("Finance", "Hotel Admin", "Front Desk", "Kamra Agent")
+@require_roles("Finance", "Hotel Admin", "Front Desk", "Night Auditor", "Kamra Agent")
 def city_ledger_aging(property: str):
 	accounts = frappe.get_all(
 		"City Ledger Account",
@@ -1001,7 +1001,7 @@ def record_folio_reprint(folio: str, document: str = "Guest Folio",
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Hotel Admin", "Kamra Agent")
+@require_roles("Front Desk", "Finance", "Hotel Admin", "Night Auditor", "Kamra Agent")
 def folio_history(property: str, query: str | None = None,
                   status: str | None = None):
 	filters: list = [["property", "=", property]]
@@ -1087,7 +1087,7 @@ def batch_print_folios(folios: str | list):
 
 
 @frappe.whitelist(methods=["POST"])
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent")
 def quick_checkout(reservation: str, pin: str | None = None):
 	"""Check out and close the guest folio in one step. check_out settles the
 	stay the one way: the company's folio (Company, or the group master)

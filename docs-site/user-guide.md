@@ -125,6 +125,63 @@ arrival that never came becomes a **No Show**. The fee itself is the
 | No no-show fee on OTA bookings | On | OTA and channel bookings are still marked No Show, but no fee is posted: the OTA charges the guest under its own policy. |
 | Release non-guaranteed arrivals at | Blank (off) | At this time, today's arrivals that are not guaranteed are cancelled with no fee and the room goes back on sale. Guaranteed means an advance paid, a payment or deposit on the folio, an OTA booking or a company booking. Late arrivals and bookings made after the release time are kept. |
 
+### Night audit checklist — End of Day
+
+**Finance → End of Day** (also under Front Desk, and found by typing
+*night audit*, *end of day* or *EOD* in search, Ctrl/Cmd+K) is where the
+night auditor closes the business date. **Manage End of Day** shows one
+card per property: the business date, the property's clock, arrivals and
+departures pending, open cashiers, open POS bills and a *Ready* /
+*N blockers* chip. Below it is the history of past audits, searchable by
+date, each with its audit pack.
+
+**Manage** opens the wizard. The steps are listed on the left with a
+status each (pending, running, done, blocked, skipped); the right shows
+the active step's message, its actions and a searchable, sortable list.
+Progress is saved on a draft run, so reopening resumes where you stopped.
+
+| # | Step | What you do |
+| --- | --- | --- |
+| 1 | Prepare End of Day | Pre-checks load; business date, server date and property time side by side. |
+| 2 | Arrivals not checked in | Check in, **Mark no-show** or Continue. Each row shows what the no-show policy will do: no-show with the fee, held late arrival, or OTA fee waived. |
+| 3 | Departures not checked out | **Check out**, **Extend stay**, or **Quick check out** every zero-balance departure at once. *Blocks by default.* |
+| 4 | Open folios and high balances | In-house folios over the threshold, balances left on departed stays, companies over their credit limit (AR plus in-house company folios). |
+| 5 | Outlets and room postings | Open restaurant bills (*blocks by default*) and every outlet bill posted to a room today - outlet, bill no, room and guest - to catch a wrong-room posting. |
+| 6 | Rate check | Room nights posted more than the tolerance away from the booked (locked) rate, and zero-rate / complimentary rooms. |
+| 7 | Room status | Rooms where the front office and the room board disagree, and vacant rooms. |
+| 8 | Cashier closure | Open cashier sessions with **Close session** (count the drawer); expected vs counted per session. *Blocks by default.* |
+| 9 | Notes | Notes for the manager (weather, incidents); printed on the pack. |
+| 10 | Post room and tax and roll the business date | Runs the night audit. |
+| 11 | Print final reports | Each report with View / Print / Download PDF, plus **Print all** on A4. |
+| 12 | Finalize | Summary and done. |
+
+A **blocking** step cannot be passed until it is resolved or a supervisor
+**acknowledges** it with a reason; who acknowledged it and when are saved on
+the audit. Warning steps just have **Continue**. The final reports - the
+manager's flash, the journal by cashier and transaction code, the cashier
+summary, the guest ledger, the city ledger / AR summary, the deposit
+ledger, the trial balance, occupancy & revenue (Occ %, ADR, RevPAR),
+no-shows and cancellations, rate variance and the pre-checks with their
+acknowledgements - are read from the **audit pack** saved on the Night
+Audit Run, so a past night prints exactly what was printed that night.
+Audits from before packs existed say so instead.
+
+Settings → **Front Desk** → **Night audit checklist**:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Open tills block the audit | On | Off lists open cashier sessions as a warning. |
+| Open restaurant bills block the audit | On | Off lists them as a warning. |
+| Departures still in house block the audit | On | Off lists them as a warning. |
+| Flag in-house folios owing more than | 50,000 | 0 turns the high-balance check off. |
+| Rate variance tolerance | 1 | How far (in currency units) a posted room night may be from the booked rate. |
+| Scheduled 03:00 audit when checks block | Run and report exceptions | *Run and report exceptions* always rolls the date and lists the open items as exceptions in the pack. *Hold and alert* leaves the business date and alerts Hotel Admin and Finance (in-app notification and email). |
+
+The **Night Auditor** role can run End of Day and acknowledge blockers,
+check guests in and out (quick check-out too), close cashier sessions,
+and view folios, the cashier summary and reports. Agents use the
+`night_audit_precheck` MCP tool for the same checklist.
+
 ### Deposits before arrival
 
 Secure a booking with a deposit at booking time or any time before

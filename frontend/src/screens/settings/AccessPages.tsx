@@ -427,7 +427,7 @@ function StaffSheet({
 // --- Roles matrix ------------------------------------------------------------
 
 const MATRIX_ROLES = [
-  "Hotel Admin", "Front Desk", "Revenue Manager", "Finance",
+  "Hotel Admin", "Front Desk", "Revenue Manager", "Finance", "Night Auditor",
   "Housekeeping Supervisor", "Housekeeping",
 ]
 

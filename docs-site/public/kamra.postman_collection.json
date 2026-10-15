@@ -2301,7 +2301,7 @@
         "kamra.api.run_night_audit"
        ]
       },
-      "description": "",
+      "description": "Close the current business date. Refused while a blocking pre-check\n(kamra.night_audit.night_audit_precheck) has items, unless each is\nlisted in `acknowledge` (check keys) with a `note` giving the reason.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\",\n  \"business_date\": \"2026-08-01\"\n}",
@@ -10428,6 +10428,298 @@
        ]
       },
       "description": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "Night audit (End of Day checklist, audit pack)",
+   "item": [
+    {
+     "name": "night_audit_precheck",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.night_audit.night_audit_precheck",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.night_audit.night_audit_precheck"
+       ]
+      },
+      "description": "The night audit checklist for the property's current business date.\nRead-only. Each check: key, title, severity (block | warn | info),\ncount, items (with reservation / folio / room / guest / amount /\noutlet and bill no where they apply) and a suggested action. A manual\naudit refuses while a blocking check has items, unless each one is\nacknowledged with a reason (run_night_audit acknowledge=[keys], note).",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "night_audit_pack",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.night_audit.night_audit_pack",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.night_audit.night_audit_pack"
+       ]
+      },
+      "description": "The saved audit pack of one Night Audit Run. A run from before packs\nwere saved answers has_pack: false with a message, not an error.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"audit\": \"<audit>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "night_audit_history",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.night_audit.night_audit_history",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.night_audit.night_audit_history"
+       ]
+      },
+      "description": "Recent Night Audit Runs of a property, newest first, with whether\neach has a saved audit pack.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"limit\": 20\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "eod_session",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.night_audit.eod_session",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.night_audit.eod_session"
+       ]
+      },
+      "description": "Open (or resume) End of Day for the property's current business date:\nthe draft run that keeps the wizard's progress, every pre-check and\nthe step list with each step's status (pending, done, blocked). With\n`audit`, a finished run is shown at its final reports.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "eod_progress",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.night_audit.eod_progress",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.night_audit.eod_progress"
+       ]
+      },
+      "description": "Save the wizard's place: the current step (1-based), a step's status\n(`key` + `status`: done | skipped | pending) and the manager notes.\nA blocked step cannot be marked done - acknowledge it first.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "eod_acknowledge",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.night_audit.eod_acknowledge",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.night_audit.eod_acknowledge"
+       ]
+      },
+      "description": "Acknowledge a blocking check with a reason so End of Day can go on.\nWho and when are recorded on the run and in the Activity log.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"key\": \"<key>\",\n  \"reason\": \"<reason>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "eod_mark_no_show",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.night_audit.eod_mark_no_show",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.night_audit.eod_mark_no_show"
+       ]
+      },
+      "description": "End of Day: mark an arrival that did not come a No Show now, with the\nproperty's no-show fee policy applied exactly as the audit applies it\n(fee posted on the business date, or waived for an OTA booking).",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "eod_overview",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.night_audit.eod_overview",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.night_audit.eod_overview"
+       ]
+      },
+      "description": "Manage End of Day: one row per property the user can access - the\nbusiness date, the property's local time, arrivals and departures\npending, open cashiers and POS bills, and the number of blockers."
      }
     }
    ]
