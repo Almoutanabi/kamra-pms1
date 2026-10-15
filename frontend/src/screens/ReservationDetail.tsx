@@ -313,12 +313,22 @@ export default function ReservationDetail({
             </div>
           </div>
         </div>
+        {Number(money.refund_due ?? 0) > 0 && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Refund due: <span className="font-semibold">{inr(money.refund_due ?? 0)}</span>{" "}
+            - the advance taken at booking, with no folio or fee against it.
+          </div>
+        )}
         <p className="mt-2 text-xs text-zinc-400">
           {money.source === "folio"
             ? "Live from the guest folio."
-            : money.has_folio
-              ? "Booking total; deposits sit on the guest folio and count at check-in."
-              : "No payment yet - take a deposit below to secure the booking."}
+            : money.source === "none"
+              ? "The booking ended without a stay - nothing is owed."
+              : money.has_folio
+                ? "Booking total; deposits sit on the guest folio and count at check-in."
+                : money.paid > 0
+                  ? "Advance taken at booking; the rest is due at check-in."
+                  : "No payment yet - take a deposit below to secure the booking."}
         </p>
       </Card>
 
