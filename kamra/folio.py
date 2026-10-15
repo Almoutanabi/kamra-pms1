@@ -742,7 +742,9 @@ def cancel_invoice(folio_name: str, reason: str) -> dict:
 
 def run_night_audit(property: str, business_date: str | None = None) -> dict:
 	"""Automated end-of-day: open missing folios, post the night's room
-	charges for every in-house guest, flag no-shows. Idempotent per date."""
+	charges for every in-house guest, flag no-shows. Closes only the
+	property's current business date; a retry for a date that already
+	closed returns ``already_ran`` instead of posting twice."""
 	# In non-request contexts (the 3 AM scheduler, bench console) frappe.local.lang
 	# is unset, which makes Frappe's number/currency formatting raise
 	# UnboundLocalError. Default it so the audit runs everywhere.
@@ -751,7 +753,16 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 	from kamra.business_date import ensure_business_date, get_business_date
 	ensure_business_date(property)
 	current = get_business_date(property)
-	business_date = business_date or current
+	business_date = str(getdate(business_date or current))
+	# per property AND date - a global AUDIT-<date> name would make the
+	# second property's audit silently no-op every night. Checked before
+	# the date guards so a retry after success answers already_ran.
+	audit_name = f"AUDIT-{business_date}-{property}"
+	if frappe.db.exists("Night Audit Run", audit_name) or \
+			frappe.db.exists("Night Audit Run",
+			                 {"property": property,
+			                  "business_date": business_date}):
+		return {"already_ran": True, "audit": audit_name}
 	# The audit only ever closes the property's current business date. A
 	# different date would post into a closed day or skip days, and then
 	# set the business date to that date + 1.
@@ -765,14 +776,6 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		frappe.throw(frappe._("Business date {0} is already ahead of today ({1}). "
 		               "Night audit for it can run once that day has "
 		               "started.").format(business_date, nowdate()))
-	# per property AND date - a global AUDIT-<date> name would make the
-	# second property's audit silently no-op every night
-	audit_name = f"AUDIT-{business_date}-{property}"
-	if frappe.db.exists("Night Audit Run", audit_name) or \
-			frappe.db.exists("Night Audit Run",
-			                 {"property": property,
-			                  "business_date": business_date}):
-		return {"already_ran": True, "audit": audit_name}
 
 	log_lines = []
 	folios_opened = charges_posted = no_shows = 0
@@ -881,9 +884,21 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 
 
 def nightly_audit_all_properties():
-	"""Scheduler entry point - runs the audit for every active property."""
+	"""Scheduler entry point - runs the audit for every active property.
+
+	The cron fires at 03:00, so it only closes a business date that is
+	strictly before today. If staff already closed yesterday by hand, the
+	business date is today and that day has only just started - leave it."""
+	today = getdate(nowdate())
 	for p in frappe.get_all("Property", filters={"disabled": 0}):
 		try:
+			from kamra.business_date import ensure_business_date
+			bd = getdate(ensure_business_date(p.name))
+			if bd >= today:
+				frappe.logger("kamra").info(
+					f"Night audit skipped for {p.name}: business date {bd} "
+					f"is not before today ({today})")
+				continue
 			run_night_audit(p.name)
 		except Exception:
 			frappe.log_error(title=f"Night audit failed: {p.name}")

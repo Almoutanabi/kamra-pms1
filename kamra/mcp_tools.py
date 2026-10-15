@@ -695,9 +695,12 @@ TOOLS: tuple[ToolSpec, ...] = (
 	_t(
 		"run_night_audit",
 		"api.run_night_audit",
-		"""Run the end-of-day: post the night's room charges for in-house
-		guests and flag no-shows. Idempotent per date.""",
-		{"business_date": _p("string")},
+		"""Run the end-of-day for the property's current business date: post
+		the night's room charges for in-house guests, flag no-shows, then roll
+		the business date forward. business_date is optional; if given it must
+		equal the current business date. A day that already closed returns
+		already_ran instead of posting again.""",
+		{"business_date": _p("string", description="Optional. Must equal the current business date.")},
 		property=True,
 		mutating=True,
 		group="Night audit",

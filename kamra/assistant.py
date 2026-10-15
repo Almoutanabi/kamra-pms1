@@ -171,7 +171,9 @@ EXTRA_TOOLS = {
 		{"date": {"type": "string"}}, True, False),
 	"run_night_audit": (
 		"run_night_audit",
-		"Run end-of-day for a date: posts room nights, flags & charges no-shows.",
+		"Run end-of-day for the current business date: posts room nights, "
+		"flags & charges no-shows, rolls the business date. business_date is "
+		"optional and must equal the current business date.",
 		{"business_date": {"type": "string"}}, True, True),
 }
 

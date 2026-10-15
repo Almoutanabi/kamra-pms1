@@ -845,7 +845,7 @@ User Permissions, so a property-restricted user sees only theirs.
 
 ### `kamra.api.front_desk_snapshot`
 
-**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Front Desk`, `Kamra Agent`, `Finance`, `Revenue Manager`
 
 Everything the front desk needs for one day, in one call.
 

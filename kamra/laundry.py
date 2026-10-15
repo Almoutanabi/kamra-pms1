@@ -14,6 +14,7 @@ from frappe import _
 from frappe.utils import add_to_date, get_datetime, now_datetime
 
 from kamra.authz import act_as, require_roles
+from kamra.install import AGENT_EMAIL
 
 LAUNDRY_ROLES = ("Housekeeping", "Front Desk", "Kamra Agent")
 RATE_ROLES = ("Front Desk", "Finance", "Kamra Agent")
@@ -331,7 +332,7 @@ def deliver_laundry(order: str, shortage_note: str | None = None):
 		detail = ", ".join(
 			f"{int(it.qty)}× {it.item_name} ({it.service_type})"
 			for it in doc.items)
-		with act_as("agent@kamra.local"):
+		with act_as(AGENT_EMAIL):
 			from kamra.api import post_stay_charge
 			post_stay_charge(
 				doc.reservation, "Laundry",

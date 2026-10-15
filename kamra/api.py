@@ -12,6 +12,7 @@ from frappe import _
 from frappe.utils import add_days, get_datetime, getdate, now_datetime, nowdate
 
 from kamra.authz import act_as, require_it_admin, require_roles
+from kamra.install import AGENT_EMAIL
 
 # The apps a property actually runs. The launcher and the sidebar read
 # this so a serviced-apartment operator never sees an empty restaurant.
@@ -1202,7 +1203,7 @@ def hk_post_consumable(room: str, charge_type: str, description: str,
 	# post through the governed agent user (same pattern as public bookings):
 	# the housekeeper is authorized above and scoped to two charge types, and
 	# GST is still resolved server-side. Attribution is stamped below.
-	with act_as("agent@kamra.local"):
+	with act_as(AGENT_EMAIL):
 		out = post_stay_charge(res.name, charge_type, description, float(amount))
 	from kamra.savings import log_action
 	log_action("hk_charge", "Folio", out.get("folio"), res.property,
@@ -2295,8 +2296,77 @@ def my_properties():
 	)
 
 
+def _stay_balances(names: list) -> dict:
+	"""What each stay costs, has paid and still owes - one rule set shared
+	by the Today board and the reservation drawer so they never disagree.
+
+	Only the Guest folio counts (summed, so a part-settled stay with a fresh
+	folio still adds up). The group master is the company's bill and Extra /
+	Company folios are routed elsewhere, so neither is this guest's balance.
+
+	- Checked In / Checked Out / No Show / Cancelled with a Guest folio: the
+	  folio is the bill.
+	- No Show / Cancelled with no folio: nothing is owed; any advance taken
+	  is a refund due.
+	- Confirmed with an early deposit folio: the booking total is the bill,
+	  the folio holds what was paid.
+	- Confirmed with no folio: the booking-time advance is all we know."""
+	names = list({n for n in names if n})
+	if not names:
+		return {}
+	resv = {r.name: r for r in frappe.get_all(
+		"Reservation", filters={"name": ("in", names)},
+		fields=["name", "status", "amount_after_tax", "advance_paid"])}
+	folios = {}
+	for row in frappe.db.sql(
+		"""
+		SELECT reservation,
+		       COALESCE(SUM(grand_total), 0) AS total,
+		       COALESCE(SUM(payments_total), 0) AS paid,
+		       COALESCE(SUM(balance), 0) AS due
+		FROM `tabFolio`
+		WHERE reservation IN %(names)s AND folio_type = 'Guest'
+		GROUP BY reservation
+		""",
+		{"names": names}, as_dict=True,
+	):
+		folios[row.reservation] = row
+	out = {}
+	for name, res in resv.items():
+		folio = folios.get(name)
+		total_booked = float(res.amount_after_tax or 0)
+		adv = float(res.advance_paid or 0)
+		ended = res.status in ("No Show", "Cancelled")
+		if folio and (ended or res.status in ("Checked In", "Checked Out")):
+			m = {"total": float(folio.total), "paid": float(folio.paid),
+			     "due": float(folio.due), "has_folio": True, "source": "folio"}
+		elif ended:
+			m = {"total": 0.0, "paid": adv, "due": 0.0, "has_folio": False,
+			     "source": "none"}
+			if adv > 0:
+				m["refund_due"] = adv
+		elif folio:
+			paid = float(folio.paid)
+			m = {"total": total_booked, "paid": paid,
+			     "due": max(0.0, round(total_booked - paid, 2)),
+			     "has_folio": True, "source": "booking"}
+		else:
+			m = {"total": total_booked, "paid": adv,
+			     "due": max(0.0, round(total_booked - adv, 2)),
+			     "has_folio": False, "source": "booking"}
+		out[name] = m
+	return out
+
+
+def _stay_balance(reservation: str) -> dict:
+	"""_stay_balances for one booking."""
+	return _stay_balances([reservation]).get(reservation) or {
+		"total": 0.0, "paid": 0.0, "due": 0.0, "has_folio": False,
+		"source": "none"}
+
+
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Kamra Agent", "Finance", "Revenue Manager")
 def front_desk_snapshot(property: str | None = None, date: str | None = None):
 	"""Everything the front desk needs for one day, in one call."""
 	date = date or nowdate()
@@ -2331,39 +2401,13 @@ def front_desk_snapshot(property: str | None = None, date: str | None = None):
 		order_by="room asc",
 	)
 
-	# payment state per stay, straight off the folios (the group master is
-	# the company's bill, not this guest's - excluded from the chip)
+	# payment state per stay - the same rules as the reservation drawer
 	all_rows = arrivals + departures + in_house
-	names = list({r.name for r in all_rows})
-	paid_map = {}
-	if names:
-		for row in frappe.db.sql(
-			"""
-			SELECT reservation,
-			       COALESCE(SUM(payments_total), 0) AS paid,
-			       COALESCE(SUM(balance), 0) AS due
-			FROM `tabFolio`
-			WHERE reservation IN %(names)s AND folio_type != 'Group'
-			GROUP BY reservation
-			""",
-			{"names": names}, as_dict=True,
-		):
-			paid_map[row.reservation] = row
-	amounts = {r.name: r for r in frappe.get_all(
-		"Reservation", filters={"name": ("in", names or [""])},
-		fields=["name", "amount_after_tax", "advance_paid"])}
+	money = _stay_balances([r.name for r in all_rows])
 	for r in all_rows:
-		hit = paid_map.get(r.name)
-		amt = amounts.get(r.name)
-		if hit:
-			r["paid_total"] = float(hit.paid)
-			r["balance_due"] = float(hit.due)
-		else:
-			# no folio yet - the booking-time advance is all we know
-			adv = float(amt.advance_paid or 0) if amt else 0
-			total = float(amt.amount_after_tax or 0) if amt else 0
-			r["paid_total"] = adv
-			r["balance_due"] = max(0.0, total - adv)
+		m = money.get(r.name) or {}
+		r["paid_total"] = m.get("paid", 0.0)
+		r["balance_due"] = m.get("due", 0.0)
 	rooms = frappe.get_all(
 		"Room",
 		filters=room_filters,
@@ -2449,7 +2493,7 @@ def find_invoices(property: str, query: str | None = None, limit: int = 8):
 def reservation_detail(reservation: str):
 	"""Everything about one booking in a single call - stay, money, guest,
 	booker and the actions currently available. Powers the reservation drawer."""
-	from kamra.kamra.doctype.reservation.reservation import is_entire_place
+	from kamra.kamra.doctype.reservation.reservation import uses_member_rooms
 	res = frappe.get_doc("Reservation", reservation)
 
 	# guest identity + stay history
@@ -2469,45 +2513,12 @@ def reservation_detail(reservation: str):
 				"check_out_date", order_by="check_out_date desc")
 			guest = g
 
-	# money - the guest folio for this stay (the group master is the company's
-	# bill, not this guest's, so it is never the source here)
+	money = _stay_balance(res.name)
+	# the drawer's "Open folio" link - the newest guest folio (a
+	# part-settled stay has several; the fresh one is the open one)
 	folio = frappe.db.get_value(
 		"Folio", {"reservation": reservation, "folio_type": "Guest"},
-		["name", "status", "grand_total", "payments_total", "balance"],
-		as_dict=True,
-	)
-	# once the guest has arrived, or the booking has ended without a stay
-	# (no-show / cancelled), the folio IS the bill: a no-show owes only the
-	# policy fee posted there, never the original booking total
-	settled_on_folio = res.status in (
-		"Checked In", "Checked Out", "No Show", "Cancelled")
-	if folio and settled_on_folio:
-		money = {
-			"total": float(folio.grand_total or 0),
-			"paid": float(folio.payments_total or 0),
-			"due": float(folio.balance or 0),
-			"has_folio": True,
-			"source": "folio",
-		}
-	elif settled_on_folio:
-		# ended without a fee or a payment - nothing is owed
-		money = {"total": 0.0, "paid": float(res.advance_paid or 0),
-		         "due": 0.0, "has_folio": False, "source": "folio"}
-	elif folio:
-		# opened early for a deposit: room nights post from check-in, so
-		# the booking total is the bill; the folio holds what was paid
-		total = float(res.amount_after_tax or 0)
-		paid = float(folio.payments_total or 0)
-		money = {"total": total, "paid": paid,
-		         "due": max(0.0, round(total - paid, 2)), "has_folio": True,
-		         "source": "booking"}
-	else:
-		# no folio yet (still Confirmed) - the booking-time advance is all we know
-		adv = float(res.advance_paid or 0)
-		total = float(res.amount_after_tax or 0)
-		money = {"total": total, "paid": adv,
-		         "due": max(0.0, total - adv), "has_folio": False,
-		         "source": "booking"}
+		["name"], as_dict=True, order_by="creation desc")
 
 	booker = None
 	if res.booked_by_name:
@@ -2571,7 +2582,7 @@ def reservation_detail(reservation: str):
 		"cancellation": cancellation,
 		"actions": {
 			"can_check_in": res.status == "Confirmed" and (
-				bool(res.room) or is_entire_place(res.room_type)),
+				bool(res.room) or uses_member_rooms(res.property, res.room_type)),
 			"can_check_out": res.status == "Checked In",
 			"can_cancel": res.status in ("Confirmed", "Checked In"),
 			"can_amend": res.status in ("Confirmed", "Checked In"),
@@ -2682,15 +2693,16 @@ def checkin_context(reservation: str):
 			"Room", res.room,
 			["name", "room_number", "housekeeping_status"], as_dict=True)
 
-	# a whole-villa stay has no single room to pick - it takes every room
-	# of the villa at check-in, so the desk checks it in as one unit
+	# a whole villa with no Room of its own takes the property's member
+	# rooms at check-in, so the desk checks it in as one unit. A villa type
+	# with its own rooms gets the normal picker (one unit per stay).
 	from kamra.kamra.doctype.reservation.reservation import (
-		entire_place_rooms, is_entire_place)
+		entire_place_rooms, uses_member_rooms)
 	entire_place = None
-	if not res.room and is_entire_place(res.room_type):
-		entire_place = {"rooms": sorted(
-			frappe.db.get_value("Room", r, "room_number") or r
-			for r in entire_place_rooms(res.property, res.room_type))}
+	if not res.room and uses_member_rooms(res.property, res.room_type):
+		entire_place = {"rooms": [
+			r.room_number or r.name
+			for r in entire_place_rooms(res.property, res.room_type)]}
 
 	suggestion = None
 	rooms = []
@@ -2751,9 +2763,12 @@ def check_in(reservation: str, room: str | None = None):
 	doc.status = "Checked In"
 	doc.save()
 	from kamra.savings import log_action
+	if doc.room:
+		where = frappe.db.get_value("Room", doc.room, "room_number") or doc.room
+	else:
+		where = "the whole villa"
 	log_action("check_in", "Reservation", doc.name, doc.property,
-	           rationale=f"{doc.guest_name} into "
-	                     f"{(doc.room or '').split('-')[-1] or 'unassigned'}")
+	           rationale=f"{doc.guest_name} into {where}")
 	return {"ok": True, "reservation": doc.name, "room": doc.room}
 
 

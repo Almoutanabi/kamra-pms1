@@ -384,8 +384,11 @@ Endpoint: `kamra.api.position_briefing`.
 
 ### `run_night_audit(business_date)`
 
-Run the end-of-day: post the night's room charges for in-house
-guests and flag no-shows. Idempotent per date.
+Run the end-of-day for the property's current business date: post
+the night's room charges for in-house guests, flag no-shows, then roll
+the business date forward. business_date is optional; if given it must
+equal the current business date. A day that already closed returns
+already_ran instead of posting again.
 
 Endpoint: `kamra.api.run_night_audit`.
 Mutating — logged to the activity ledger.

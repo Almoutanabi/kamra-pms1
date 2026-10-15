@@ -50,7 +50,6 @@ def act_as(user: str):
 		frappe.set_user(saved.get("user"))  # nosemgrep: frappe-setuser -- restoring the caller's own user
 		session.clear()
 		session.update(saved)
-		frappe.local.session = session
 		frappe.local.form_dict = form_dict
 
 
