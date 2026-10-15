@@ -745,6 +745,15 @@ def _deposit_state(res) -> dict:
 	}
 
 
+def _security_deposit_state(res) -> dict | None:
+	try:
+		from kamra.deposit import deposit_state
+		return deposit_state(res)
+	except Exception:
+		frappe.log_error(title="security deposit state failed")
+		return None
+
+
 def _deposit_reservation(reservation: str):
 	res = frappe.get_doc("Reservation", reservation)
 	from kamra.crs import assert_property_access
@@ -845,34 +854,58 @@ def simulate_payment_link(reservation: str):
 
 
 @frappe.whitelist()
+@require_roles("Front Desk", "Finance", "Hotel Admin", "Kamra Agent")
+def security_deposit(reservation: str):
+	"""The stay's refundable security (damage) deposit: policy amount, what
+	is held, withheld and refunded, its history and which actions are open."""
+	from kamra.deposit import _reservation, deposit_state
+	return deposit_state(_reservation(reservation))
+
+
+@frappe.whitelist(methods=["POST"])
 @require_roles("Front Desk", "Finance", "Kamra Agent")
 def collect_security_deposit(reservation: str, amount: float,
-                             mode: str = "UPI", reference: str | None = None):
+                             mode: str = "Cash", reference: str | None = None,
+                             pin: str | None = None):
+	"""Take a refundable security deposit (villas: the damage deposit). Lands
+	on the guest folio as a Security Deposit payment and in the Deposit
+	ledger - a liability held for the guest, never revenue. Cashier PIN and
+	open till as for any payment."""
 	from kamra.deposit import collect_deposit
-	return collect_deposit(reservation, amount, mode=mode, reference=reference)
+	return collect_deposit(reservation, amount, mode=mode, reference=reference,
+	                       pin=pin)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @require_roles("Front Desk", "Hotel Admin", "Kamra Agent")
 def waive_security_deposit(reservation: str, reason: str):
+	"""Waive the property's security deposit for this stay (reason required).
+	Refused once money has been taken - refund it instead."""
 	from kamra.deposit import waive_deposit
 	return waive_deposit(reservation, reason)
 
 
-@frappe.whitelist()
-@require_roles("Front Desk", "Hotel Admin", "Finance")
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", "Finance", "Hotel Admin")
 def withhold_security_deposit(reservation: str, amount: float, reason: str,
-                              evidence: str | None = None):
+                              evidence: str | None = None,
+                              pin: str | None = None):
+	"""Keep all or part of the held deposit against damage (reason required).
+	The withheld part posts as a damage charge on the guest folio and moves
+	from the Deposit ledger to the Guest ledger to pay it."""
 	from kamra.deposit import withhold_deposit
-	return withhold_deposit(reservation, amount, reason, evidence)
+	return withhold_deposit(reservation, amount, reason, evidence, pin=pin)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @require_roles("Front Desk", "Finance", "Hotel Admin")
 def refund_security_deposit(reservation: str, amount: float | None = None,
-                            reference: str | None = None):
+                            mode: str | None = None, note: str | None = None,
+                            pin: str | None = None):
+	"""Refund what is still held (all of it by default) through the folio
+	refund path - till, folio and a Deposit-ledger debit. Cashier PIN."""
 	from kamra.deposit import refund_deposit
-	return refund_deposit(reservation, amount, reference)
+	return refund_deposit(reservation, amount, mode=mode, note=note, pin=pin)
 
 
 @frappe.whitelist()
@@ -1429,6 +1462,12 @@ def add_folio_payment(folio: str, mode: str, amount: float,
 		record_payment_ledger(doc, pay.as_dict(), session=sess)
 	except Exception:
 		frappe.log_error(title="ledger payment write failed")
+	if kind == "Security Deposit" and doc.reservation and \
+	   (doc.folio_type or "Guest") == "Guest":
+		# keep the stay's Security Deposit record in step, whichever screen
+		# took the money (the deposit panel or the folio's own payment form)
+		from kamra.deposit import record_collected
+		record_collected(doc.reservation, float(amount), mode)
 	return doc.as_dict()
 
 
@@ -1441,6 +1480,19 @@ def refund_folio_payment(folio: str, amount: float, mode: str,
 	"""Give money back on an open folio - a held security deposit at
 	checkout, or an over-collected advance. Stored as a negative ledger
 	row so every balance still sums exactly; a reason is mandatory."""
+	return _refund_folio_payment(folio, amount, mode, reason, pin=pin,
+	                             reason_code=reason_code,
+	                             supervisor_pin=supervisor_pin)
+
+
+def _refund_folio_payment(folio: str, amount: float, mode: str, reason: str,
+                          pin: str | None = None,
+                          reason_code: str | None = None,
+                          supervisor_pin: str | None = None,
+                          ledger: str | None = None):
+	"""The one refund writer (folio row, till, ledger). Not whitelisted:
+	ledger lets a security-deposit refund release the Deposit ledger -
+	callers that pass it have already checked the deposit's balance."""
 	if float(amount) <= 0:
 		frappe.throw("Refund amount must be positive.")
 	if not (reason or "").strip() and not reason_code:
@@ -1487,7 +1539,7 @@ def refund_folio_payment(folio: str, amount: float, mode: str,
 		folio=doc.name, reference=str(reason_text)[:140], session=sess)
 	try:
 		from kamra.ledger import record_payment_ledger
-		record_payment_ledger(doc, pay.as_dict(), session=sess)
+		record_payment_ledger(doc, pay.as_dict(), session=sess, ledger=ledger)
 	except Exception:
 		frappe.log_error(title="ledger refund write failed")
 	return {"ok": True, "balance": doc.balance}
@@ -2673,6 +2725,7 @@ def reservation_detail(reservation: str):
 		"folio_name": folio.name if folio else None,
 		"money": money,
 		"deposit": _deposit_state(res),
+		"security_deposit": _security_deposit_state(res),
 		"guest": guest,
 		"booker": booker,
 		"cancellation": cancellation,
@@ -2879,6 +2932,8 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
             payment_mode: str | None = None, payment_amount: float = 0,
             payment_reference: str | None = None, pin: str | None = None,
             idempotency_key: str | None = None,
+            check_in_time: str | None = None,
+            check_out_time: str | None = None,
             blacklist_override_reason: str | None = None):
 	"""Walk-in in one step: book, register the ID, check into the chosen
 	room and take the money - the counter flow that used to be four screens.
@@ -2902,9 +2957,10 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
 	validate_id_type(property, id_type)
 
 	check_in_date = nowdate()
-	if str(check_out_date) <= check_in_date:
-		frappe.throw(_("Check-out must be after today ({0}).").format(
-			check_in_date))
+	# a same-day check-out is a day-use walk-in (hourly), never the past
+	if str(check_out_date) < check_in_date:
+		frappe.throw(_("Check-out must be today (day use) or later ({0}).")
+		             .format(check_in_date))
 
 	r = frappe.db.get_value("Room", room, ["property", "room_type"],
 	                        as_dict=True)
@@ -2929,6 +2985,7 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
 		booking_type="Corporate" if company else "Individual",
 		source="Walk-in", room=room, assign_room=0,
 		idempotency_key=idempotency_key,
+		check_in_time=check_in_time, check_out_time=check_out_time,
 		blacklist_override_reason=blacklist_override_reason)
 	reservation = booked["reservation"]
 	folio_filter = {"reservation": reservation, "folio_type": "Guest"}
@@ -3333,6 +3390,10 @@ def _assert_settled(doc):
 def check_out(reservation: str):
 	doc = frappe.get_doc("Reservation", reservation)
 	_assert_settled(doc)
+	# a held security deposit that the settled bill used up is recorded as
+	# applied, so the Deposit ledger doesn't keep a departed guest's money
+	from kamra.deposit import apply_held_to_bill
+	apply_held_to_bill(doc)
 	doc.status = "Checked Out"
 	doc.save()
 	_scrub_stay_ids(doc)
@@ -3406,7 +3467,8 @@ def room_board(property: str):
 			"Reservation",
 			filters={"property": property, "status": "Checked In",
 			         "room": ("is", "set")},
-			fields=["room", "guest_name", "check_out_date"])}
+			fields=["room", "guest_name", "check_out_date", "is_day_use",
+			        "planned_check_out_time"])}
 	due_out = str(nowdate())
 	tasks = {}
 	for t in frappe.get_all(
@@ -3425,6 +3487,10 @@ def room_board(property: str):
 		stay = in_house.get(r.name)
 		r["guest_name"] = stay.guest_name if stay else None
 		r["due_out"] = bool(stay and str(stay.check_out_date) <= due_out)
+		# a day-use room turns the same day: housekeeping plans on its slot
+		r["day_use"] = bool(stay and stay.is_day_use)
+		r["etd"] = str(stay.planned_check_out_time)[:5] \
+			if stay and stay.planned_check_out_time else None
 		t = tasks.get(r.name)
 		r["task"] = {
 			"name": t.name, "type": t.task_type, "status": t.status,
@@ -4306,6 +4372,28 @@ def _recent_agent_duplicate(property: str, room_type: str, check_in_date: str,
 	return rows[0][0] if rows else None
 
 
+def _stay_slot(check_in_date, check_out_date, t_in=None, t_out=None):
+	"""Normalise a booking's planned times to HH:MM:SS (or None). A day-use
+	slot must end after it starts - the room is only the guest's for those
+	hours."""
+	def norm(v):
+		if not v:
+			return None
+		parts = str(v).strip().split(":")
+		try:
+			h, m = int(parts[0]), int(parts[1] if len(parts) > 1 else 0)
+		except ValueError:
+			frappe.throw(_("Times are HH:MM, e.g. 10:00."))
+		if not (0 <= h <= 23 and 0 <= m <= 59):
+			frappe.throw(_("Times are HH:MM, e.g. 10:00."))
+		return f"{h:02d}:{m:02d}:00"
+	t_in, t_out = norm(t_in), norm(t_out)
+	if str(check_in_date) == str(check_out_date) and t_in and t_out \
+			and t_out <= t_in:
+		frappe.throw(_("A day-use slot must end after it starts."))
+	return t_in, t_out
+
+
 @frappe.whitelist()
 @require_roles("Front Desk", "Kamra Agent")
 def create_booking(property: str, room_type: str, check_in_date: str,
@@ -4336,6 +4424,8 @@ def create_booking(property: str, room_type: str, check_in_date: str,
                    over_capacity_reason: str | None = None,
                    over_capacity_guests: int = 0,
                    over_capacity_charge: float = 0,
+                   check_in_time: str | None = None,
+                   check_out_time: str | None = None,
                    blacklist_override_reason: str | None = None):
 	"""One-call booking: attach to an existing guest profile when given,
 	else dedup by phone / create one. Optional auto room assignment,
@@ -4345,10 +4435,18 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 	that are sold out or restricted; promote it later when a room frees.
 
 	status / idempotency_key / hold_expires_on support Instant public booking
-	(ADR-006 / ADR-007). Desk callers leave them unset → Confirmed."""
+	(ADR-006 / ADR-007). Desk callers leave them unset → Confirmed.
+
+	Day use: check_out_date == check_in_date books a same-day stay, priced
+	by the quote engine (one billable date). check_in_time / check_out_time
+	(HH:MM) are its slot - they place it on the hourly tape and tell
+	housekeeping when the room turns; on an overnight stay they are the
+	ETA / ETD."""
 	from kamra.crs import assert_property_access
 	from kamra.reservation_state import find_by_idempotency, lock_sius_for_booking
 	assert_property_access(property)
+	check_in_time, check_out_time = _stay_slot(
+		check_in_date, check_out_date, check_in_time, check_out_time)
 
 	# names ("Deluxe", "Breakfast") or codes resolve to this property's IDs;
 	# unknown / ambiguous values are refused with the valid options
@@ -4455,6 +4553,8 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 		"group_booking": group_booking or None,
 		"source": source,
 		"is_day_use": 1 if check_in_date == check_out_date else 0,
+		"planned_check_in_time": check_in_time,
+		"planned_check_out_time": check_out_time,
 		"travel_agent": travel_agent or None,
 		"booked_by_name": booked_by_name or None,
 		"booked_by_phone": booked_by_phone or None,

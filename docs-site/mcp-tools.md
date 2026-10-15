@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Kamra exposes **86 governed tools** on the hosted MCP
+Kamra exposes **89 governed tools** on the hosted MCP
 endpoint (`/mcp`) and the stdio sidecar (`mcp/kamra_mcp.py`). Every
 call runs as the connected user — **role** permissions apply, tools
 are further filtered by the property's **enabled modules**, prices
@@ -345,6 +345,33 @@ given. When the guest pays, it posts to the folio as an Advance and
 confirms a held booking. Returns the link and a ready-to-send message.
 
 Endpoint: `kamra.api.deposit_payment_link`.
+Mutating — logged to the activity ledger.
+
+### `security_deposit_status(reservation)`
+
+The stay's refundable security (damage) deposit: the property's
+policy amount, what is held, withheld and refunded, and whether it is
+still holding up check-out. Withholding and refunding are done by
+staff at the desk (cashier PIN) - not by an agent.
+
+Endpoint: `kamra.api.security_deposit`.
+
+### `collect_security_deposit(reservation, amount, mode, reference)`
+
+Record a refundable security deposit the guest has paid (villas:
+the damage deposit). It is held on the guest folio as a liability,
+not revenue, and refunded or withheld at check-out. mode: one of the
+property's payment modes. Confirm the amount with staff first.
+
+Endpoint: `kamra.api.collect_security_deposit`.
+Mutating — logged to the activity ledger.
+
+### `waive_security_deposit(reservation, reason)`
+
+Waive the property's security deposit for one stay. A reason is
+required and goes on the record; refused once money was taken.
+
+Endpoint: `kamra.api.waive_security_deposit`.
 Mutating — logged to the activity ledger.
 
 ## Revenue

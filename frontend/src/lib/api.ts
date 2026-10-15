@@ -318,6 +318,8 @@ export interface BookingOptions {
 
 export interface Quote {
   nights: number
+  /** same-day stay: nights is 0 and one date is billed */
+  day_use?: boolean
   nightly: { date: string; rate: number }[]
   room_total: number
   meal_total: number
@@ -443,6 +445,9 @@ export const createBooking = (
     guest_category?: string
     stay_details?: Record<string, unknown>
     instructions?: { department: string; instruction: string }[]
+    /** HH:MM - a day-use slot, or the ETA / ETD of an overnight stay */
+    check_in_time?: string
+    check_out_time?: string
     blacklist_override_reason?: string
   },
 ) =>
@@ -1582,6 +1587,8 @@ export interface ReservationDetail {
   }
   /** Deposit before arrival (#114): expected by policy, received, still due. */
   deposit: import("../components/DepositPanel").DepositState
+  /** the refundable security (damage) deposit; null if it could not be read */
+  security_deposit: import("../components/SecurityDepositPanel").SecurityDepositState | null
   guest: {
     name: string
     full_name: string
