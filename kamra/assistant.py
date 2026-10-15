@@ -17,7 +17,8 @@ from kamra.assistant_privacy import processor_disclosure, scrub_for_llm
 from kamra.authz import require_roles
 from kamra.llm_compat import chat_payload, retry_chat_payload
 # one set of booking-reference parameter docs for MCP and the copilot
-from kamra.mcp_tools import _IDEMPOTENCY_KEY, _MEAL_PLAN, _RATE_PLAN, _ROOM_TYPE
+from kamra.mcp_tools import (IDEMPOTENCY_KEY_PARAM, MEAL_PLAN_PARAM,
+                             RATE_PLAN_PARAM, ROOM_TYPE_PARAM, is_replay)
 
 MAX_TOOL_ROUNDS = 6
 TIMEOUT = 60
@@ -155,7 +156,7 @@ EXTRA_TOOLS = {
 	"set_room_rate": (
 		"set_room_rate",
 		"Set a nightly rate for a room type over dates. Owner guardrails apply - give a reason.",
-		{"room_type": _ROOM_TYPE, "start_date": {"type": "string"},
+		{"room_type": ROOM_TYPE_PARAM, "start_date": {"type": "string"},
 		 "end_date": {"type": "string"}, "rate": {"type": "number"},
 		 "reason": {"type": "string"}}, True, True),
 	"owner_briefing": (
@@ -193,10 +194,10 @@ TOOLS = {
 		"plan / voucher). Room type, meal plan and rate plan take the id, code "
 		"or exact name; an unknown or ambiguous one is refused with the valid "
 		"options - pick from those, never guess.",
-		{"room_type": _ROOM_TYPE, "check_in_date": {"type": "string"},
+		{"room_type": ROOM_TYPE_PARAM, "check_in_date": {"type": "string"},
 		 "check_out_date": {"type": "string"}, "adults": {"type": "integer"},
-		 "children": {"type": "integer"}, "meal_plan": _MEAL_PLAN,
-		 "rate_plan": _RATE_PLAN,
+		 "children": {"type": "integer"}, "meal_plan": MEAL_PLAN_PARAM,
+		 "rate_plan": RATE_PLAN_PARAM,
 		 "voucher_code": {"type": "string"}}, True, False),
 	"booking_options": (
 		"booking_options",
@@ -208,11 +209,11 @@ TOOLS = {
 		"Room type / meal plan / rate plan take the id, code or exact name. "
 		"Call it once per room: a repeat returns the existing booking "
 		"(idempotent_replay) instead of booking twice.",
-		{"room_type": _ROOM_TYPE, "check_in_date": {"type": "string"},
+		{"room_type": ROOM_TYPE_PARAM, "check_in_date": {"type": "string"},
 		 "check_out_date": {"type": "string"}, "guest_name": {"type": "string"},
 		 "phone": {"type": "string"}, "adults": {"type": "integer"},
-		 "children": {"type": "integer"}, "meal_plan": _MEAL_PLAN,
-		 "rate_plan": _RATE_PLAN, "idempotency_key": _IDEMPOTENCY_KEY,
+		 "children": {"type": "integer"}, "meal_plan": MEAL_PLAN_PARAM,
+		 "rate_plan": RATE_PLAN_PARAM, "idempotency_key": IDEMPOTENCY_KEY_PARAM,
 		 "company": {"type": "string"},
 		 "booked_by_name": {"type": "string"},
 		 "booked_by_phone": {"type": "string"}}, True, True),
@@ -264,9 +265,14 @@ TOOLS = {
 		"Name a guest into a group's room block (creates their reservation "
 		"on the group dates).",
 		{"group_booking": {"type": "string"},
-		 "room_type": _ROOM_TYPE,
+		 "room_type": ROOM_TYPE_PARAM,
 		 "guest_name": {"type": "string"},
-		 "phone": {"type": "string"}}, False, True),
+		 "phone": {"type": "string"}, "adults": {"type": "integer"},
+		 "children": {"type": "integer"},
+		 "idempotency_key": {
+			 "type": "string",
+			 "description": "Optional unique key for this pickup; a retry with "
+			 "the same key returns the first reservation."}}, False, True),
 	"guest_search": (
 		"guest_search",
 		"Find a guest profile by name or phone (returning guests, VIPs).",
@@ -644,12 +650,14 @@ def _run_tool(name: str, args: dict, property: str):
 		clean["property"] = property
 	# Kamra Agent tool calls are agent actions: accountability comes from
 	# action log, not the cashier PIN (which guards humans at a terminal)
-	frappe.flags.kamra_agent_call = True
+	# the channel doubles as the "agent call" flag the cashier PIN and the
+	# booking duplicate guard read; create_booking stamps source AI Agent
+	prev, frappe.flags.kamra_agent_call = frappe.flags.kamra_agent_call, "Chat"
 	try:
 		result = fn(**clean)
 	finally:
-		frappe.flags.kamra_agent_call = False
-	if mutating:
+		frappe.flags.kamra_agent_call = prev
+	if mutating and not is_replay(result):
 		# a guaranteed audit line for every state-changing chat action,
 		# on top of whatever the API itself logs
 		from kamra.savings import log_action
