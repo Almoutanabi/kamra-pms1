@@ -288,7 +288,7 @@ def _reservations_for_booking(property: str, booking_id: str) -> list[dict]:
 		as_dict=True)
 
 
-def _apply_event(conn, e: dict) -> dict:
+def _apply_event(conn, e: dict, requested_reason: str | None = None) -> dict:
 	"""One normalized OTA event -> the same paths a human would take."""
 	existing = frappe.db.get_value(
 		"Reservation", {"property": conn.property, "ota_ref": e["ota_ref"]},
@@ -305,14 +305,18 @@ def _apply_event(conn, e: dict) -> dict:
 			return {"ota_ref": e.get("ota_ref"), "result": "cancel_unmatched"}
 		cancelled, vouchers = [], []
 		for r in rows:
-			if r.status != "Confirmed":
+			if r.status not in ("Confirmed", "Requested"):
 				continue  # idempotent: already cancelled / checked out
 			res = frappe.get_doc("Reservation", r.name)
-			out = _do_cancel(
-				res, reason="Booked elsewhere",
-				note=f"Cancelled by {e.get('channel') or 'OTA'} "
-				     f"({e.get('booking_id') or e.get('ota_ref')})",
-				issue_credit_note=1)
+			note = (f"Cancelled by {e.get('channel') or 'OTA'} "
+			        f"({e.get('booking_id') or e.get('ota_ref')})")
+			if r.status == "Requested":
+				# a retained OTA sale holds no room and took no money
+				_release(res, "Booked elsewhere", note)
+				cancelled.append(r.name)
+				continue
+			out = _do_cancel(res, reason="Booked elsewhere", note=note,
+			                 issue_credit_note=1)
 			cancelled.append(r.name)
 			if out.get("credit_note_voucher"):
 				vouchers.append(out["credit_note_voucher"])
@@ -324,6 +328,14 @@ def _apply_event(conn, e: dict) -> dict:
 	if not room_type:
 		return {"ota_ref": e.get("ota_ref"), "result": "unmapped_room",
 		        "external_room_id": e.get("room_type_external_id")}
+	property_currency = frappe.db.get_value("Property", conn.property, "currency")
+	if e.get("currency") and property_currency and e["currency"] != property_currency:
+		requested_reason = (f"OTA currency mismatch — resolve: {e.get('total') or 0} "
+		                    f"{e['currency']}; property currency {property_currency}")
+		# Keep foreign money in the note, never in the property's ledger currency.
+		e = dict(e, total=0)
+	if requested_reason:
+		e = dict(e, notes="\n".join(s for s in (e.get("notes"), requested_reason) if s))
 
 	if e["event"] == "modify" and existing:
 		# A modify payload is the full new state - overwrite the record, never
@@ -335,10 +347,17 @@ def _apply_event(conn, e: dict) -> dict:
 		doc.adults = e.get("adults") or 2
 		doc.children = e.get("children") or 0
 		doc.special_requests = e.get("notes") or None
-		doc.auto_price = 0 if e.get("total") else 1
-		if e.get("total"):
-			doc.amount_after_tax = e["total"]
-		doc.save(ignore_permissions=True)
+		doc.auto_price = 0 if requested_reason or e.get("total") else 1
+		if e.get("total") or requested_reason:
+			doc.amount_after_tax = e.get("total") or 0
+		old_transition = frappe.flags.kamra_status_transition
+		try:
+			if requested_reason:
+				doc.status = "Requested"
+				frappe.flags.kamra_status_transition = True
+			doc.save(ignore_permissions=True)
+		finally:
+			frappe.flags.kamra_status_transition = old_transition
 		return {"ota_ref": e["ota_ref"], "result": "modified",
 		        "reservation": existing.name}
 
@@ -358,11 +377,12 @@ def _apply_event(conn, e: dict) -> dict:
 		"adults": e.get("adults") or 2,
 		"children": e.get("children") or 0,
 		"source": "OTA",
+		"status": "Requested" if requested_reason else "Confirmed",
 		"channel": e.get("channel"),
 		"ota_ref": e.get("ota_ref"),
 		"special_requests": e.get("notes") or None,
 		# the OTA already sold at its price - keep their number, don't reprice
-		"auto_price": 0 if e.get("total") else 1,
+		"auto_price": 0 if requested_reason or e.get("total") else 1,
 	})
 	if e.get("total"):
 		doc.amount_after_tax = e["total"]
@@ -383,26 +403,30 @@ def _reconcile_booking_rooms(conn, booking_id: str, keep: set) -> None:
 	"""After a modify, a room line the payload no longer carries is a room the
 	guest dropped. Release it (no credit note - a modify is not a cancel)."""
 	for r in _reservations_for_booking(conn.property, booking_id):
-		if r.ota_ref in keep or r.status != "Confirmed":
+		if r.ota_ref in keep or r.status not in ("Confirmed", "Requested"):
 			continue
-		doc = frappe.get_doc("Reservation", r.name)
-		frappe.flags.kamra_cancelling = True
-		try:
-			doc.status = "Cancelled"
-			doc.cancellation_reason = "Other"
-			doc.cancellation_note = f"Room removed on modify by {conn.provider}"
-			doc.save(ignore_permissions=True)
-		finally:
-			frappe.flags.kamra_cancelling = False
+		_release(frappe.get_doc("Reservation", r.name), "Other",
+		         f"Room removed on modify by {conn.provider}")
+
+
+def _release(doc, reason: str, note: str) -> None:
+	"""Cancel without a fee or credit note."""
+	frappe.flags.kamra_cancelling = True
+	try:
+		doc.status = "Cancelled"
+		doc.cancellation_reason = reason
+		doc.cancellation_note = note
+		doc.save(ignore_permissions=True)
+	finally:
+		frappe.flags.kamra_cancelling = False
 
 
 def process_webhook_events(connection: str, payload: dict) -> None:
 	"""Enqueued worker for an inbound OTA webhook (one delivery = one booking).
 
 	Kept off the request path so the endpoint can answer Aiosell instantly.
-	The whole booking is applied atomically: if one room line is rejected
-	(e.g. the write-time villa guard blocks a conflicting OTA booking), the
-	whole booking rolls back and is logged, rather than half-applied."""
+	The whole booking is applied atomically. A capacity refusal rolls back
+	all lines, then retains them as Requested for staff to resolve."""
 	conn = frappe.get_doc("Channel Manager Connection", connection)
 	if not conn.active:
 		return
@@ -418,8 +442,15 @@ def process_webhook_events(connection: str, payload: dict) -> None:
 			_reconcile_booking_rooms(
 				conn, booking_id, keep={e.get("ota_ref") for e in events})
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background webhook worker persists the completed booking before returning; reviewed as intentional
-	except Exception:
+	except Exception as exc:
+		from kamra.kamra.doctype.reservation.reservation import InventoryRefused
+		capacity_refused = isinstance(exc, InventoryRefused)
 		frappe.db.rollback()
+		if capacity_refused and action in ("book", "modify"):
+			for e in events:
+				_apply_event(conn, e, requested_reason="OTA overbooking — resolve")
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background worker persists the non-inventory booking for resolution
+			return
 		frappe.log_error(
 			title=f"OTA webhook apply failed: {conn.name} / {booking_id}")
 
