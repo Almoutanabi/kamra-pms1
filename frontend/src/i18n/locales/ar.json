@@ -1254,6 +1254,7 @@
   "Guest request": "طلب النزيل",
   "Upgrade": "ترقية",
   "Noise / complaint": "إزعاج / شكوى",
+  "Unassigned floor": "طابق غير محدد",
   "Blacklisted": "في القائمة السوداء",
   "{name} is blacklisted": "{name} في القائمة السوداء",
   "This guest is blacklisted": "هذا النزيل في القائمة السوداء",
