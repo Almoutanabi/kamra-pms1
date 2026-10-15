@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
+import { useRealtime } from "../lib/realtime"
 import {
   BedDouble,
   CalendarDays,
@@ -196,25 +197,51 @@ export default function ReservationDetail({
 
   useEffect(() => refresh(), [refresh])
 
-  // stay-date amend
+  // A payment through the gateway lands server-side (webhook → folio save →
+  // "kamra_changed"); re-fetch this booking when the property changes.
+  useRealtime(refresh)
+
+  // While a payment link is out and money is still due, also poll gently
+  // (the socket may be down, e.g. behind the dev proxy) and re-check when
+  // the tab regains focus - the guest often pays while staff wait.
+  const linkPending =
+    !!d?.deposit?.link_url && (d?.deposit?.due ?? 0) > 0.009
+  useEffect(() => {
+    if (!linkPending) return
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") refresh()
+    }, 8000)
+    const onVis = () => {
+      if (document.visibilityState === "visible") refresh()
+    }
+    document.addEventListener("visibilitychange", onVis)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener("visibilitychange", onVis)
+    }
+  }, [linkPending, refresh])
+
+  // stay-date amend - re-seeded only when the stored dates change, so a
+  // background refresh never wipes what staff are typing
   const [ci, setCi] = useState("")
   const [co, setCo] = useState("")
+  const savedCi = d?.check_in_date
+  const savedCo = d?.check_out_date
   useEffect(() => {
-    if (d) {
-      setCi(d.check_in_date)
-      setCo(d.check_out_date)
-    }
-  }, [d])
+    if (savedCi) setCi(savedCi)
+    if (savedCo) setCo(savedCo)
+  }, [savedCi, savedCo])
 
   // editable special requests
   const [req, setReq] = useState<string>("")
   const [reqDirty, setReqDirty] = useState(false)
+  const savedReq = d ? d.special_requests ?? "" : null
   useEffect(() => {
-    if (d) {
-      setReq(d.special_requests ?? "")
+    if (savedReq !== null) {
+      setReq(savedReq)
       setReqDirty(false)
     }
-  }, [d])
+  }, [savedReq])
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true)
@@ -418,7 +445,7 @@ export default function ReservationDetail({
           <dl className="grid grid-cols-2 gap-3">
             <Field label="Room type" value={d.room_type_name ?? d.room_type} />
             <Field label="Room" value={d.room_number ?? d.room ?? "Unassigned"} />
-            {d.meal_plan && <Field label="Meal plan" value={d.meal_plan} />}
+            {d.meal_plan && <Field label="Meal plan" value={d.meal_plan_name || d.meal_plan} />}
             {d.rate_plan && <Field label="Rate plan" value={d.rate_plan} />}
           </dl>
           {!d.room && d.status === "Confirmed" && (

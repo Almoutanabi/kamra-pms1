@@ -8,7 +8,7 @@ import {
   ListChecks,
   PieChart,
 } from "lucide-react"
-import { useNavigate, useOutletContext } from "react-router-dom"
+import { Link, useNavigate, useOutletContext } from "react-router-dom"
 import {
   call,
   checkOut,
@@ -34,7 +34,6 @@ import { cn } from "../lib/utils"
 import type { ShellContext } from "../AppShell"
 import CheckInDialog from "../components/CheckInDialog"
 import { serverError } from "../lib/resource"
-import { toFullPath } from "../lib/routing"
 import { cur, moneyLocale } from "../lib/money"
 import { useT } from "../lib/i18n"
 
@@ -139,13 +138,13 @@ function ReservationList(props: {
                 </span>
               )}
               {row.status === "Confirmed" && (
-                <a
-                  href={toFullPath(`/grc/${encodeURIComponent(row.name)}`)}
+                <Link
+                  to={`/grc/${encodeURIComponent(row.name)}`}
                   className="ml-2 font-medium text-brand-700 hover:underline"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {t("GRC")}
-                </a>
+                </Link>
               )}
               {row.status === "Confirmed" &&
                 row.precheckin_status !== "Submitted" &&

@@ -9,7 +9,7 @@ import math
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, get_datetime, getdate, now_datetime, nowdate
+from frappe.utils import add_days, cint, get_datetime, getdate, now_datetime, nowdate
 
 from kamra.authz import act_as, require_it_admin, require_roles
 from kamra.install import AGENT_EMAIL
@@ -2105,6 +2105,7 @@ def guest_search(q: str):
 	return frappe.db.sql(  # nosemgrep: frappe-sql-format-injection -- values are parameterized; the interpolated scope clause is a constant from authz
 		f"""
 		SELECT g.name, g.full_name, g.phone, g.email, g.vip, g.blacklisted,
+		       g.blacklist_reason,
 		       COUNT(r.name) AS stays, MAX(r.check_in_date) AS last_stay
 		FROM `tabGuest` g
 		LEFT JOIN `tabReservation` r
@@ -2116,6 +2117,77 @@ def guest_search(q: str):
 		""",
 		params, as_dict=True,
 	)
+
+
+@frappe.whitelist()
+@require_roles("Front Desk", "Kamra Agent")
+def guest_alert(guest: str | None = None, phone: str | None = None):
+	"""Is the guest a booking would attach to blacklisted? The desk asks
+	before booking so the warning shows up front, not as a refusal at the
+	end. Resolves exactly like create_booking: the chosen profile, else the
+	profile with this phone number."""
+	name = guest or (frappe.db.get_value("Guest", {"phone": phone}) if phone else None)
+	if not name:
+		return {"guest": None, "blacklisted": 0, "blacklist_reason": None}
+	g = frappe.db.get_value(
+		"Guest", name, ["name", "full_name", "blacklisted", "blacklist_reason"],
+		as_dict=True)
+	if not g:
+		return {"guest": None, "blacklisted": 0, "blacklist_reason": None}
+	from kamra.authz import assert_guest_access
+	try:
+		assert_guest_access(g.name)
+		visible = True
+	except frappe.PermissionError:
+		visible = False
+	return {
+		"guest": g.name if visible else None,
+		"full_name": g.full_name if visible else None,
+		"blacklisted": 1 if g.blacklisted else 0,
+		"blacklist_reason": g.blacklist_reason if visible else None,
+		"can_override": 1 if _is_admin() else 0,
+	}
+
+
+def _is_admin() -> bool:
+	from kamra.authz import ADMIN
+	return bool(set(ADMIN) & set(frappe.get_roles()))
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles(scope={"guest": "Guest"})
+def set_guest_blacklist(guest: str, blacklisted: int, reason: str):
+	"""Blacklist a guest, or lift it. Hotel Admin only; a reason is required
+	either way and lands in the activity log with the before/after."""
+	reason = (reason or "").strip()
+	if not reason:
+		frappe.throw(_("A reason is required."))
+	flag = 1 if cint(blacklisted) else 0
+	before = frappe.db.get_value(
+		"Guest", guest, ["blacklisted", "blacklist_reason"], as_dict=True)
+	if before is None:
+		frappe.throw(_("Guest profile {0} not found.").format(guest))
+	frappe.db.set_value("Guest", guest, {
+		"blacklisted": flag,
+		# the standing reason is the one that put them on the list
+		"blacklist_reason": reason[:500] if flag else None,
+	})
+	last_property = frappe.db.get_value(
+		"Reservation", {"guest": guest}, "property", order_by="creation desc")
+	from kamra.savings import log_action
+	log_action(
+		action_type="guest_blacklisted" if flag else "guest_blacklist_removed",
+		reference_doctype="Guest",
+		reference_name=guest,
+		property=last_property,
+		rationale=reason,
+		before_snapshot={"blacklisted": cint(before.blacklisted),
+		                 "blacklist_reason": before.blacklist_reason},
+		after_snapshot={"blacklisted": flag,
+		                "blacklist_reason": reason if flag else None},
+	)
+	return {"guest": guest, "blacklisted": flag,
+	        "blacklist_reason": reason if flag else None}
 
 
 _GUEST_LINKS = [  # every doctype that points at a Guest
@@ -2575,6 +2647,10 @@ def reservation_detail(reservation: str):
 		"room_type": res.room_type,
 		"room_type_name": frappe.db.get_value(
 			"Room Type", res.room_type, "room_type_name") if res.room_type else None,
+		# the plan's label ("Breakfast"), not its internal ID
+		"meal_plan_name": (frappe.db.get_value(
+			"Meal Plan", res.meal_plan, "label") or res.meal_plan)
+			if res.meal_plan else None,
 		"meal_plan": res.meal_plan,
 		"rate_plan": res.rate_plan,
 		"special_requests": res.special_requests,
@@ -2802,7 +2878,8 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
             id_number: str | None = None, nationality: str | None = None,
             payment_mode: str | None = None, payment_amount: float = 0,
             payment_reference: str | None = None, pin: str | None = None,
-            idempotency_key: str | None = None):
+            idempotency_key: str | None = None,
+            blacklist_override_reason: str | None = None):
 	"""Walk-in in one step: book, register the ID, check into the chosen
 	room and take the money - the counter flow that used to be four screens.
 
@@ -2851,7 +2928,8 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
 		voucher_code=voucher_code, company=company,
 		booking_type="Corporate" if company else "Individual",
 		source="Walk-in", room=room, assign_room=0,
-		idempotency_key=idempotency_key)
+		idempotency_key=idempotency_key,
+		blacklist_override_reason=blacklist_override_reason)
 	reservation = booked["reservation"]
 	folio_filter = {"reservation": reservation, "folio_type": "Guest"}
 
@@ -4071,6 +4149,31 @@ def _find_or_create_guest(guest_name: str, phone: str | None,
 	return guest.name
 
 
+def _blacklist_gate(guest: str, property: str, override_reason: str | None):
+	"""A blacklisted guest is refused unless a Hotel Admin confirms with a
+	reason. The override is scoped to this guest for this request only and
+	is logged; Reservation.validate_blacklist still refuses everyone else."""
+	flagged, reason = frappe.db.get_value(
+		"Guest", guest, ["blacklisted", "blacklist_reason"]) or (0, None)
+	if not flagged:
+		return
+	override_reason = (override_reason or "").strip()
+	if not override_reason:
+		return  # validate_blacklist refuses with the standing reason
+	if not _is_admin():
+		frappe.throw(_("Only a Hotel Admin can book a blacklisted guest."),
+		             frappe.PermissionError)
+	frappe.flags.kamra_blacklist_override = guest
+	from kamra.savings import log_action
+	log_action(
+		action_type="blacklist_override",
+		reference_doctype="Guest",
+		reference_name=guest,
+		property=property,
+		rationale=f"Booked despite blacklist ({reason or 'no reason'}): {override_reason}",
+	)
+
+
 # How long an identical agent booking counts as a retry of the first one.
 from kamra.reservation_state import AGENT_DUPLICATE_WINDOW_MINUTES  # noqa: E402
 
@@ -4232,7 +4335,8 @@ def create_booking(property: str, room_type: str, check_in_date: str,
                    hold_expires_on: str | None = None,
                    over_capacity_reason: str | None = None,
                    over_capacity_guests: int = 0,
-                   over_capacity_charge: float = 0):
+                   over_capacity_charge: float = 0,
+                   blacklist_override_reason: str | None = None):
 	"""One-call booking: attach to an existing guest profile when given,
 	else dedup by phone / create one. Optional auto room assignment,
 	voucher applied, price computed by the engine.
@@ -4306,6 +4410,7 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 			frappe.throw(f"Guest profile {guest} not found.")
 	else:
 		guest = _find_or_create_guest(guest_name, phone, property)
+	_blacklist_gate(guest, property, blacklist_override_reason)
 	if guest_category:
 		frappe.db.set_value("Guest", guest, "guest_category", guest_category)
 		if guest_category == "VIP":
