@@ -4225,6 +4225,91 @@ def t91():
 	st.save_settings(P, "revenue", json.dumps({"overbooking_pct": 0}))
 
 
+@check("whole-villa booking: checks in with no room, audits, checks out (rooms occupied then dirty)")
+def t94():
+	from kamra import api
+	from kamra.folio import run_night_audit
+	VP = "EVAL Villa Estate"
+	frappe.get_doc({
+		"doctype": "Property", "property_name": VP, "city": "Testville",
+		"gst_mode": "Slab", "gst_slab_threshold": 7500,
+		"gst_rate_low": 5, "gst_rate_high": 18,
+	}).insert(ignore_permissions=True)
+	villa = frappe.get_doc({
+		"doctype": "Room Type", "property": VP, "room_type_code": "EVV",
+		"room_type_name": "Eval Whole Villa", "base_price": 20000,
+		"base_occupancy": 4, "adults_capacity": 6, "children_capacity": 2,
+		"room_category": "Villa", "tax_percent": 18,
+	}).insert(ignore_permissions=True)
+	bed = frappe.get_doc({
+		"doctype": "Room Type", "property": VP, "room_type_code": "EVB",
+		"room_type_name": "Eval Villa Bedroom", "base_price": 6000,
+		"base_occupancy": 2, "adults_capacity": 2, "tax_percent": 5,
+	}).insert(ignore_permissions=True)
+	rooms = [frappe.get_doc({
+		"doctype": "Room", "property": VP, "room_number": n,
+		"room_type": bed.name,
+	}).insert(ignore_permissions=True).name for n in ("V1", "V2")]
+
+	today = nowdate()
+	g = _guest("Eval Villa Guest", "+91 70000 00092")
+	res = frappe.get_doc({
+		"doctype": "Reservation", "property": VP, "guest": g,
+		"room_type": villa.name, "check_in_date": today,
+		"check_out_date": add_days(today, 2), "adults": 4, "auto_price": 1,
+	}).insert(ignore_permissions=True)
+	assert not res.room
+
+	assert api.reservation_detail(res.name)["actions"]["can_check_in"], \
+		"whole-villa stay offered no check-in"
+	ctx = api.checkin_context(res.name)
+	assert ctx["entire_place"] == {"rooms": ["V1", "V2"]}, ctx["entire_place"]
+
+	api.check_in(res.name)
+	assert frappe.db.get_value("Reservation", res.name, "status") == "Checked In"
+	for r in rooms:
+		assert frappe.db.get_value("Room", r, "occupancy_status") == "Occupied", r
+	folio = frappe.db.get_value("Folio", {"reservation": res.name, "folio_type": "Guest"})
+	assert folio, "no folio opened at check-in"
+
+	frappe.db.set_value("Property", VP, "business_date", today)
+	out = run_night_audit(VP)
+	assert out.get("room_charges_posted") == 1, out
+	assert frappe.db.exists("Folio Charge", {
+		"parent": folio, "posting_date": today, "charge_type": "Room"}), \
+		"room night never reached the folio"
+
+	try:
+		api.check_out(res.name)
+		raise AssertionError("checked out with an unpaid bill")
+	except frappe.ValidationError as e:
+		assert "still owed" in str(e), e
+	owed = float(frappe.db.get_value("Folio", folio, "balance") or 0)
+	assert owed > 0
+	api.add_folio_payment(folio, "Cash", owed)
+	api.check_out(res.name)
+	assert frappe.db.get_value("Reservation", res.name, "status") == "Checked Out"
+	for r in rooms:
+		st = frappe.db.get_value("Room", r, ["occupancy_status", "housekeeping_status"])
+		assert tuple(st) == ("Vacant", "Dirty"), (r, st)
+		assert frappe.db.exists("Housekeeping Task", {
+			"room": r, "reservation": res.name, "task_type": "Checkout Clean"}), r
+
+	# a roomless stay that is NOT an entire place still needs a room
+	g2 = _guest("Eval Bedroom Guest", "+91 70000 00093")
+	r2 = frappe.get_doc({
+		"doctype": "Reservation", "property": VP, "guest": g2,
+		"room_type": bed.name, "check_in_date": add_days(today, 5),
+		"check_out_date": add_days(today, 6), "adults": 2, "auto_price": 1,
+	}).insert(ignore_permissions=True)
+	assert not api.reservation_detail(r2.name)["actions"]["can_check_in"]
+	try:
+		api.check_in(r2.name)
+		raise AssertionError("room-type stay checked in with no room")
+	except frappe.ValidationError as e:
+		assert "Assign a room" in str(e), e
+
+
 @check("HK phone: posting a charge or delivering laundry keeps the staff session")
 def t92():
 	# hk_post_consumable / deliver_laundry post as agent@kamra.local. A bare
@@ -4430,7 +4515,7 @@ def execute():
 		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93,
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94,
 		           t95, t96, t97):
 			fn()
 	finally:
