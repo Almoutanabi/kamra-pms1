@@ -77,6 +77,10 @@
   "cancellation_fee",
   "cancellation_tiers",
   "no_show_charge",
+  "no_show_timing",
+  "protect_late_arrivals",
+  "waive_no_show_fee_for_ota",
+  "non_guaranteed_release_time",
   "deposit_pct",
   "driving_directions",
   "latitude",
@@ -521,6 +525,34 @@
    "options": "None\nFirst Night\nFull Stay"
   },
   {
+   "default": "At audit for arrival date",
+   "description": "When an arrival that never checked in becomes a No Show. At audit for arrival date: the night audit that closes the arrival date marks it. One day later: it stays Due In until the audit of the following day.",
+   "fieldname": "no_show_timing",
+   "fieldtype": "Select",
+   "label": "No-show Timing",
+   "options": "At audit for arrival date\nOne day later"
+  },
+  {
+   "default": "1",
+   "description": "When on, an arrival due on the date being closed is held as Due In, not marked a No Show, if it is flagged Late Arrival, or its ETA (property local time; times before 06:00 mean after midnight) is later than the moment the audit runs. A held arrival is marked a No Show at the next audit if it still has not checked in.",
+   "fieldname": "protect_late_arrivals",
+   "fieldtype": "Check",
+   "label": "Protect Late Arrivals"
+  },
+  {
+   "default": "1",
+   "description": "Skip the no-show fee for bookings from an OTA or channel (source OTA, a channel or an OTA reference), because the OTA collects under its own policy. The reservation is still marked No Show.",
+   "fieldname": "waive_no_show_fee_for_ota",
+   "fieldtype": "Check",
+   "label": "Waive No-show Fee for OTA Bookings"
+  },
+  {
+   "description": "Blank = off. At this local time, today's arrivals that are not guaranteed are cancelled with no fee and the room is released. Guaranteed means: an advance paid, a payment or deposit on the folio, an OTA or channel booking, or a company (corporate) booking. Bookings made after the release time and stays flagged Late Arrival are left alone.",
+   "fieldname": "non_guaranteed_release_time",
+   "fieldtype": "Time",
+   "label": "Release Non-guaranteed Arrivals At"
+  },
+  {
    "default": "0",
    "description": "Advance expected at booking, as % of the stay total.",
    "fieldname": "deposit_pct",
@@ -605,7 +637,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-11 10:00:00.000000",
+ "modified": "2026-10-15 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kamra",
  "name": "Property",

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import {
   IndianRupee,
   LayoutGrid,
@@ -8,9 +8,6 @@ import {
   Sun,
 } from "lucide-react"
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { BookingDialog } from "./components/BookingDialog"
-import { CommandPalette } from "./components/CommandPalette"
-import HelpPanel from "./components/HelpPanel"
 import UpdateNag from "./components/UpdateNag"
 import { Button } from "./components/ui/button"
 import {
@@ -36,6 +33,16 @@ import { loadLocale } from "./lib/money"
 import { cn } from "./lib/utils"
 import { useKiosk } from "./lib/kiosk"
 
+// On-demand UI kept out of the entry chunk: the booking dialog opens on
+// request; the palette and help panel load right after the shell paints.
+const BookingDialog = lazy(() =>
+  import("./components/BookingDialog").then((m) => ({ default: m.BookingDialog })),
+)
+const CommandPalette = lazy(() =>
+  import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette })),
+)
+const HelpPanel = lazy(() => import("./components/HelpPanel"))
+
 export interface BookingInitial {
   room_type?: string
   date?: string
@@ -50,6 +57,9 @@ export interface ShellContext {
   refreshKey: number
   canBook: boolean
   openBooking: (initial: BookingInitial) => void
+  /** The property's enabled_modules (empty = all; undefined while loading) -
+   *  the same filter the sidebar and MCP apply. */
+  modules?: string[]
 }
 
 // mirrors @require_roles on kamra.api.create_booking / walk_in (admins always pass)
@@ -437,6 +447,7 @@ export default function AppShell() {
               {
                 refreshKey,
                 canBook,
+                modules,
                 openBooking: (initial) => {
                   if (canBook) setBooking(initial)
                 },
@@ -448,18 +459,20 @@ export default function AppShell() {
 
       {/* Never float over the till / kitchen pass in focus mode. */}
       {!kiosk && (
-        <>
+        <Suspense fallback={null}>
           <HelpPanel />
           <CommandPalette />
-        </>
+        </Suspense>
       )}
 
       {booking && canBook && (
-        <BookingDialog
-          initial={booking}
-          onClose={() => setBooking(null)}
-          onBooked={() => setRefreshKey((k) => k + 1)}
-        />
+        <Suspense fallback={null}>
+          <BookingDialog
+            initial={booking}
+            onClose={() => setBooking(null)}
+            onBooked={() => setRefreshKey((k) => k + 1)}
+          />
+        </Suspense>
       )}
 
       <span className="hidden">

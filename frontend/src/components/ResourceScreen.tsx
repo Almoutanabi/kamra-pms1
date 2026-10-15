@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useState,
+  Suspense,
   type ComponentType,
   type ReactNode,
 } from "react"
@@ -166,6 +167,7 @@ function FieldInput(props: {
 const BADGE_TONES: Record<string, "green" | "sky" | "amber" | "rose" | "zinc"> = {
   Confirmed: "green", "Checked In": "sky", "Checked Out": "zinc",
   Cancelled: "rose", "No Show": "rose", Waitlist: "amber",
+  Requested: "amber", Held: "amber", "Pending Payment": "amber",
   Open: "amber", Closed: "zinc", Enquiry: "amber", Completed: "zinc",
   Clean: "green", Dirty: "amber", Inspected: "sky", "Out of Order": "rose",
   "In Progress": "sky", Done: "green",
@@ -634,11 +636,13 @@ export function ResourceScreen({
           }
         >
           {useDetail && config.detailPanel ? (
-            <config.detailPanel
-              row={editing}
-              reload={load}
-              onClose={() => setEditing(null)}
-            />
+            <Suspense fallback={<p className="text-sm text-zinc-400">{t("Loading…")}</p>}>
+              <config.detailPanel
+                row={editing}
+                reload={load}
+                onClose={() => setEditing(null)}
+              />
+            </Suspense>
           ) : (
             <div className="space-y-4">
               <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
@@ -672,7 +676,9 @@ export function ResourceScreen({
                 ))}
               </div>
               {editing !== "new" && config.extra && (
-                <config.extra row={editing} reload={load} />
+                <Suspense fallback={null}>
+                  <config.extra row={editing} reload={load} />
+                </Suspense>
               )}
               {error && (
                 <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">

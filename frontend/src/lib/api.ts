@@ -80,11 +80,6 @@ export async function logout() {
   await doFetch("/api/method/logout", { method: "POST" })
 }
 
-export function isAuthError(err: unknown): boolean {
-  const status = (err as { status?: number }).status
-  return status === 401 || status === 403
-}
-
 /** Upload an image to Frappe's public files; resolves to its served URL.
  *  Pass doctype/docname/fieldname so Attach Image fields keep a real File
  *  link — otherwise the URL shows in the form but is easy to lose on save. */
@@ -210,11 +205,6 @@ export const enabledModules = () =>
   call<string[]>("kamra.api.enabled_modules", {
     property: getCurrentProperty(),
   })
-export const setEnabledModules = (modules: string[]) =>
-  call<{ ok: boolean; modules: string[] }>("kamra.api.set_enabled_modules", {
-    property: getCurrentProperty(),
-    modules,
-  })
 
 export interface ReservationRow {
   name: string
@@ -318,6 +308,8 @@ export interface BookingOptions {
 
 export interface Quote {
   nights: number
+  /** same-day stay: nights is 0 and one date is billed */
+  day_use?: boolean
   nightly: { date: string; rate: number }[]
   room_total: number
   meal_total: number
@@ -396,12 +388,32 @@ export interface GuestHit {
   email: string | null
   vip: 0 | 1
   blacklisted: 0 | 1
+  blacklist_reason?: string | null
   stays: number
   last_stay: string | null
 }
 
 export const guestSearch = (q: string) =>
   call<GuestHit[]>("kamra.api.guest_search", { q })
+
+/** Server-side blacklist check for the guest a booking would attach to:
+ *  the picked profile, else the profile matching this phone. */
+export interface GuestAlert {
+  guest: string | null
+  full_name?: string | null
+  blacklisted: 0 | 1
+  blacklist_reason: string | null
+  can_override?: 0 | 1
+}
+
+export const guestAlert = (params: { guest?: string; phone?: string }) =>
+  call<GuestAlert>("kamra.api.guest_alert", params)
+
+export const setGuestBlacklist = (guest: string, blacklisted: boolean, reason: string) =>
+  call<{ guest: string; blacklisted: 0 | 1; blacklist_reason: string | null }>(
+    "kamra.api.set_guest_blacklist",
+    { guest, blacklisted: blacklisted ? 1 : 0, reason },
+  )
 
 export const createBooking = (
   params: QuoteParams & {
@@ -423,6 +435,10 @@ export const createBooking = (
     guest_category?: string
     stay_details?: Record<string, unknown>
     instructions?: { department: string; instruction: string }[]
+    /** HH:MM - a day-use slot, or the ETA / ETD of an overnight stay */
+    check_in_time?: string
+    check_out_time?: string
+    blacklist_override_reason?: string
   },
 ) =>
   call<{
@@ -432,43 +448,26 @@ export const createBooking = (
     status?: string
   }>("kamra.api.create_booking", { property: getCurrentProperty(), ...params })
 
+/** Request to Book: confirm the stay and take a room (refused, with the
+ * reason, when the dates sold out meanwhile). */
+export const acceptBookingRequest = (reservation: string, room?: string) =>
+  call<{ reservation: string; status: string; room: string | null; notified: string[] }>(
+    "kamra.booking_requests.accept_booking_request",
+    { reservation, ...(room ? { room } : {}) },
+  )
+
+/** Request to Book: decline with a reason (sent to the guest), no fee. */
+export const declineBookingRequest = (reservation: string, reason: string) =>
+  call<{ reservation: string; status: string; notified: string[]; note?: string }>(
+    "kamra.booking_requests.decline_booking_request",
+    { reservation, reason },
+  )
+
 export const promoteWaitlist = (reservation: string) =>
   call<{ ok: boolean; reservation: string; room: string }>(
     "kamra.api.promote_waitlist",
     { reservation },
   )
-
-export interface VenueBookingCell {
-  name: string
-  venue: string
-  event_type: string
-  status: string
-  event_date: string
-  start_time: string
-  end_time: string
-  customer_name: string
-  attendees: number
-  quoted_amount: number
-  advance_received: number
-}
-export interface VenueCalendarData {
-  start: string
-  days: number
-  dates: string[]
-  venues: {
-    name: string
-    venue_name: string
-    capacity: number
-    base_price: number
-    bookings: VenueBookingCell[]
-  }[]
-}
-export const venueCalendar = (days = 14, startDate?: string) =>
-  call<VenueCalendarData>("kamra.api.venue_calendar", {
-    property: getCurrentProperty(),
-    days,
-    start_date: startDate ?? null,
-  })
 
 // --- Banquets: the function business, enquiry → event order → bill ---
 
@@ -1507,8 +1506,6 @@ export const saveConversation = (
   })
 export const deleteConversation = (name: string) =>
   call<{ ok: boolean }>("kamra.assistant.delete_conversation", { name })
-export const renameConversation = (name: string, title: string) =>
-  call<{ ok: boolean }>("kamra.assistant.rename_conversation", { name, title })
 
 export const checkIn = (reservation: string) =>
   call("kamra.api.check_in", { reservation })
@@ -1535,9 +1532,15 @@ export interface ReservationDetail {
   room_type: string | null
   room_type_name: string | null
   meal_plan: string | null
+  /** The meal plan's label - meal_plan is its internal ID. */
+  meal_plan_name?: string | null
   rate_plan: string | null
   special_requests: string | null
   eta: string | null
+  /** Flagged late: the night audit holds it as Due In, not a no-show. */
+  late_arrival?: number
+  /** Room rate confirmed per night at booking - what the folio bills. */
+  night_rates?: { date: string; rate: number; demand_premium_pct: number }[]
   precheckin_status: string | null
   precheckin_token: string | null
   amount_after_tax: number
@@ -1559,6 +1562,8 @@ export interface ReservationDetail {
   }
   /** Deposit before arrival (#114): expected by policy, received, still due. */
   deposit: import("../components/DepositPanel").DepositState
+  /** the refundable security (damage) deposit; null if it could not be read */
+  security_deposit: import("../components/SecurityDepositPanel").SecurityDepositState | null
   guest: {
     name: string
     full_name: string
@@ -1623,13 +1628,75 @@ export const developerInfo = () =>
 export const generateApiKey = () =>
   call<{ api_key: string; api_secret: string }>("kamra.api.generate_api_key")
 
+/** What an amendment would do to the bill (amend_stay_preview /
+ * room_move_preview). A booking bills the nightly rates confirmed at
+ * booking; a change to what is sold re-quotes them, and the server refuses
+ * the change unless the new price is confirmed. */
+export interface RepricePreview {
+  current_amount: number
+  new_amount: number
+  difference: number
+  needs_confirmation: boolean
+  nights: { date: string; rate: number; demand_premium_pct: number }[]
+}
+
+export const amendStayPreview = (
+  reservation: string,
+  check_in_date: string,
+  check_out_date: string,
+) =>
+  call<RepricePreview>("kamra.api.amend_stay_preview", {
+    reservation,
+    check_in_date,
+    check_out_date,
+  })
+
 export const amendStay = (
   reservation: string,
   check_in_date: string,
   check_out_date: string,
+  confirm_price = 0,
 ) =>
   call<{ nights: number; amount_after_tax: number }>("kamra.api.amend_stay", {
     reservation,
     check_in_date,
     check_out_date,
+    confirm_price,
+  })
+
+/** Preview the new price, ask the user when it changes, then amend with the
+ * price confirmed. Resolves null when the user declines. */
+export async function amendStayConfirmed(
+  reservation: string,
+  check_in_date: string,
+  check_out_date: string,
+  ask: (p: RepricePreview) => boolean,
+) {
+  const p = await amendStayPreview(reservation, check_in_date, check_out_date)
+  if (p.needs_confirmation && !ask(p)) return null
+  return amendStay(reservation, check_in_date, check_out_date, p.needs_confirmation ? 1 : 0)
+}
+
+/** Same for a room move: a different room type re-prices the stay. */
+export async function moveRoomConfirmed(
+  reservation: string,
+  new_room: string,
+  ask: (p: RepricePreview) => boolean,
+  reason?: string,
+) {
+  const p = await call<RepricePreview>("kamra.api.room_move_preview", { reservation, new_room })
+  if (p.needs_confirmation && !ask(p)) return null
+  return call<{ room: string; room_type: string }>("kamra.api.move_reservation", {
+    reservation,
+    new_room,
+    reason,
+    confirm_price: p.needs_confirmation ? 1 : 0,
+  })
+}
+
+export const setLateArrival = (reservation: string, late_arrival: boolean, eta?: string) =>
+  call<{ ok: boolean }>("kamra.api.set_late_arrival", {
+    reservation,
+    late_arrival: late_arrival ? 1 : 0,
+    ...(eta !== undefined ? { eta } : {}),
   })

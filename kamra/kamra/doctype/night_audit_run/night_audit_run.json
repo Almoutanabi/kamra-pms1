@@ -15,6 +15,8 @@
   "room_charges_posted",
   "amount_posted",
   "no_shows_flagged",
+  "late_arrivals_held",
+  "no_show_fees_waived",
   "folios_opened",
   "sb_log",
   "log"
@@ -67,6 +69,19 @@
    "read_only": 1
   },
   {
+   "description": "Arrivals due on the closed date held as Due In (late arrival or ETA after the audit). The next audit marks them No Show if they still have not arrived.",
+   "fieldname": "late_arrivals_held",
+   "fieldtype": "Int",
+   "label": "Late Arrivals Held",
+   "read_only": 1
+  },
+  {
+   "fieldname": "no_show_fees_waived",
+   "fieldtype": "Int",
+   "label": "No-show Fees Waived (OTA)",
+   "read_only": 1
+  },
+  {
    "fieldname": "folios_opened",
    "fieldtype": "Int",
    "label": "Folios Opened",
@@ -87,7 +102,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-04 17:55:11.005571",
+ "modified": "2026-10-15 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kamra",
  "name": "Night Audit Run",

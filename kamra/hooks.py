@@ -36,9 +36,14 @@ scheduler_events = {
 		"0 9 * * *": ["kamra.prearrival.run_prearrival_outreach"],
 		# every 15 min - escalate overdue housekeeping tasks up the ladder;
 		# also release expired Held / Pending Payment reservations (ADR-006)
+		# and, past the property's release time, today's non-guaranteed
+		# arrivals (no-show policy, off unless a release time is set)
 		"*/15 * * * *": [
 			"kamra.housekeeping.escalate_overdue_tasks",
 			"kamra.reservation_state.expire_holds",
+			# group blocks past their cutoff give unpicked rooms back to sale
+			"kamra.group_blocks.release_expired_blocks",
+			"kamra.no_show.release_non_guaranteed_arrivals",
 		],
 		# 08:30 - the banquet team's morning list: follow-ups gone quiet,
 		# tentative holds about to lapse, payments due, event orders missing

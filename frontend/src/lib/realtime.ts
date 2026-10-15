@@ -5,8 +5,6 @@ import { useEffect } from "react"
     while the tab is visible. Either way the caller just gets "something
     changed - re-fetch". */
 
-import { io } from "socket.io-client"
-
 export function subscribeRealtime(onChange: () => void): () => void {
   let timer: ReturnType<typeof setInterval> | null = null
   let last = 0
@@ -24,23 +22,33 @@ export function subscribeRealtime(onChange: () => void): () => void {
     }, 25000)
   }
 
-  const socket = io(`${location.origin}/${location.hostname}`, {
-    path: "/socket.io",
-    withCredentials: true,
-    reconnectionAttempts: 2,
-    timeout: 4000,
-  })
-  socket.on("kamra_changed", fire)
-  socket.on("connect_error", startPolling)
-  socket.on("connect", () => {
-    if (timer) {
-      clearInterval(timer)
-      timer = null
-    }
-  })
+  // socket.io-client is loaded on first subscribe, not in the entry chunk
+  let socket: { close: () => void } | null = null
+  let closed = false
+  void import("socket.io-client")
+    .then(({ io }) => {
+      if (closed) return
+      const s = io(`${location.origin}/${location.hostname}`, {
+        path: "/socket.io",
+        withCredentials: true,
+        reconnectionAttempts: 2,
+        timeout: 4000,
+      })
+      s.on("kamra_changed", fire)
+      s.on("connect_error", startPolling)
+      s.on("connect", () => {
+        if (timer) {
+          clearInterval(timer)
+          timer = null
+        }
+      })
+      socket = s
+    })
+    .catch(startPolling)
 
   return () => {
-    socket.close()
+    closed = true
+    socket?.close()
     if (timer) clearInterval(timer)
   }
 }

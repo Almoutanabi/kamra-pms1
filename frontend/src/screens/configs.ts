@@ -1,10 +1,15 @@
 import type { ScreenConfig } from "../components/ResourceScreen"
-import BillingRulesEditor from "../components/BillingRulesEditor"
-import EventLinks from "../components/EventLinks"
-import GroupControl from "../components/GroupControl"
-import RoomTypeMedia from "../components/RoomTypeMedia"
-import { HkTaskMediaPanel } from "../components/HkMedia"
-import ReservationDetail from "./ReservationDetail"
+import { lazy } from "react"
+
+// Drawer panels load when a row is opened, not with the app shell
+const BillingRulesEditor = lazy(() => import("../components/BillingRulesEditor"))
+const EventLinks = lazy(() => import("../components/EventLinks"))
+const GroupControl = lazy(() => import("../components/GroupControl"))
+const RoomTypeMedia = lazy(() => import("../components/RoomTypeMedia"))
+const HkTaskMediaPanel = lazy(() =>
+  import("../components/HkMedia").then((m) => ({ default: m.HkTaskMediaPanel })),
+)
+const ReservationDetail = lazy(() => import("./ReservationDetail"))
 import { cur } from "../lib/money"
 
 export const roomsConfig: ScreenConfig = {
@@ -505,34 +510,6 @@ export const housekeepingConfig: ScreenConfig = {
   extra: HkTaskMediaPanel,
 }
 
-export const billingConfig: ScreenConfig = {
-  doctype: "Reservation",
-  dateFilter: { field: "check_in_date", label: "Check-in" },
-  title: "Billing",
-  description:
-    "Reservation totals. Folios, charge posting and GST invoices arrive in the next milestone.",
-  propertyScoped: true,
-  allowCreate: false,
-  allowDelete: false,
-  orderBy: "check_in_date desc",
-  columns: [
-    { field: "name", label: "Reservation" },
-    { field: "guest_name", label: "Guest" },
-    { field: "status", label: "Status", badge: true },
-    { field: "check_in_date", label: "Check-in" },
-    { field: "amount_before_tax", label: `Pre-tax ${cur()}` },
-    { field: "discount_amount", label: `Discount ${cur()}` },
-    { field: "tax_amount", label: `GST ${cur()}` },
-    { field: "amount_after_tax", label: `Total ${cur()}` },
-  ],
-  form: [
-    { field: "guest_name", label: "Guest", type: "readonly" },
-    { field: "amount_before_tax", label: "Pre-tax", type: "readonly" },
-    { field: "tax_amount", label: "GST", type: "readonly" },
-    { field: "amount_after_tax", label: "Total", type: "readonly" },
-  ],
-}
-
 export const reservationsConfig: ScreenConfig = {
   doctype: "Reservation",
   title: "Reservations",
@@ -547,6 +524,9 @@ export const reservationsConfig: ScreenConfig = {
       field: "status",
       label: "Status",
       options: [
+        "Requested",
+        "Held",
+        "Pending Payment",
         "Waitlist",
         "Confirmed",
         "Checked In",

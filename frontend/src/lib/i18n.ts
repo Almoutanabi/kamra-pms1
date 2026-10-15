@@ -26,12 +26,6 @@ export function t(s: string, vars?: Vars): string {
   return interpolate(dict[s] ?? s, vars)
 }
 
-/** Translate for a specific language (e.g. offline export). */
-export function tFor(lang: Lang, s: string, vars?: Vars): string {
-  const dict = DICT[lang] ?? {}
-  return interpolate(dict[s] ?? s, vars)
-}
-
 /** Subscribe a component to the language: re-renders on change, returns a
  * bound translator. */
 export function useT() {

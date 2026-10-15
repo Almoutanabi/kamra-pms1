@@ -134,19 +134,25 @@ def _child_charge(rt, adults: int, children: int,
 	return max(0, children - free_seats) * per_child
 
 
-def forecast_occupancy(property: str, date) -> float:
+def forecast_occupancy(property: str, date,
+                       exclude: str | None = None) -> float:
 	"""Property occupancy for a future date: live reservations covering that
-	night over sellable rooms. This is the demand signal hurdle tiers key on."""
+	night over sellable rooms. This is the demand signal hurdle tiers key on.
+
+	`exclude` leaves one reservation out - re-quoting a saved booking must
+	not count the booking itself, or an amendment would price against a
+	house the original booking never saw."""
 	total = frappe.db.count("Room", {"property": property})
 	if not total:
 		return 0.0
 	sold = frappe.db.sql(
 		"""SELECT COUNT(*) FROM `tabReservation`
 		   WHERE property = %(p)s AND status IN ('Confirmed', 'Checked In')
+		     AND name != %(x)s
 		     AND check_in_date <= %(d)s
 		     AND GREATEST(check_out_date,
 		                  DATE_ADD(check_in_date, INTERVAL 1 DAY)) > %(d)s""",
-		{"p": property, "d": str(date)})[0][0]
+		{"p": property, "d": str(date), "x": exclude or ""})[0][0]
 	return round(sold / total * 100, 1)
 
 
@@ -341,6 +347,42 @@ def validate_voucher(property: str, voucher_code: str, nights: int,
 	return v
 
 
+def apply_rate_plan(rate_plan: str | None, room_total: Decimal) -> Decimal:
+	"""The stay's room total after its rate plan's modifier.
+
+	The plan works on the whole stay's (season- and occupancy-priced) room
+	total: Percent scales it, Amount adds to it, Absolute replaces it. The
+	quote calls this, and so does the folio when it posts a night, so a
+	booking and its room nights can never disagree about the plan.
+	"""
+	room_total = _dec(room_total)
+	if not rate_plan:
+		return room_total
+	rp = frappe.get_doc("Rate Plan", rate_plan)
+	v = _dec(rp.modifier_value)
+	if rp.modifier_type == "Percent":
+		return room_total * (Decimal(1) + v / Decimal(100))
+	if rp.modifier_type == "Amount":
+		return room_total + v
+	if rp.modifier_type == "Absolute":
+		return v
+	return room_total
+
+
+def rate_plan_factor(rate_plan: str | None, room_total: Decimal) -> Decimal:
+	"""What each night of a stay is multiplied by under its rate plan.
+
+	The quote applies the plan to the stay total and scales the room tax by
+	the same ratio, which spreads the plan over the nights in proportion to
+	their rates. A night's share of the planned total is therefore its rate
+	times this factor - the folio uses it so each posted room night is
+	exactly the night the guest was quoted."""
+	room_total = _dec(room_total)
+	if not rate_plan or not room_total:
+		return Decimal(1)
+	return apply_rate_plan(rate_plan, room_total) / room_total
+
+
 def quote(
 	property: str,
 	room_type: str,
@@ -353,6 +395,7 @@ def quote(
 	voucher_code: str | None = None,
 	check_voucher_limits: bool = True,
 	over_capacity_charge: float = 0,
+	exclude_reservation: str | None = None,
 ) -> dict:
 	nights = date_diff(check_out_date, check_in_date)
 	day_use = nights == 0
@@ -380,7 +423,8 @@ def quote(
 		# premium applies and the tier's floor holds - decided here, in
 		# code, never by the caller
 		if str(date) not in occ_cache:
-			occ_cache[str(date)] = forecast_occupancy(property, date)
+			occ_cache[str(date)] = forecast_occupancy(
+				property, date, exclude=exclude_reservation)
 		rate, tier = demand_adjust(property, room_type, date, rate,
 		                           occupancy=occ_cache[str(date)])
 		# guests above capacity, at the price agreed on this booking
@@ -397,15 +441,8 @@ def quote(
 		room_tax += rate * gst / Decimal(100)
 
 	if rate_plan:
-		rp = frappe.get_doc("Rate Plan", rate_plan)
-		v = _dec(rp.modifier_value)
 		old_room_total = room_total
-		if rp.modifier_type == "Percent":
-			room_total *= Decimal(1) + v / Decimal(100)
-		elif rp.modifier_type == "Amount":
-			room_total += v
-		elif rp.modifier_type == "Absolute":
-			room_total = v
+		room_total = apply_rate_plan(rate_plan, room_total)
 		if old_room_total:
 			room_tax *= room_total / old_room_total
 

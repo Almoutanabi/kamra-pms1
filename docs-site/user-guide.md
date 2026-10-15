@@ -101,6 +101,24 @@ billing rules; alcohol always bills to the guest).
 - **Payment link** creates a gateway link for the balance and copies it.
 - Night audit posts room nights at 3 AM, flags **and charges** no-shows
   per your policy. It's idempotent — safe to run manually too.
+- Room nights bill the **rate confirmed at booking**, night by night
+  (season, demand premium and rate plan included). A later rate change,
+  a new season or the house emptying out never changes a confirmed
+  stay. Changing the dates or moving to another room type re-quotes it:
+  Kamra shows the new total and only saves once you confirm it.
+
+### Night audit and no-show policy
+
+Settings → **Front Desk** → **Night audit & no-shows** decides when an
+arrival that never came becomes a **No Show**. The fee itself is the
+*No-show charge* under **Stay policies**.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Mark no-shows | At audit for arrival date | The audit that closes the arrival date marks it. *One day later* keeps it Due In until the next day's audit. |
+| Hold late arrivals until the next audit | On | An arrival due on the day being closed stays Due In when it is flagged **Late arrival** (reservation drawer) or its ETA is later than the moment the audit runs. An ETA before 06:00 means after midnight: a manual audit at 23:00 holds a 01:00 ETA, the 03:00 scheduled run does not. Held arrivals are listed in the audit result and the next audit marks them no-show if they still have not arrived. |
+| No no-show fee on OTA bookings | On | OTA and channel bookings are still marked No Show, but no fee is posted: the OTA charges the guest under its own policy. |
+| Release non-guaranteed arrivals at | Blank (off) | At this time, today's arrivals that are not guaranteed are cancelled with no fee and the room goes back on sale. Guaranteed means an advance paid, a payment or deposit on the folio, an OTA booking or a company booking. Late arrivals and bookings made after the release time are kept. |
 
 ### Deposits before arrival
 

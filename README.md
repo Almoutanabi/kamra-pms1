@@ -139,7 +139,7 @@ Kamra is the alternative we wanted:
 
 ## Short-term rentals
 
-Same PMS for **villas and multi-site STR portfolios**: sellable units (room / whole-place / package), competition groups, cleaning fees & deposits, Instant or Request-to-book, and a catalog that feels like a listing site.
+Same PMS for **villas and multi-site STR portfolios**: sellable units (room / whole-place / package), competition groups, cleaning fees, security deposits (collect / withhold / refund), Instant or Request-to-book, and a catalog that feels like a listing site.
 
 | | |
 |---|---|
@@ -156,13 +156,13 @@ Live example: [demo.kamrapms.com/book](https://demo.kamrapms.com/book).
 
 | Area | What you get |
 |---|---|
-| **Front desk** | Today board, check-in flow (GRC readiness + room suggestion), tape chart, ETA/ETD, guest profiles, blacklist |
+| **Front desk** | Today board, Request-to-Book inbox, check-in flow (GRC readiness + room suggestion), tape chart, ETA/ETD, guest profiles, blacklist with logged override, per-property no-show policy |
 | **Booking engine** | Direct booking + SEO console; hotels = room grid; STRs = villa catalog |
-| **Short-term rentals** | Hotel vs STR property kind, sellable units, per-villa locations, whole-villa check-in as one unit, Instant / Request-to-book |
-| **Booking** | Multi-room / group / corporate, returning guests, add-ons, vouchers, travel agents, day-use |
+| **Short-term rentals** | Hotel vs STR property kind, sellable units, per-villa locations, whole-villa check-in as one unit, villa / room availability that blocks both ways, security deposits, Instant / Request-to-book |
+| **Booking** | Multi-room / group / corporate, returning guests, add-ons, vouchers, travel agents, day-use from the booking screen, rate lock at booking |
 | **Revenue** | Seasons, rate plans, guardrails, hurdle rates, overbooking allowance, cancellation & no-show policy in code |
-| **Billing** | Folios, corporate routing, group masters, charge splits, deposits, night audit, tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
-| **F&B** | POS table map, full-screen till and kitchen pass, split bills, thermal KOT, kitchen display, inventory & recipes, QR ordering, room posting |
+| **Billing** | Folios, corporate routing, group masters, charge splits, deposits, night audit, city-ledger payments (oldest bills first), tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
+| **F&B** | POS table map, full-screen till and kitchen pass, split bills, thermal KOT, kitchen display, inventory & recipes, QR ordering with printable table and room QR codes, room posting |
 | **Operations** | Tickets + SLA, housekeeping `/hk`, guest laundry end-to-end, lost & found, banquet / events (send quote, guest response, dept checklists) |
 | **Guests** | Online pre-check-in, GRC + occupant register, **editable nationality**, ID retention modes, Kamra Verify (India: GSTIN and guest ID checks — coming soon) |
 | **Privacy** | Erasure, access export, guest and message retention, children's data minimised, AI-prompt redaction, privacy notice in English, Arabic and seven Indian languages |
@@ -202,7 +202,7 @@ flowchart LR
   desk["Front desk SPA<br/>React + Vite"] --> api
   book["Booking engine<br/>/book"] --> api
   hk["Housekeeping<br/>/hk"] --> api
-  agent["Claude / any MCP client"] --> mcp["MCP server<br/>86 tools"] --> api
+  agent["Claude / any MCP client"] --> mcp["MCP server<br/>89 tools"] --> api
   api["Governed API<br/>RBAC · property scope · audit log"] --> core["PMS core<br/>pricing · folios · night audit"]
   core --> pack["Country pack<br/>tax · invoices · integrations"]
   core --> db[("Frappe v16<br/>MariaDB")]

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
+import { useRealtime } from "../lib/realtime"
 import {
   BedDouble,
   CalendarDays,
@@ -15,12 +16,15 @@ import {
 } from "lucide-react"
 
 import {
-  amendStay,
+  acceptBookingRequest,
+  amendStayConfirmed,
   checkIn,
+  declineBookingRequest,
   checkOut,
   idDocumentImage,
   promoteWaitlist,
   reservationDetail,
+  setLateArrival,
   verifyPrecheckin,
   type ReservationDetail as Detail,
 } from "../lib/api"
@@ -31,6 +35,7 @@ import { Button } from "../components/ui/button"
 import CancelPanel from "../components/CancelPanel"
 import LinkedRecords from "../components/LinkedRecords"
 import DepositPanel from "../components/DepositPanel"
+import SecurityDepositPanel from "../components/SecurityDepositPanel"
 import RoomChangeDialog from "../components/RoomChangeDialog"
 import { cur, moneyLocale } from "../lib/money"
 
@@ -187,6 +192,7 @@ export default function ReservationDetail({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [changingRoom, setChangingRoom] = useState(false)
+  const [declineReason, setDeclineReason] = useState("")
 
   const refresh = useCallback(() => {
     reservationDetail(name)
@@ -196,25 +202,51 @@ export default function ReservationDetail({
 
   useEffect(() => refresh(), [refresh])
 
-  // stay-date amend
+  // A payment through the gateway lands server-side (webhook → folio save →
+  // "kamra_changed"); re-fetch this booking when the property changes.
+  useRealtime(refresh)
+
+  // While a payment link is out and money is still due, also poll gently
+  // (the socket may be down, e.g. behind the dev proxy) and re-check when
+  // the tab regains focus - the guest often pays while staff wait.
+  const linkPending =
+    !!d?.deposit?.link_url && (d?.deposit?.due ?? 0) > 0.009
+  useEffect(() => {
+    if (!linkPending) return
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") refresh()
+    }, 8000)
+    const onVis = () => {
+      if (document.visibilityState === "visible") refresh()
+    }
+    document.addEventListener("visibilitychange", onVis)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener("visibilitychange", onVis)
+    }
+  }, [linkPending, refresh])
+
+  // stay-date amend - re-seeded only when the stored dates change, so a
+  // background refresh never wipes what staff are typing
   const [ci, setCi] = useState("")
   const [co, setCo] = useState("")
+  const savedCi = d?.check_in_date
+  const savedCo = d?.check_out_date
   useEffect(() => {
-    if (d) {
-      setCi(d.check_in_date)
-      setCo(d.check_out_date)
-    }
-  }, [d])
+    if (savedCi) setCi(savedCi)
+    if (savedCo) setCo(savedCo)
+  }, [savedCi, savedCo])
 
   // editable special requests
   const [req, setReq] = useState<string>("")
   const [reqDirty, setReqDirty] = useState(false)
+  const savedReq = d ? d.special_requests ?? "" : null
   useEffect(() => {
-    if (d) {
-      setReq(d.special_requests ?? "")
+    if (savedReq !== null) {
+      setReq(savedReq)
       setReqDirty(false)
     }
-  }, [d])
+  }, [savedReq])
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true)
@@ -341,6 +373,18 @@ export default function ReservationDetail({
         />
       )}
 
+      {d.security_deposit && (
+        <SecurityDepositPanel
+          reservation={d.name}
+          deposit={d.security_deposit}
+          canStart={["Confirmed", "Checked In"].includes(d.status)}
+          onChanged={() => {
+            refresh()
+            reload()
+          }}
+        />
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2">
         {/* stay + dates (editable) */}
         <Card icon={<CalendarDays className="size-4" />} title="Stay">
@@ -377,10 +421,37 @@ export default function ReservationDetail({
             <Button
               className="mt-3"
               disabled={busy}
-              onClick={() => act(() => amendStay(name, ci, co))}
+              onClick={() =>
+                act(() =>
+                  amendStayConfirmed(name, ci, co, (p) =>
+                    window.confirm(
+                      `New dates re-price this stay: ${inr(p.current_amount)} → ${inr(p.new_amount)}` +
+                        ` (${p.difference >= 0 ? "+" : "−"}${inr(Math.abs(p.difference))}).` +
+                        " Confirm the new price with the guest?",
+                    ),
+                  ),
+                )
+              }
             >
               {busy ? "Updating…" : "Update dates & re-price"}
             </Button>
+          )}
+          {d.status === "Confirmed" && (
+            <label className="mt-3 flex items-start gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={Boolean(d.late_arrival)}
+                disabled={busy}
+                onChange={(e) => act(() => setLateArrival(name, e.target.checked))}
+              />
+              <span>
+                Late arrival
+                <span className="block text-xs text-zinc-400">
+                  The night audit holds this arrival as Due In instead of marking a no-show; the next audit decides.
+                </span>
+              </span>
+            </label>
           )}
           <dl className="mt-3 grid grid-cols-2 gap-3">
             <Field label="Nights" value={d.nights} />
@@ -391,6 +462,18 @@ export default function ReservationDetail({
               }`}
             />
             {d.eta && <Field label="ETA" value={d.eta} />}
+            {d.night_rates && d.night_rates.length > 0 && (
+              <Field
+                label="Confirmed rate / night"
+                value={
+                  new Set(d.night_rates.map((n) => n.rate)).size === 1
+                    ? inr(d.night_rates[0].rate)
+                    : `${inr(Math.min(...d.night_rates.map((n) => n.rate)))}–${inr(
+                        Math.max(...d.night_rates.map((n) => n.rate)),
+                      )}`
+                }
+              />
+            )}
             {d.precheckin_status && d.precheckin_status !== "Not Started" && (
               <Field label="Pre-check-in" value={d.precheckin_status} />
             )}
@@ -418,7 +501,7 @@ export default function ReservationDetail({
           <dl className="grid grid-cols-2 gap-3">
             <Field label="Room type" value={d.room_type_name ?? d.room_type} />
             <Field label="Room" value={d.room_number ?? d.room ?? "Unassigned"} />
-            {d.meal_plan && <Field label="Meal plan" value={d.meal_plan} />}
+            {d.meal_plan && <Field label="Meal plan" value={d.meal_plan_name || d.meal_plan} />}
             {d.rate_plan && <Field label="Rate plan" value={d.rate_plan} />}
           </dl>
           {!d.room && d.status === "Confirmed" && (
@@ -548,6 +631,36 @@ export default function ReservationDetail({
         </div>
       )}
 
+      {d.status === "Requested" && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Booking request - waiting for your answer</p>
+          <p className="mt-0.5 text-xs">
+            A request holds no room. Accepting checks availability again and
+            takes a room; declining cancels it with no fee and tells the guest.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button disabled={busy} onClick={() => act(() => acceptBookingRequest(name))}>
+              Accept
+            </Button>
+            <input
+              value={declineReason}
+              onChange={(e) => setDeclineReason(e.target.value)}
+              placeholder="Reason for declining"
+              className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:outline-2 focus:outline-offset-1 focus:outline-brand-600"
+            />
+            <Button
+              variant="outline"
+              disabled={busy || !declineReason.trim()}
+              onClick={() =>
+                act(() => declineBookingRequest(name, declineReason.trim()))
+              }
+            >
+              Decline
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* primary actions */}
       <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-4">
         {d.status === "Waitlist" && (
@@ -574,6 +687,11 @@ export default function ReservationDetail({
           <Button disabled={busy} onClick={() => act(() => checkIn(name))}>
             <LogIn className="size-4" /> Check in
           </Button>
+        )}
+        {d.actions.can_check_out && d.security_deposit?.blocks_checkout && (
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
+            <ShieldCheck className="size-3.5" /> Security deposit still held - withhold or refund it
+          </span>
         )}
         {d.actions.can_check_out && (
           <Button disabled={busy} onClick={() => act(() => checkOut(name))}>

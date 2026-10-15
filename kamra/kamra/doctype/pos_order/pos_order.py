@@ -62,7 +62,8 @@ class POSOrder(Document):
 			"is_alcohol": 1 if has_alcohol else 0,
 		})
 		_recalculate(folio)
-		folio.save(ignore_permissions=True)
+		from kamra.ledger import save_folio
+		save_folio(folio)
 		self.db_set("posted_to_folio", 1, update_modified=False)
 
 		from kamra.savings import log_action
