@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react"
 import { htmlToText } from "../lib/utils"
 import { useNavigate } from "react-router-dom"
-import { ChevronDown, Loader2, Megaphone, Plus, Star, Trash2, X } from "lucide-react"
+import { ChevronDown, Loader2, Megaphone, Plus, ShieldAlert, Star, Trash2, X } from "lucide-react"
 import {
   call,
   createBooking,
   getBookingOptions,
   getCurrentProperty,
   getQuote,
+  guestAlert,
   guestSearch,
   type BookingOptions,
+  type GuestAlert,
   type GuestHit,
   type Quote,
 } from "../lib/api"
@@ -225,6 +227,11 @@ export function BookingDialog(props: {
       : null,
   )
   const [hits, setHits] = useState<GuestHit[]>([])
+  // blacklist check for the profile this booking will attach to - asked of
+  // the server (picked profile, else the phone match create_booking uses)
+  const [alert, setAlert] = useState<GuestAlert | null>(null)
+  const [blAck, setBlAck] = useState(false)
+  const [blReason, setBlReason] = useState("")
 
   // Walk-in: book + ID + room + payment + check-in on this one screen
   // (issue #97). Arrival is always today, one room, no waitlist.
@@ -282,6 +289,34 @@ export function BookingDialog(props: {
   }, [form.guest_name, profile])
 
   useEffect(() => {
+    const guest = profile?.name
+    const phone = form.phone && isPhoneComplete(form.phone, options?.property?.country)
+      ? form.phone
+      : ""
+    if (!guest && !phone) {
+      setAlert(null)
+      return
+    }
+    let live = true
+    const t = setTimeout(() => {
+      guestAlert({ guest: guest || undefined, phone: guest ? undefined : phone })
+        .then((a) => {
+          if (!live) return
+          setAlert(a)
+          if (!a.blacklisted) {
+            setBlAck(false)
+            setBlReason("")
+          }
+        })
+        .catch(() => live && setAlert(null))
+    }, 250)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+  }, [profile?.name, form.phone, options?.property?.country])
+
+  useEffect(() => {
     getBookingOptions().then((o) => {
       setOptions(o)
       setForm((f) => ({
@@ -309,6 +344,13 @@ export function BookingDialog(props: {
   // a new booking cannot start in the past - the input's `min` is advisory
   // only (typed and pasted values bypass it), so gate the submit too
   const pastCheckIn = form.check_in_date < todayLocal()
+
+  // a blacklisted guest needs an explicit, reasoned confirmation (Hotel
+  // Admin only - the server enforces it); a multi-room group can't override
+  const blacklisted = !!alert?.blacklisted
+  const blacklistBlocked =
+    blacklisted && (moreRooms.length > 0 || !blAck || !blReason.trim() || !alert?.can_override)
+  const blacklistOverride = blacklisted && blAck ? blReason.trim() || undefined : undefined
 
   // phone is optional, but a half-typed one is a data-entry slip, not a choice
   const country = options?.property?.country
@@ -452,6 +494,7 @@ export function BookingDialog(props: {
           company: form.company || undefined,
           waitlist: 1,
           ...slotArgs,
+          blacklist_override_reason: blacklistOverride,
         })
         setDone({ ref: res.reservation, room: null, waitlist: true })
         props.onBooked()
@@ -550,6 +593,7 @@ export function BookingDialog(props: {
           .filter(([, q]) => q > 0)
           .map(([experience, qty]) => ({ experience, qty })),
         ...slotArgs,
+        blacklist_override_reason: blacklistOverride,
       })
       setDone({ ref: res.reservation, room: res.room })
       props.onBooked()
@@ -600,6 +644,7 @@ export function BookingDialog(props: {
         payment_reference: walk.pay_reference.trim() || undefined,
         idempotency_key: walkInKey,
         ...slotArgs,
+        blacklist_override_reason: blacklistOverride,
       })
       setDone({ ref: res.reservation, room: res.room, walkIn: res })
       props.onBooked()
@@ -696,6 +741,7 @@ export function BookingDialog(props: {
 
   const payAmount = Number(walk.pay_amount) || 0
   const walkInBlocked =
+    blacklistBlocked ||
     busy ||
     !form.guest_name ||
     !quote ||
@@ -979,6 +1025,11 @@ export function BookingDialog(props: {
                                 }}
                               >
                                 <span className="font-medium">{h.full_name}</span>
+                                {Boolean(h.blacklisted) && (
+                                  <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-rose-700">
+                                    {t("Blacklisted")}
+                                  </span>
+                                )}
                                 {Boolean(h.vip) && (
                                   <Star
                                     className="size-3 fill-amber-400 text-amber-400"
@@ -1020,6 +1071,52 @@ export function BookingDialog(props: {
                     />
                   </Field>
                 </div>
+
+                {blacklisted && (
+                  <div
+                    role="alert"
+                    className="space-y-3 rounded-xl border-2 border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800"
+                  >
+                    <div className="flex items-start gap-2">
+                      <ShieldAlert className="mt-0.5 size-5 shrink-0 text-rose-600" aria-hidden />
+                      <div>
+                        <p className="font-semibold">
+                          {alert?.full_name
+                            ? t("{name} is blacklisted", { name: alert.full_name })
+                            : t("This guest is blacklisted")}
+                        </p>
+                        {alert?.blacklist_reason && (
+                          <p className="mt-0.5">{alert.blacklist_reason}</p>
+                        )}
+                      </div>
+                    </div>
+                    {moreRooms.length > 0 ? (
+                      <p>{t("A multi-room booking can't override a blacklist. Book one room, or remove the flag on the guest profile.")}</p>
+                    ) : alert?.can_override ? (
+                      <>
+                        <label className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={blAck}
+                            onChange={(e) => setBlAck(e.target.checked)}
+                          />
+                          <span>{t("I understand and want to book this guest anyway")}</span>
+                        </label>
+                        {blAck && (
+                          <input
+                            className={inputCls}
+                            value={blReason}
+                            onChange={(e) => setBlReason(e.target.value)}
+                            placeholder={t("Reason for overriding the blacklist")}
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <p>{t("Only a Hotel Admin can book a blacklisted guest.")}</p>
+                    )}
+                  </div>
+                )}
 
                 {walkIn && (
                   <div className="grid gap-3 sm:grid-cols-3">
@@ -1941,7 +2038,7 @@ export function BookingDialog(props: {
                 <>
                 <Button
                   className="w-full justify-center py-2.5 text-base"
-                  disabled={busy || !form.guest_name || !quote || pastCheckIn || badPhone || badSlot}
+                  disabled={busy || !form.guest_name || !quote || pastCheckIn || badPhone || badSlot || blacklistBlocked}
                   onClick={() => submit()}
                 >
                   {busy ? t("Booking…") : t("Confirm booking")}
@@ -1957,7 +2054,7 @@ export function BookingDialog(props: {
                   <Button
                     variant="outline"
                     className="justify-center"
-                    disabled={busy || !form.guest_name || pastCheckIn || badPhone || badSlot}
+                    disabled={busy || !form.guest_name || pastCheckIn || badPhone || badSlot || blacklistBlocked}
                     onClick={() => submit(true)}
                     title={t("Park this stay with no room; promote when inventory frees")}
                   >

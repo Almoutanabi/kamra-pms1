@@ -4888,6 +4888,290 @@ def t115():
 	assert frappe.db.get_value("Reservation", out["reservation"], "source") == "Website"
 
 
+@check("night audit for D flags D's unarrived arrivals and dates their fee D")
+def t120():
+	from kamra.folio import run_night_audit
+	today = nowdate()
+	saved = frappe.db.get_value("Property", P, ["business_date", "no_show_charge"],
+	                            as_dict=True)
+	frappe.db.set_value("Property", P, {"business_date": today,
+	                                    "no_show_charge": "First Night"})
+	try:
+		frappe.db.delete("Night Audit Run", {"property": P, "business_date": today})
+		g = _guest("Eval Same Day NoShow", "+91 70000 00120")
+		due = _res(g, today, add_days(today, 1))
+		g2 = _guest("Eval Tomorrow Arrival", "+91 70000 00121")
+		later = _res(g2, add_days(today, 1), add_days(today, 2))
+		run_night_audit(P)
+		assert frappe.db.get_value("Reservation", due.name, "status") == "No Show"
+		assert frappe.db.get_value("Reservation", later.name, "status") == "Confirmed"
+		fee = frappe.get_all("Folio Charge", filters={
+			"reservation": due.name, "description": ("like", "No-show%")},
+			pluck="posting_date")
+		assert [str(x) for x in fee] == [str(today)], fee
+	finally:
+		frappe.db.set_value("Property", P, {
+			"business_date": saved.business_date,
+			"no_show_charge": saved.no_show_charge})
+
+
+@check("room nights under a rate plan add up to the quote's room total")
+def t121():
+	from kamra.folio import _nightly_room_rate
+	from kamra.pricing import quote
+	plans = [frappe.get_doc({
+		"doctype": "Rate Plan", "property": P, "rate_plan_name": name,
+		"code": code, "modifier_type": kind, "modifier_value": value,
+	}).insert(ignore_permissions=True).name
+		for name, code, kind, value in (
+			("Eval NR -15%", "EVNR15", "Percent", -15),
+			("Eval Flat -500", "EVFLAT500", "Amount", -500))]
+	ci, co = "2031-11-03", "2031-11-06"
+	g = _guest("Eval Rate Plan Stay", "+91 70000 00122")
+	for plan in plans:
+		res = frappe.get_doc({
+			"doctype": "Reservation", "property": P, "guest": g,
+			"room_type": RT, "check_in_date": ci, "check_out_date": co,
+			"adults": 2, "auto_price": 1, "rate_plan": plan,
+		}).insert(ignore_permissions=True)
+		q = quote(P, RT, ci, co, 2, 0, rate_plan=plan)
+		nights = sum(_nightly_room_rate(res, add_days(ci, i)) for i in range(3))
+		assert abs(nights - q["room_total"]) < 0.01, (plan, nights, q["room_total"])
+		plain = quote(P, RT, ci, co, 2, 0)["room_total"]
+		assert nights < plain, (plan, nights, plain)
+
+
+@check("setup wizard rooms get a floor (derived, or the one given)")
+def t140():
+	from kamra import api
+	assert api.default_floor("101") == "1"
+	assert api.default_floor("1205") == "12"
+	assert api.default_floor("007") == "Ground"
+	assert api.default_floor("Room 3") == "Ground"
+	out = api.setup_property({
+		"property": {"property_name": "EVAL Wizard Floors", "city": "Testville"},
+		"room_types": [{"code": "WZ", "name": "Wizard Room", "base_price": 3000}],
+		"rooms": [
+			{"room_type_code": "WZ", "numbers": ["101", "214", "Cottage"]},
+			{"room_type_code": "WZ", "numbers": ["P1"], "floor": "Penthouse"},
+		],
+	})
+	floors = dict(frappe.get_all(
+		"Room", filters={"property": out["property"]},
+		fields=["room_number", "floor"], as_list=True))
+	assert floors == {"101": "1", "214": "2", "Cottage": "Ground",
+	                  "P1": "Penthouse"}, floors
+
+
+@check("property kind change in Settings applies the rental preset, keeps explicit values")
+def t141():
+	from kamra.property_presets import STR_MODULES
+	from kamra.settings import save_settings
+	a = frappe.get_doc({"doctype": "Property", "property_name": "EVAL Kind Switch A",
+	                    "city": "Testville"}).insert(ignore_permissions=True)
+	save_settings(a.name, "general", {"property_kind": "Short Term Rental"})
+	mods = frappe.db.get_value("Property", a.name, "enabled_modules")
+	assert mods == ",".join(STR_MODULES), mods
+	assert "booking-engine" in mods.split(","), mods
+	# and back: the untouched STR list was the preset, so hotel = all again
+	save_settings(a.name, "general", {"property_kind": "Hotel"})
+	assert not frappe.db.get_value("Property", a.name, "enabled_modules")
+
+	# explicit admin choices survive a kind switch
+	b = frappe.get_doc({"doctype": "Property", "property_name": "EVAL Kind Switch B",
+	                    "city": "Testville", "enabled_modules": "front-desk,admin,fnb",
+	                    "overbooking_pct": 7, "hold_minutes": 45,
+	                    "booking_mode": "Request to Book"}).insert(ignore_permissions=True)
+	save_settings(b.name, "general", {"property_kind": "Short Term Rental"})
+	row = frappe.db.get_value("Property", b.name, [
+		"property_kind", "enabled_modules", "overbooking_pct", "hold_minutes",
+		"booking_mode"], as_dict=True)
+	assert row.property_kind == "Short Term Rental", row
+	assert row.enabled_modules == "front-desk,admin,fnb", row
+	assert (row.overbooking_pct, row.hold_minutes, row.booking_mode) == (
+		7, 45, "Request to Book"), row
+
+
+@check("demo heal fills doctype defaults a defaults-skipped seed left blank")
+def t142():
+	from kamra.scripts.seed_demo import heal_seed_defaults
+	was = frappe.flags.in_import
+	frappe.flags.in_import = True  # what the old demo reset left on
+	try:
+		prop = frappe.get_doc({"doctype": "Property", "property_name": "EVAL Blank Seed",
+		                       "city": "Testville"}).insert(ignore_permissions=True)
+		rt = frappe.get_doc({"doctype": "Room Type", "property": prop.name,
+		                     "room_type_code": "BLK", "room_type_name": "Blank",
+		                     "base_price": 3000}).insert(ignore_permissions=True)
+		room = frappe.get_doc({"doctype": "Room", "property": prop.name,
+		                       "room_number": "B1", "room_type": rt.name,
+		                       "floor": "1"}).insert(ignore_permissions=True)
+	finally:
+		frappe.flags.in_import = was
+	assert not frappe.db.get_value("Room", room.name, "housekeeping_status")
+	assert heal_seed_defaults((prop.name, P)) > 0
+	assert frappe.db.get_value("Room", room.name, "housekeeping_status") == "Clean"
+	row = frappe.db.get_value("Property", prop.name, [
+		"property_kind", "booking_engine_enabled", "gst_rate_low",
+		"gst_rate_high", "hold_minutes"], as_dict=True)
+	assert row.property_kind == "Hotel" and row.booking_engine_enabled == 1, row
+	assert (row.gst_rate_low, row.gst_rate_high, row.hold_minutes) == (5, 18, 120), row
+	# a property that got its defaults is not a heal target
+	assert heal_seed_defaults((P,)) == 0
+
+
+@check("demo seed: defaults applied, past-dated stays seeded, rentals are STR, tickets name real rooms")
+def t143():
+	from kamra.scripts import seed_demo
+	if frappe.db.exists("Property", seed_demo.PROPERTY):
+		# a dev site that already has the demo: the idempotent path must
+		# still leave the villa / homestay as bookable rentals
+		seed_demo.seed_generic_properties()
+	else:
+		before = frappe.db.get_default("kamra_demo_mode")
+		was = frappe.flags.in_import
+		frappe.flags.in_import = True  # reset_demo sets it for its wipe
+		try:
+			seed_demo.execute()
+		finally:
+			frappe.flags.in_import = was
+			frappe.db.set_default("kamra_demo_mode", before or "")
+		assert frappe.flags.in_import == was
+		dp = seed_demo.PROPERTY
+		assert not frappe.db.sql(
+			"select name from tabRoom where property=%s and ifnull(housekeeping_status,'')=''", dp)
+		pr = frappe.db.get_value("Property", dp, [
+			"booking_engine_enabled", "gst_rate_low", "checkin_time"], as_dict=True)
+		assert pr.booking_engine_enabled == 1 and pr.gst_rate_low == 5 and pr.checkin_time, pr
+		past = frappe.db.count("Reservation", {
+			"property": dp, "status": "Checked In", "check_in_date": ("<", nowdate())})
+		assert past >= 5, past
+		for subject, room in frappe.get_all(
+				"Service Ticket", filters={"property": dp, "room": ("is", "set")},
+				fields=["subject", "room"], as_list=True):
+			num = frappe.db.get_value("Room", room, "room_number")
+			assert num, (subject, room)
+			digits = [w for w in subject.replace(",", " ").split() if w.isdigit() and len(w) == 3]
+			assert not digits or digits == [num], (subject, num)
+	for name in seed_demo.RENTALS:
+		row = frappe.db.get_value("Property", name, [
+			"property_kind", "booking_engine_enabled", "enabled_modules"], as_dict=True)
+		assert row and row.property_kind == "Short Term Rental", (name, row)
+		assert row.booking_engine_enabled == 1, (name, row)
+		assert "booking-engine" in (row.enabled_modules or "booking-engine"), (name, row)
+
+
+@check("booking page: advance due now + balance at hotel come from the server, on search and on book")
+def t150():
+	from kamra import public_api
+	frappe.db.set_value("Property", P, {"booking_payment_mode": "Advance percent",
+	                                    "advance_percent": 25})
+	frappe.clear_document_cache("Property", P)
+	try:
+		rows = public_api.search_stay(P, "2031-05-10", "2031-05-11", 1, 0)
+		q = next(r["quote"] for r in rows if r["room_type"] == RT and r["quote"])
+		total = float(q["amount_after_tax"])
+		assert abs(q["advance_due"] - round(total * 0.25, 2)) < 0.01, q
+		assert abs(q["balance_at_hotel"] - (total - q["advance_due"])) < 0.01, q
+		out = public_api.book(
+			property=P, room_type=RT, check_in_date="2031-05-10",
+			check_out_date="2031-05-11", guest_name="Web Advance Guest",
+			phone="+919812300150", adults=1, children=0,
+		)
+		total = float(out["amount_after_tax"])
+		assert out["advance_due"] > 0 and not out["pay_at_hotel"], out
+		assert abs(out["advance_due"] + out["balance_at_hotel"] - total) < 0.01, out
+		assert "₹" not in out["payment_policy"] or public_api._public_locale(P)[
+			"currency_symbol"] == "₹", out["payment_policy"]
+	finally:
+		frappe.db.set_value("Property", P, "booking_payment_mode", "Pay at hotel")
+		frappe.clear_document_cache("Property", P)
+
+
+@check("blacklist: Hotel Admin only, reason required, logged; guest_alert flags the profile by pick or phone")
+def t151():
+	from kamra import api
+	g = _guest("Eval Blacklist Guest", "+91 70000 00151")
+	me = frappe.session.user
+	try:
+		frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		try:
+			api.set_guest_blacklist(g, 1, "damaged room")
+			raise AssertionError("Front Desk blacklisted a guest")
+		except frappe.PermissionError:
+			pass
+	finally:
+		frappe.set_user(me)  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+	try:
+		api.set_guest_blacklist(g, 1, "  ")
+		raise AssertionError("blacklisted without a reason")
+	except frappe.ValidationError:
+		pass
+	api.set_guest_blacklist(g, 1, "damaged room")
+	assert frappe.db.get_value("Guest", g, ["blacklisted", "blacklist_reason"]) == (1, "damaged room")
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_doctype": "Guest", "reference_name": g,
+		"action_type": "guest_blacklisted"})
+	by_pick = api.guest_alert(guest=g)
+	by_phone = api.guest_alert(phone="+91 70000 00151")
+	assert by_pick["blacklisted"] == 1 and by_pick["blacklist_reason"] == "damaged room", by_pick
+	assert by_phone["guest"] == g and by_phone["blacklisted"] == 1, by_phone
+	assert api.guest_alert(phone="+91 70000 09999")["blacklisted"] == 0
+	api.set_guest_blacklist(g, 0, "paid for damage")
+	assert frappe.db.get_value("Guest", g, "blacklisted") == 0
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_name": g, "action_type": "guest_blacklist_removed"})
+
+
+@check("blacklisted guest: booking refused; only a Hotel Admin with a reason may override (logged)")
+def t152():
+	from kamra import api
+	g = _guest("Eval Blacklist Book", "+91 70000 00152")
+	frappe.db.set_value("Guest", g, {"blacklisted": 1, "blacklist_reason": "fraud"})
+	kw = dict(property=P, room_type=RT, check_in_date="2031-06-01",
+	          check_out_date="2031-06-02", guest_name="Eval Blacklist Book", guest=g)
+	try:
+		api.create_booking(**kw)
+		raise AssertionError("blacklisted guest booked without override")
+	except frappe.ValidationError as e:
+		assert "blacklisted" in str(e).lower(), e
+	me = frappe.session.user
+	try:
+		frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		try:
+			api.create_booking(**kw, blacklist_override_reason="regular, settled")
+			raise AssertionError("Front Desk overrode a blacklist")
+		except frappe.PermissionError:
+			pass
+	finally:
+		frappe.set_user(me)  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		frappe.flags.kamra_blacklist_override = None
+	try:
+		out = api.create_booking(**kw, blacklist_override_reason="GM approved")
+	finally:
+		frappe.flags.kamra_blacklist_override = None
+	assert frappe.db.get_value("Reservation", out["reservation"], "guest") == g
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_name": g, "action_type": "blacklist_override"})
+
+
+@check("reservation_detail returns the meal plan's label, not its ID")
+def t153():
+	from kamra import api
+	frappe.db.delete("Meal Plan", {"property": P, "code": "EP"})  # rolled back after the run
+	mp = frappe.get_doc({"doctype": "Meal Plan", "property": P, "code": "EP",
+	                     "label": "Eval Breakfast 153", "price_per_adult": 0,
+	                     }).insert(ignore_permissions=True).name
+	g = _guest("Eval Meal Plan Guest", "+91 70000 00153")
+	res = frappe.get_doc({
+		"doctype": "Reservation", "property": P, "guest": g, "room_type": RT,
+		"check_in_date": "2031-07-01", "check_out_date": "2031-07-02",
+		"adults": 1, "meal_plan": mp,
+	}).insert(ignore_permissions=True)
+	d = api.reservation_detail(res.name)
+	assert d["meal_plan"] == mp and d["meal_plan_name"] == "Eval Breakfast 153", d["meal_plan_name"]
+
+
 
 # --- security deposits, day use, printable QR (t170-t179) -----------------
 
@@ -5209,7 +5493,8 @@ def execute():
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
-		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115,
+		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113,
+		           t114, t115, t120, t121, t140, t141, t142, t143, t150, t151, t152, t153,
 		           t170, t171, t172, t173, t174, t176, t177, t178, t179):
 			fn()
 	finally:

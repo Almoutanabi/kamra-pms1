@@ -2379,6 +2379,80 @@
      }
     },
     {
+     "name": "guest_alert",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.guest_alert",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.guest_alert"
+       ]
+      },
+      "description": "Is the guest a booking would attach to blacklisted? The desk asks\nbefore booking so the warning shows up front, not as a refusal at the\nend. Resolves exactly like create_booking: the chosen profile, else the\nprofile with this phone number.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"guest\": \"G-00001\",\n  \"phone\": \"+91 90000 00000\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "set_guest_blacklist",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.set_guest_blacklist",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.set_guest_blacklist"
+       ]
+      },
+      "description": "Blacklist a guest, or lift it. Hotel Admin only; a reason is required\neither way and lands in the activity log with the before/after.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"guest\": \"G-00001\",\n  \"blacklisted\": \"<blacklisted>\",\n  \"reason\": \"<reason>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
      "name": "merge_guests",
      "request": {
       "method": "POST",

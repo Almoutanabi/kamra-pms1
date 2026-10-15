@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **276 endpoints**, generated from the source
+the UI and the AI use. **278 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -829,6 +829,33 @@ Typeahead for attaching a booking to an existing profile.
 | --- | --- | --- |
 | `q` | yes |  |
 
+### `kamra.api.guest_alert`
+
+**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+
+Is the guest a booking would attach to blacklisted? The desk asks
+before booking so the warning shows up front, not as a refusal at the
+end. Resolves exactly like create_booking: the chosen profile, else the
+profile with this phone number.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `guest` | no | `None` |
+| `phone` | no | `None` |
+
+### `kamra.api.set_guest_blacklist`
+
+**POST**
+
+Blacklist a guest, or lift it. Hotel Admin only; a reason is required
+either way and lands in the activity log with the before/after.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `guest` | yes |  |
+| `blacklisted` | yes |  |
+| `reason` | yes |  |
+
 ### `kamra.api.merge_guests`
 
 **GET/POST**
@@ -1034,6 +1061,7 @@ booking, not a walk-in.
 | `idempotency_key` | no | `None` |
 | `check_in_time` | no | `None` |
 | `check_out_time` | no | `None` |
+| `blacklist_override_reason` | no | `None` |
 
 ### `kamra.api.upload_occupant_id`
 
@@ -1421,6 +1449,7 @@ ETA / ETD.
 | `over_capacity_charge` | no | `0` |
 | `check_in_time` | no | `None` |
 | `check_out_time` | no | `None` |
+| `blacklist_override_reason` | no | `None` |
 
 ### `kamra.api.waitlist`
 

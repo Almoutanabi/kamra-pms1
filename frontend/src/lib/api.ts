@@ -398,12 +398,32 @@ export interface GuestHit {
   email: string | null
   vip: 0 | 1
   blacklisted: 0 | 1
+  blacklist_reason?: string | null
   stays: number
   last_stay: string | null
 }
 
 export const guestSearch = (q: string) =>
   call<GuestHit[]>("kamra.api.guest_search", { q })
+
+/** Server-side blacklist check for the guest a booking would attach to:
+ *  the picked profile, else the profile matching this phone. */
+export interface GuestAlert {
+  guest: string | null
+  full_name?: string | null
+  blacklisted: 0 | 1
+  blacklist_reason: string | null
+  can_override?: 0 | 1
+}
+
+export const guestAlert = (params: { guest?: string; phone?: string }) =>
+  call<GuestAlert>("kamra.api.guest_alert", params)
+
+export const setGuestBlacklist = (guest: string, blacklisted: boolean, reason: string) =>
+  call<{ guest: string; blacklisted: 0 | 1; blacklist_reason: string | null }>(
+    "kamra.api.set_guest_blacklist",
+    { guest, blacklisted: blacklisted ? 1 : 0, reason },
+  )
 
 export const createBooking = (
   params: QuoteParams & {
@@ -428,6 +448,7 @@ export const createBooking = (
     /** HH:MM - a day-use slot, or the ETA / ETD of an overnight stay */
     check_in_time?: string
     check_out_time?: string
+    blacklist_override_reason?: string
   },
 ) =>
   call<{
@@ -1540,6 +1561,8 @@ export interface ReservationDetail {
   room_type: string | null
   room_type_name: string | null
   meal_plan: string | null
+  /** The meal plan's label - meal_plan is its internal ID. */
+  meal_plan_name?: string | null
   rate_plan: string | null
   special_requests: string | null
   eta: string | null
