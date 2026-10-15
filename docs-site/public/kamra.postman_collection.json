@@ -4768,6 +4768,122 @@
    ]
   },
   {
+   "name": "Request to Book (accept / decline)",
+   "item": [
+    {
+     "name": "booking_requests",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.booking_requests.booking_requests",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.booking_requests.booking_requests"
+       ]
+      },
+      "description": "Pending Request-to-Book stays (status Requested), oldest first, each\nwith whether it can be accepted right now. Requests hold no inventory\nuntil accepted - rooms_free is live availability, not a reservation.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "accept_booking_request",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.booking_requests.accept_booking_request",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.booking_requests.accept_booking_request"
+       ]
+      },
+      "description": "Accept a Request-to-Book stay: confirm it and take the inventory,\nassigning a free room of its type (or `room`). Every booking rule runs\nagain - double-booking guard, villa <-> room lockout, category capacity,\ngroup-block holds - so a request whose dates sold in the meantime is\nrefused with the reason; decline it instead.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"room\": \"Your Property-101\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "decline_booking_request",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.booking_requests.decline_booking_request",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.booking_requests.decline_booking_request"
+       ]
+      },
+      "description": "Decline a Request-to-Book stay with a reason (required). The stay is\ncancelled with no cancellation fee - a request was never confirmed - and\nany room it pointed at is freed. The guest is told by WhatsApp / email\nwhen the property has them set up; otherwise the decline is just logged.\nAn OTA request must also be declined on the OTA's side.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"reason\": \"<reason>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "Restaurant POS & kitchen",
    "item": [
     {

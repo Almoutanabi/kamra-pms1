@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Kamra exposes **86 governed tools** on the hosted MCP
+Kamra exposes **89 governed tools** on the hosted MCP
 endpoint (`/mcp`) and the stdio sidecar (`mcp/kamra_mcp.py`). Every
 call runs as the connected user — **role** permissions apply, tools
 are further filtered by the property's **enabled modules**, prices
@@ -96,6 +96,33 @@ elsewhere, Other. Only waive the fee when a manager authorizes it;
 the waiver is logged.
 
 Endpoint: `kamra.api.cancel_reservation`.
+Mutating — logged to the activity ledger.
+
+### `booking_requests()`
+
+Pending Request-to-Book stays (status Requested) waiting for the
+host, with whether each can be accepted right now (rooms_free,
+blocker). A request holds NO room until it is accepted.
+
+Endpoint: `kamra.booking_requests.booking_requests`.
+
+### `accept_booking_request(reservation, room)`
+
+Accept a Request-to-Book stay: confirms it and takes a room of its
+type (or the room given). Refused when the dates sold out meanwhile,
+the villa/room lockout applies or a group block holds the rooms -
+then decline it or offer other dates.
+
+Endpoint: `kamra.booking_requests.accept_booking_request`.
+Mutating — logged to the activity ledger.
+
+### `decline_booking_request(reservation, reason)`
+
+Decline a Request-to-Book stay. A reason is required and is sent
+to the guest (WhatsApp / email when the property has them set up).
+No cancellation fee - the stay was never confirmed.
+
+Endpoint: `kamra.booking_requests.decline_booking_request`.
 Mutating — logged to the activity ledger.
 
 ### `check_in(reservation, room)`

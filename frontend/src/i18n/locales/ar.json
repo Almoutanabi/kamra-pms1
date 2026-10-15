@@ -1253,5 +1253,16 @@
   "The guest is in-house: the old room is marked Dirty for housekeeping.": "النزيل مقيم: تُعلَّم الغرفة السابقة متسخة للتدبير المنزلي.",
   "Guest request": "طلب النزيل",
   "Upgrade": "ترقية",
-  "Noise / complaint": "إزعاج / شكوى"
+  "Noise / complaint": "إزعاج / شكوى",
+  "Booking requests": "طلبات الحجز",
+  "Requests don't hold a room. Accepting checks availability again.": "الطلبات لا تحجز غرفة. القبول يتحقق من التوفر مرة أخرى.",
+  "{n} free now": "{n} متاحة الآن",
+  "Decline request": "رفض الطلب",
+  "Reason (sent to the guest)": "السبب (يُرسل إلى الضيف)",
+  "Accepted {name}.": "تم قبول {name}.",
+  "Declined {name}.": "تم رفض {name}.",
+  "Guest told by {via}.": "تم إبلاغ الضيف عبر {via}.",
+  "Requested": "مطلوب",
+  "Held": "محجوز مؤقتًا",
+  "Pending Payment": "بانتظار الدفع"
 }

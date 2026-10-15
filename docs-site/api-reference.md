@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **274 endpoints**, generated from the source
+the UI and the AI use. **277 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -1728,6 +1728,51 @@ for NEFT processing (e.g. Tuesday/Saturday payout batches).
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
+
+
+## Request to Book (accept / decline)
+
+### `kamra.booking_requests.booking_requests`
+
+**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+
+Pending Request-to-Book stays (status Requested), oldest first, each
+with whether it can be accepted right now. Requests hold no inventory
+until accepted - rooms_free is live availability, not a reservation.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.booking_requests.accept_booking_request`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Accept a Request-to-Book stay: confirm it and take the inventory,
+assigning a free room of its type (or `room`). Every booking rule runs
+again - double-booking guard, villa &lt;-> room lockout, category capacity,
+group-block holds - so a request whose dates sold in the meantime is
+refused with the reason; decline it instead.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `room` | no | `None` |
+
+### `kamra.booking_requests.decline_booking_request`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Decline a Request-to-Book stay with a reason (required). The stay is
+cancelled with no cancellation fee - a request was never confirmed - and
+any room it pointed at is freed. The guest is told by WhatsApp / email
+when the property has them set up; otherwise the decline is just logged.
+An OTA request must also be declined on the OTA's side.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `reason` | yes |  |
 
 
 ## Restaurant POS & kitchen

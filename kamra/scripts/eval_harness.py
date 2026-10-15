@@ -4888,6 +4888,291 @@ def t115():
 	assert frappe.db.get_value("Reservation", out["reservation"], "source") == "Website"
 
 
+# ── t160-t169: request-to-book inbox, symmetric villa/room availability,
+#    group-block holds with auto-release ─────────────────────────────────
+
+
+def _inv_property(name, code, rooms=2, with_villa=True, mode=None):
+	"""A fresh property: a bedroom type with `rooms` rooms and (with_villa)
+	a whole-villa type sold over those rooms - the hybrid estate."""
+	frappe.get_doc({
+		"doctype": "Property", "property_name": name, "city": "Testville",
+		"gst_mode": "Slab", "gst_slab_threshold": 7500,
+		"gst_rate_low": 5, "gst_rate_high": 18,
+		**({"booking_mode": mode} if mode else {}),
+	}).insert(ignore_permissions=True)
+	bed = frappe.get_doc({
+		"doctype": "Room Type", "property": name, "room_type_code": code,
+		"room_type_name": f"Eval Bed {code}", "base_price": 5000,
+		"base_occupancy": 2, "adults_capacity": 2, "tax_percent": 5,
+	}).insert(ignore_permissions=True).name
+	rooms_ = [frappe.get_doc({"doctype": "Room", "property": name,
+	                          "room_number": f"{code}{i}", "room_type": bed,
+	                          "housekeeping_status": "Clean"}
+	                         ).insert(ignore_permissions=True).name
+	          for i in range(1, rooms + 1)]
+	villa = None
+	if with_villa:
+		villa = frappe.get_doc({
+			"doctype": "Room Type", "property": name,
+			"room_type_code": f"{code}V", "room_type_name": f"Eval Villa {code}",
+			"base_price": 20000, "base_occupancy": 4, "adults_capacity": 6,
+			"room_category": "Villa", "tax_percent": 18,
+		}).insert(ignore_permissions=True).name
+	return bed, villa, rooms_
+
+
+def _stay(prop, rt, ci, co, room=None, status=None, group=None, name="Eval Inv"):
+	doc = frappe.get_doc({
+		"doctype": "Reservation", "property": prop, "room_type": rt,
+		"guest": _guest(name, "+91 7%09d" % (int(frappe.generate_hash(length=8), 16) % 10**9)),
+		"room": room, "check_in_date": ci, "check_out_date": co,
+		"adults": 2, "auto_price": 1, "group_booking": group,
+	})
+	if status:
+		doc.status = status
+	return doc.insert(ignore_permissions=True)
+
+
+def _left(prop, rt, ci, co):
+	from kamra import public_api
+	return next(r["rooms_left"] for r in public_api.search_stay(prop, ci, co)
+	            if r["room_type"] == rt)
+
+
+@check("villa lockout: a booked whole villa takes its member rooms off sale everywhere")
+def t160():
+	from kamra import api
+	from kamra import channel_manager as cm
+	VP = "EVAL Inv Villa A"
+	bed, villa, _r = _inv_property(VP, "IVA", rooms=2)
+	ci, co = add_days(nowdate(), 20), add_days(nowdate(), 22)
+	assert (_left(VP, bed, ci, co), _left(VP, villa, ci, co)) == (2, 1), \
+		(_left(VP, bed, ci, co), _left(VP, villa, ci, co))
+	_stay(VP, villa, ci, co)
+	assert api._available_rooms_raw(VP, bed, ci, co) == [], "member rooms still on desk sale"
+	assert _left(VP, bed, ci, co) == 0, "member rooms still on the booking engine"
+	assert cm._sellable(VP, bed, ci, co) == 0
+	cal = api.availability_calendar(VP, ci, 3)
+	cells = {r["room_type"]: [c["available"] for c in r["cells"]] for r in cal["room_types"]}
+	assert cells[bed] == [0, 0, 2], cells
+	# the night after check-out is free again
+	assert _left(VP, bed, co, add_days(co, 1)) == 2
+
+
+@check("villa lockout: any booked member room takes the whole villa off sale; ARI pushes the reduced counts")
+def t161():
+	from kamra import api
+	from kamra import channel_manager as cm
+	VP = "EVAL Inv Villa B"
+	bed, villa, rooms = _inv_property(VP, "IVB", rooms=2)
+	conn = frappe.get_doc({"doctype": "Channel Manager Connection", "property": VP,
+	                       "provider": "AioSell", "active": 1,
+	                       "external_property_id": "eval-ivb"}).insert(ignore_permissions=True)
+	for rt, ext in ((bed, "bed"), (villa, "villa")):
+		frappe.get_doc({"doctype": "Channel Room Mapping", "connection": conn.name,
+		                "room_type": rt, "external_room_id": ext,
+		                "external_rate_id": ext + "-r"}).insert(ignore_permissions=True)
+	today = nowdate()
+	# an OTA-style stay with no room number yet still locks the villa out
+	_stay(VP, bed, add_days(today, 1), add_days(today, 2))
+	assert api._available_rooms_raw(VP, villa, add_days(today, 1), add_days(today, 2)) == []
+	assert _left(VP, villa, add_days(today, 1), add_days(today, 2)) == 0
+	assert _left(VP, villa, add_days(today, 2), add_days(today, 3)) == 1
+	snap = {r["room_type"]: [d["available"] for d in r["days"]]
+	        for r in cm.ari_snapshot(VP, conn.name, days=4)}
+	assert snap[villa] == [1, 0, 1, 1], snap
+	assert snap[bed] == [2, 1, 2, 2], snap
+	# and the other way: a villa night zeroes both bedrooms on the push
+	_stay(VP, villa, add_days(today, 3), add_days(today, 4))
+	snap = {r["room_type"]: [d["available"] for d in r["days"]]
+	        for r in cm.ari_snapshot(VP, conn.name, days=4)}
+	assert snap[bed] == [2, 1, 2, 0], snap
+	assert snap[villa] == [1, 0, 1, 0], snap
+
+
+@check("request to book: a Requested stay holds no room; the inbox lists it; accept assigns a room")
+def t162():
+	from kamra import booking_requests as br
+	from kamra import public_api
+	RP = "EVAL Inv Requests"
+	bed, _v, rooms = _inv_property(RP, "IRQ", rooms=1, with_villa=False, mode="Request to Book")
+	ci, co = add_days(nowdate(), 30), add_days(nowdate(), 32)
+	out = public_api.book(property=RP, room_type=bed, check_in_date=ci,
+	                      check_out_date=co, guest_name="Request Guest",
+	                      phone="+919812300160", adults=2, children=0)
+	name = out["reservation"]
+	assert frappe.db.get_value("Reservation", name, "status") == "Requested"
+	assert not frappe.db.get_value("Reservation", name, "room")
+	# keeps today's behaviour: the request holds nothing until accepted
+	assert _left(RP, bed, ci, co) == 1, "a Requested stay took inventory"
+	inbox = br.booking_requests(RP)
+	assert inbox["holds_inventory"] is False and inbox["count"] == 1, inbox
+	row = inbox["requests"][0]
+	assert row["name"] == name and row["can_accept"] and row["rooms_free"] == 1, row
+	res = br.accept_booking_request(name)
+	assert res["status"] == "Confirmed" and res["room"] == rooms[0], res
+	assert _left(RP, bed, ci, co) == 0
+	assert br.booking_requests(RP)["count"] == 0
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_name": name, "action_type": "booking_request_accepted"})
+
+
+@check("request to book: accept refuses clearly when the inventory is gone, or the villa lockout applies")
+def t163():
+	from kamra import booking_requests as br
+	from kamra.kamra.doctype.reservation.reservation import InventoryRefused
+	RP = "EVAL Inv Requests B"
+	bed, villa, rooms = _inv_property(RP, "IRB", rooms=1)
+	ci, co = add_days(nowdate(), 40), add_days(nowdate(), 41)
+	req = _stay(RP, bed, ci, co, status="Requested", name="Late Request")
+	_stay(RP, bed, ci, co, room=rooms[0])  # the last room sells meanwhile
+	row = br.booking_requests(RP)["requests"][0]
+	assert not row["can_accept"] and "free" in row["blocker"], row
+	frappe.db.savepoint("eval_t163")
+	try:
+		br.accept_booking_request(req.name)
+		raise AssertionError("accepted with no inventory")
+	except InventoryRefused as e:
+		assert "no Eval Bed IRB room is free" in str(e), e
+	frappe.db.rollback(save_point="eval_t163")
+	assert frappe.db.get_value("Reservation", req.name, "status") == "Requested"
+	# a whole-villa request while a member room is booked: the lockout
+	vreq = _stay(RP, villa, ci, co, status="Requested", name="Villa Request")
+	frappe.db.savepoint("eval_t163b")
+	try:
+		br.accept_booking_request(vreq.name)
+		raise AssertionError("villa accepted over a booked member room")
+	except InventoryRefused as e:
+		assert "villa and its rooms" in str(e), e
+	frappe.db.rollback(save_point="eval_t163b")
+
+
+@check("request to book: decline needs a reason, cancels with no fee, logs, and is role-gated")
+def t164():
+	from kamra import booking_requests as br
+	RP = "EVAL Inv Requests C"
+	bed, _v, _r = _inv_property(RP, "IRC", rooms=1, with_villa=False)
+	ci, co = add_days(nowdate(), 50), add_days(nowdate(), 52)
+	req = _stay(RP, bed, ci, co, status="Requested", name="Declined Guest")
+	try:
+		br.decline_booking_request(req.name, "  ")
+		raise AssertionError("declined without a reason")
+	except frappe.ValidationError as e:
+		assert "reason" in str(e).lower(), e
+	frappe.set_user("hk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	try:
+		br.decline_booking_request(req.name, "Closed for a private event")
+		raise AssertionError("housekeeping declined a booking request")
+	except frappe.PermissionError:
+		pass
+	finally:
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	out = br.decline_booking_request(req.name, "Closed for a private event")
+	assert out["status"] == "Cancelled" and out["fee"] == 0, out
+	assert out["cancellation_number"], out
+	doc = frappe.get_doc("Reservation", req.name)
+	assert float(doc.cancellation_fee or 0) == 0 and "private event" in doc.cancellation_note
+	assert not frappe.db.exists("Folio", {"reservation": req.name}), "decline posted a fee"
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_name": req.name, "action_type": "booking_request_declined"})
+	try:
+		br.accept_booking_request(req.name)
+		raise AssertionError("a declined request was accepted")
+	except frappe.ValidationError as e:
+		assert "not a pending request" in str(e), e
+	assert _left(RP, bed, ci, co) == 1
+
+
+@check("group block: unpicked rooms are held off public/OTA sale; pickups are not double-counted")
+def t165():
+	from kamra import api
+	from kamra import channel_manager as cm
+	from kamra.kamra.doctype.reservation.reservation import InventoryRefused
+	GP = "EVAL Inv Groups"
+	bed, _v, _r = _inv_property(GP, "IGB", rooms=4, with_villa=False)
+	ci, co = add_days(nowdate(), 60), add_days(nowdate(), 62)
+	gb = api.create_group_block(GP, "Eval Wedding", ci, co,
+	                            [{"room_type": bed, "rooms_blocked": 3}])
+	name = gb["group_booking"] if isinstance(gb, dict) else gb
+	assert _left(GP, bed, ci, co) == 4, "an Open (proposal) block held rooms"
+	api.save_group_blocks(name, [{"room_type": bed, "rooms_blocked": 3}],
+	                      status="Confirmed")
+	assert _left(GP, bed, ci, co) == 1, _left(GP, bed, ci, co)
+	assert cm._sellable(GP, bed, ci, co) == 1
+	api.pickup_group_room(name, bed, "Eval Bride")
+	# the pickup is a real reservation; the hold shrinks by one
+	assert api._block_hold(GP, bed, ci, co) == 2
+	assert _left(GP, bed, ci, co) == 1, "pickup double-counted"
+	_stay(GP, bed, ci, co, name="Walk-in Eval")  # the one free room
+	frappe.db.savepoint("eval_t165")
+	try:
+		_stay(GP, bed, ci, co, name="Over Block")
+		raise AssertionError("sold a room the group block holds")
+	except InventoryRefused as e:
+		assert "held for group blocks" in str(e), e
+	frappe.db.rollback(save_point="eval_t165")
+	# the group itself can still pick up its held rooms
+	api.pickup_group_room(name, bed, "Eval Groom")
+
+
+@check("group block: default cutoff 7 days before arrival; after it the release job frees unpicked rooms once")
+def t166():
+	from kamra import api
+	from kamra import group_blocks as gbk
+	GP = "EVAL Inv Release"
+	bed, _v, _r = _inv_property(GP, "IRL", rooms=3, with_villa=False)
+	ci, co = add_days(nowdate(), 30), add_days(nowdate(), 31)
+	gb = api.create_group_block(GP, "Eval Conference", ci, co,
+	                            [{"room_type": bed, "rooms_blocked": 2}])
+	name = gb["group_booking"] if isinstance(gb, dict) else gb
+	assert str(frappe.db.get_value("Group Booking", name, "cutoff_date")) \
+		== str(add_days(ci, -7)), frappe.db.get_value("Group Booking", name, "cutoff_date")
+	# a short-lead block holds until the day before arrival
+	assert gbk.default_cutoff(add_days(nowdate(), 3)) == str(add_days(nowdate(), 2))
+	api.save_group_blocks(name, [{"room_type": bed, "rooms_blocked": 2}],
+	                      status="Confirmed")
+	api.pickup_group_room(name, bed, "Eval Speaker")
+	assert _left(GP, bed, ci, co) == 1
+	assert not any(r["group_booking"] == name for r in gbk.release_expired_blocks())
+	# the cutoff passes
+	frappe.db.set_value("Group Booking", name, "cutoff_date", add_days(nowdate(), -1))
+	out = [r for r in gbk.release_expired_blocks() if r["group_booking"] == name]
+	assert out == [{"group_booking": name, "rooms_released": 1}], out
+	assert frappe.db.get_value("Group Booking", name, "released_on")
+	row = frappe.get_all("Group Room Block", filters={"parent": name},
+	                     fields=["rooms_blocked", "rooms_released"])[0]
+	assert (row.rooms_blocked, row.rooms_released) == (2, 1), row
+	assert _left(GP, bed, ci, co) == 2, "released rooms not back on sale"
+	assert frappe.db.exists("Agent Action Log", {
+		"reference_name": name, "action_type": "group_block_release"})
+	assert not [r for r in gbk.release_expired_blocks() if r["group_booking"] == name], \
+		"released twice"
+	detail = api.group_detail(name)
+	assert detail["group"]["released_on"] and not detail["group"]["holds_inventory"]
+	assert detail["pickup"][0]["rooms_released"] == 1, detail["pickup"]
+	# pushing the cutoff back re-opens the hold
+	api.save_group_blocks(name, [{"room_type": bed, "rooms_blocked": 2}],
+	                      cutoff_date=str(add_days(nowdate(), 5)))
+	assert not frappe.db.get_value("Group Booking", name, "released_on")
+	assert _left(GP, bed, ci, co) == 1
+
+
+@check("request inbox + accept/decline are front-desk MCP tools; the release job is scheduled")
+def t167():
+	from kamra.hooks import scheduler_events
+	from kamra.mcp_tools import BY_NAME
+	for n in ("accept_booking_request", "decline_booking_request"):
+		spec = BY_NAME[n]
+		assert spec.mutating and spec.group == "Front desk", spec
+		assert spec.module == "front-desk", spec
+	assert not BY_NAME["booking_requests"].mutating
+	assert BY_NAME["booking_requests"].inject_property
+	assert BY_NAME["decline_booking_request"].required == ("reservation", "reason")
+	assert "kamra.group_blocks.release_expired_blocks" in \
+		scheduler_events["cron"]["*/15 * * * *"]
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4906,7 +5191,8 @@ def execute():
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
-		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115):
+		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115,
+		           t160, t161, t162, t163, t164, t165, t166, t167):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
