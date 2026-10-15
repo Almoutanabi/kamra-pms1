@@ -241,6 +241,251 @@ def t3d():
 	_assert_within_guardrails(rails, RT, 22500, "2030-03-08", "2030-03-08")
 
 
+@check("cancellation tiers: free, part-refund and no-refund bands")
+def t3f():
+	"""Most properties refund on a sliding scale - free a week out, half
+	inside that, nothing in the last few days. One window and one fee basis
+	cannot express the middle band."""
+	from kamra.api import cancellation_tier_for
+
+	prop = frappe.get_doc("Property", P)
+	had = list(prop.get("cancellation_tiers") or [])
+	prop.set("cancellation_tiers", [])
+	for days, pct in ((7, 0), (3, 50), (0, 100)):
+		prop.append("cancellation_tiers",
+		            {"days_before": days, "charge_pct": pct})
+	prop.save(ignore_permissions=True)
+	try:
+		def pct(d):
+			t = cancellation_tier_for(P, d)
+			assert t is not None, f"no tier for {d} days"
+			return t["charge_pct"]
+
+		assert pct(30) == 0, "a month out should be free"
+		assert pct(7) == 0, "exactly seven days is still free"
+		assert pct(6) == 50, "six days falls in the half band"
+		assert pct(3) == 50, "exactly three days is still half"
+		assert pct(2) == 100, "two days out is non-refundable"
+		assert pct(0) == 100, "day of arrival is non-refundable"
+
+		# the fee follows the band, not a whole-stay/first-night basis
+		from kamra.folio import policy_fee
+		res = frappe._dict({"amount_before_tax": 20000})
+		assert policy_fee(res, "", pct=50) == 10000.0
+		assert policy_fee(res, "", pct=0) == 0.0
+
+		# a property with no tiers keeps the old single-window behaviour
+		prop.set("cancellation_tiers", [])
+		prop.save(ignore_permissions=True)
+		assert cancellation_tier_for(P, 5) is None, "tiers should be off"
+	finally:
+		prop.reload()
+		prop.set("cancellation_tiers", [])
+		for row in had:
+			prop.append("cancellation_tiers",
+			            {"days_before": row.days_before,
+			             "charge_pct": row.charge_pct, "label": row.label})
+		prop.save(ignore_permissions=True)
+
+
+@check("children fill the base occupancy when the room type says so")
+def t3g():
+	"""A whole-place rate buys the house up to its base occupancy. Six adults
+	and two children in a house that sleeps eight have already paid for all
+	eight beds - charging the children again bills the same beds twice."""
+	from kamra.pricing import occupancy_rate
+
+	villa = frappe.get_doc({
+		"doctype": "Room Type", "property": P, "room_type_code": "ECH",
+		"room_type_name": "Eval Child Villa", "base_price": 22500,
+		"base_occupancy": 8, "extra_adult_price": 1600,
+		"child_price": 1200, "adults_capacity": 14, "children_capacity": 6,
+	}).insert(ignore_permissions=True)
+	try:
+		# default (flag off): every child is charged, as a per-room rate does
+		assert occupancy_rate(villa, 6, 2) == 24900, "6+2 default"
+		assert occupancy_rate(villa, 8, 2) == 24900, "8+2 default"
+
+		villa.children_within_base_occupancy = 1
+		# the party fits inside the base occupancy, so nothing extra
+		assert occupancy_rate(villa, 6, 2) == 22500, "6+2 fits the house"
+		assert occupancy_rate(villa, 8, 0) == 22500, "8 adults fill it"
+		assert occupancy_rate(villa, 2, 2) == 22500, "a small party pays the house"
+		# only the guests beyond base occupancy are charged
+		assert occupancy_rate(villa, 8, 2) == 24900, "two children beyond eight"
+		assert occupancy_rate(villa, 7, 3) == 24900, "two of three beyond eight"
+		# adults beyond base occupancy still carry the adult rate
+		assert occupancy_rate(villa, 10, 0) == 25700, "two extra adults"
+		assert occupancy_rate(villa, 10, 1) == 26900, "plus one child"
+
+		# a small-group rate is per head already, so children are charged there
+		villa.small_group_max_adults = 6
+		villa.small_group_price_per_adult = 4000
+		assert occupancy_rate(villa, 3, 1) == 13200, "per-head plus one child"
+	finally:
+		frappe.delete_doc("Room Type", villa.name, force=True,
+		                  ignore_permissions=True)
+
+
+@check("peak dates can demand a minimum stay and refuse refunds")
+def t3h():
+	"""New Year wants two nights and no refunds. That rule belongs on the
+	Season that already prices those dates, not in a second calendar."""
+	from kamra.pricing import stay_season_rules
+
+	season = frappe.get_doc({
+		"doctype": "Season", "property": P, "season_name": "EVAL Peak",
+		"start_date": "2030-12-30", "end_date": "2031-01-02",
+		"adjustment_type": "Percent", "adjustment_value": 0,
+		"minimum_nights": 2, "non_refundable": 1, "priority": 50,
+	}).insert(ignore_permissions=True)
+	try:
+		# a stay touching the peak window inherits its rules
+		peak = stay_season_rules(P, "2030-12-31", "2031-01-01")
+		assert peak["minimum_nights"] == 2, peak
+		assert peak["non_refundable"] is True, peak
+		assert peak["season"] == "EVAL Peak", peak
+
+		# a stay that only clips the first night still counts
+		edge = stay_season_rules(P, "2030-12-29", "2030-12-31")
+		assert edge["minimum_nights"] == 2, edge
+
+		# dates outside the window are untouched
+		off = stay_season_rules(P, "2030-06-01", "2030-06-02")
+		assert off["minimum_nights"] == 0, off
+		assert off["non_refundable"] is False, off
+
+		# and a one-night peak booking is refused
+		try:
+			frappe.get_doc({
+				"doctype": "Reservation", "property": P, "room_type": RT,
+				"guest": _guest("Eval Peak", "+91 70000 00031"),
+				"check_in_date": "2030-12-31",
+				"check_out_date": "2031-01-01", "adults": 2, "children": 0,
+				"auto_price": 1, "status": "Confirmed",
+			}).insert(ignore_permissions=True)
+			raise AssertionError("one night over the peak window was allowed")
+		except frappe.ValidationError:
+			pass
+	finally:
+		frappe.delete_doc("Season", season.name, force=True,
+		                  ignore_permissions=True)
+
+
+@check("a stay touching a weekend loses the small-group rate throughout")
+def t3i():
+	"""Villas that price small midweek parties per head treat a stay that
+	runs into the weekend as a weekend stay - you cannot have the Thursday
+	night of a Thursday-to-Saturday booking at the per-head rate."""
+	from kamra.pricing import occupancy_rate, quote, small_group_allows_stay
+
+	villa = frappe.get_doc({
+		"doctype": "Room Type", "property": P, "room_type_code": "EWS",
+		"room_type_name": "Eval Weekend Stay", "base_price": 22500,
+		"base_occupancy": 8, "extra_adult_price": 1600,
+		"adults_capacity": 14, "children_capacity": 6, "tax_percent": 0,
+		"small_group_max_adults": 6, "small_group_price_per_adult": 4000,
+		"small_group_days": "sun,mon,tue,wed,thu",
+		"small_group_whole_stay": 1,
+	}).insert(ignore_permissions=True)
+	try:
+		# 2030-03-05 Tue, 2030-03-07 Thu, 2030-03-08 Fri
+		assert getdate("2030-03-07").strftime("%a").lower() == "thu"
+		assert getdate("2030-03-08").strftime("%a").lower() == "fri"
+
+		# midweek only: the rate stands
+		assert small_group_allows_stay(villa, "2030-03-05", "2030-03-07")
+		# runs into Friday: off for every night of the stay
+		assert not small_group_allows_stay(villa, "2030-03-07", "2030-03-09")
+
+		# the Thursday night of that stay is the house rate, not 4 x 4,000
+		assert occupancy_rate(villa, 4, 0, "2030-03-07",
+		                      allow_small_group=False) == 22500
+		# and on its own it is still per head
+		assert occupancy_rate(villa, 4, 0, "2030-03-07") == 16000
+
+		# end to end: Thursday + Friday for four guests is two house nights
+		q = quote(P, villa.name, "2030-03-07", "2030-03-09", 4, 0)
+		assert [n["rate"] for n in q["nightly"]] == [22500.0, 22500.0], q["nightly"]
+
+		# with the flag off, each night is judged on its own again
+		villa.small_group_whole_stay = 0
+		villa.save(ignore_permissions=True)
+		q2 = quote(P, villa.name, "2030-03-07", "2030-03-09", 4, 0)
+		assert [n["rate"] for n in q2["nightly"]] == [16000.0, 22500.0], q2["nightly"]
+	finally:
+		frappe.delete_doc("Room Type", villa.name, force=True,
+		                  ignore_permissions=True)
+
+
+@check("over-capacity guests are booked by arrangement, at an agreed price")
+def t3j():
+	"""A room takes a few more than it sleeps comfortably, by arrangement.
+	What those guests cost is agreed with the guest, not read off a rate
+	card - so the engine stops at capacity and the booking carries the
+	number and the price someone actually agreed."""
+	from kamra.pricing import occupancy_rate
+
+	villa = frappe.get_doc({
+		"doctype": "Room Type", "property": P, "room_type_code": "EOC",
+		"room_type_name": "Eval Over Capacity", "base_price": 22500,
+		"base_occupancy": 8, "extra_adult_price": 1600,
+		"adults_capacity": 14, "children_capacity": 6,
+		"max_extra_beds": 3, "tax_percent": 0,
+	}).insert(ignore_permissions=True)
+	g = _guest("Eval Crowded", "+91 70000 00032")
+	base = {
+		"doctype": "Reservation", "property": P, "guest": g,
+		"room_type": villa.name, "check_in_date": "2031-04-01",
+		"check_out_date": "2031-04-02", "auto_price": 1,
+	}
+	made = []
+	try:
+		# the rate card covers the room as sold, and stops at its capacity
+		assert occupancy_rate(villa, 14, 0) == 22500 + 6 * 1600, "at capacity"
+		assert occupancy_rate(villa, 17, 0) == 22500 + 6 * 1600, \
+			"the engine must not invent a price beyond capacity"
+
+		r = frappe.get_doc({**base, "adults": 14}).insert(ignore_permissions=True)
+		made.append(r.name)
+
+		# above capacity without a reason: refused, and the message says why
+		try:
+			frappe.get_doc({**base, "adults": 15}).insert(ignore_permissions=True)
+			raise AssertionError("15 adults went in with no reason given")
+		except frappe.ValidationError as e:
+			assert "arrangement" in str(e), str(e)
+
+		# with a reason, the count and the agreed price: allowed
+		r = frappe.get_doc({
+			**base, "adults": 17,
+			"over_capacity_reason": "Group happy to share the king beds",
+			"over_capacity_guests": 3, "over_capacity_charge": 5000,
+		}).insert(ignore_permissions=True)
+		made.append(r.name)
+		assert r.over_capacity_charge == 5000, r.over_capacity_charge
+
+		# beyond the extra beds: still refused, reason or not
+		try:
+			frappe.get_doc({
+				**base, "adults": 18,
+				"over_capacity_reason": "Tried it on",
+			}).insert(ignore_permissions=True)
+			raise AssertionError("18 adults exceeded capacity plus beds")
+		except frappe.ValidationError:
+			pass
+
+		# the agreed amount rides the room night, so it reaches the folio
+		from kamra.folio import _nightly_room_rate
+		assert _nightly_room_rate(r, "2031-04-01") == 22500 + 6 * 1600 + 5000
+	finally:
+		for n in made:
+			frappe.delete_doc("Reservation", n, force=True,
+			                  ignore_permissions=True)
+		frappe.delete_doc("Room Type", villa.name, force=True,
+		                  ignore_permissions=True)
+
+
 @check("GST slab: 5% below threshold, 18% above")
 def t4():
 	from kamra.pricing import quote
@@ -1502,6 +1747,50 @@ def t39():
 	assert t2["items"][0]["course"] == "Main", t2["items"][0]["course"]
 
 
+@check("POS: auto KOT accepts the ticket and tells the till to print")
+def t39b():
+	from kamra import pos
+	manual = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Manual Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 0,
+	}).insert(ignore_permissions=True).name
+	auto = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Auto Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 1,
+	}).insert(ignore_permissions=True).name
+
+	def _mi(outlet, name):
+		return frappe.get_doc({
+			"doctype": "Menu Item", "property": P, "outlet": outlet,
+			"item_name": name, "category": "Food", "price": 80, "is_veg": 1,
+			"available": 1, "prep_station": "Kitchen", "course": "Main",
+		}).insert(ignore_permissions=True).name
+
+	dish_m = _mi(manual, "Manual Dal")
+	dish_a = _mi(auto, "Auto Dal")
+	om = pos.create_order(manual, [{"menu_item": dish_m, "qty": 1}], table_no="M1")
+	oa = pos.create_order(auto, [{"menu_item": dish_a, "qty": 1}], table_no="A1")
+
+	fm = pos.fire_kot(om["order"])
+	assert fm["auto_print"] is False, fm
+	tick_m = next(r for r in pos.kitchen_queue(P, outlet=manual) if r["name"] == om["order"])
+	assert not tick_m["accepted_at"], "manual outlet accepted itself"
+	assert tick_m["items"][0]["state"] == "cooking", tick_m
+
+	fa = pos.fire_kot(oa["order"])
+	assert fa["auto_print"] is True and fa["accepted_at"], fa
+	assert fa["ticket"]["items"][0]["item_name"] == "Auto Dal", fa
+	tick_a = next(r for r in pos.kitchen_queue(P, outlet=auto) if r["name"] == oa["order"])
+	assert tick_a["accepted_at"], "auto outlet still waiting on Start"
+	# a second round must not move the accept clock
+	stamp = frappe.db.get_value("POS Order", oa["order"], "accepted_at")
+	pos.add_items(oa["order"], [{"menu_item": dish_a, "qty": 1}])
+	fa2 = pos.fire_kot(oa["order"])
+	assert fa2["auto_print"] is True, fa2
+	assert frappe.db.get_value("POS Order", oa["order"], "accepted_at") == stamp, \
+		"second fire reset the accept time"
+
+
 @check("kitchen stock: fire deducts per outlet, shortage never blocks, ledger reconciles")
 def t40():
 	from kamra import inventory, pos
@@ -2309,6 +2598,17 @@ def t47d():
 	from kamra.folio import open_folio
 	from kamra.localization.india import cashfree
 
+	# Kamra Verify is unreleased: hidden and refused unless the site opts in
+	frappe.conf.kamra_verify_enabled = 0
+	hidden = loc.integrations(loc.pack_for(P))
+	assert not hidden["verify_tax_id"] and not hidden["verify_guest_id"], hidden
+	try:
+		loc.verify_tax_id(loc.pack_for(P), P, "29ABCDE1234F1Z5")
+		raise AssertionError("unreleased Kamra Verify ran")
+	except frappe.ValidationError:
+		pass
+	frappe.conf.kamra_verify_enabled = 1
+
 	# India (EVAL Hotel has no country, so it runs on the India pack)
 	assert loc.integrations(loc.pack_for(P)) == {
 		"payment_gateways": ["Razorpay", "Cashfree"], "tax_return": True,
@@ -2407,6 +2707,7 @@ def t47d():
 	assert out["legal_name"] == "Eval Pvt Ltd" and calls == [("verify_gstin", "eval-connect-key")], (out, calls)
 	# ID reading needs the guest to have been told
 	assert refused(lambda: loc.verify_guest_id(loc.pack_for(P), P, "x", "Aadhaar", 0))
+	frappe.conf.kamra_verify_enabled = 0
 
 
 @check("WhatsApp: native Meta send, booking flow, inbound -> ticket")
@@ -3770,6 +4071,70 @@ def t86():
 	assert frappe.db.exists("City Ledger Entry", {"folio": folio2}), "credit stay never reached AR"
 
 
+@check("settings: module pages validate, save and drive the code that reads them")
+def t90():
+	import json
+	from kamra import settings as st
+	from kamra.kamra.doctype.housekeeping_task.housekeeping_task import sla_minutes
+
+	assert st.get_setting(P, "hk_sla_urgent") == 20, "default changed"
+	st.save_settings(P, "housekeeping", json.dumps({"hk_sla_urgent": 25}))
+	assert sla_minutes(P, "Urgent") == 25, "HK deadline ignores the setting"
+	for module, bad in (("housekeeping", {"hk_sla_urgent": 0}),           # below min
+	                    ("housekeeping", {"overbooking_pct": 5}),         # other page
+	                    ("policies", {"checkin_time": "25:00"}),
+	                    ("policies", {"cancellation_fee": "Bogus"})):
+		try:
+			st.save_settings(P, module, json.dumps(bad))
+		except frappe.ValidationError:
+			continue
+		raise AssertionError(f"accepted {bad}")
+	log = frappe.get_all("Agent Action Log", {"property": P, "action_type": "settings_changed"},
+	                     pluck="name")
+	assert log, "a settings change wasn't logged"
+	st.save_settings(P, "housekeeping", json.dumps({"hk_sla_urgent": 20}))
+	st.clear_cache(P)
+
+
+@check("settings: a role edits only its own pages; staff access stays inside the admin's reach")
+def t91():
+	import json
+	from kamra import settings as st, staff
+
+	u = "eval.revenue.settings@kamra.local"
+	staff.save_staff(P, u, "Eval Revenue", json.dumps(["Revenue Manager"]), json.dumps([P]))
+	row = next(r for r in staff.list_staff(P) if r["user"] == u)
+	assert row["roles"] == ["Revenue Manager"] and row["properties"] == [P], row
+	frappe.set_user(u)  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	try:
+		pages = {m["id"] for m in st.settings_schema(P)["modules"]}
+		assert "revenue" in pages and "finance" not in pages, pages
+		st.save_settings(P, "revenue", json.dumps({"overbooking_pct": 2}))
+		for fn, kw in ((st.save_settings, {"property": P, "module": "finance",
+		                                   "changes": json.dumps({"pin_max_attempts": 4})}),
+		               (staff.save_staff, {"property": P, "email": "x.eval@kamra.local",
+		                                   "full_name": "X", "roles": json.dumps(["Front Desk"])})):
+			try:
+				fn(**kw)
+			except frappe.PermissionError:
+				continue
+			raise AssertionError(f"{fn.__name__} let a revenue manager through")
+	finally:
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	# a Hotel Admin can't hand out IT's role
+	gm = "eval.gm.settings@kamra.local"
+	staff.save_staff(P, gm, "Eval GM", json.dumps(["Hotel Admin"]), "all")
+	frappe.set_user(gm)  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	try:
+		staff.save_staff(P, u, "Eval Revenue", json.dumps(["System Manager"]), json.dumps([P]))
+		raise AssertionError("a Hotel Admin granted System Manager")
+	except frappe.PermissionError:
+		pass
+	finally:
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	st.save_settings(P, "revenue", json.dumps({"overbooking_pct": 0}))
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -3781,13 +4146,13 @@ def execute():
 	frappe.db.savepoint("eval_start")
 	try:
 		RT, ROOM = setup()
-		for fn in (t1, t2, t3, t3b, t3c, t3d, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13,
+		for fn in (t1, t2, t3, t3b, t3c, t3d, t3f, t3g, t3h, t3i, t3j, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13,
 		           t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24,
 		           t25, t26, t27, t28, t29, t30, t31, t32, t33, t34, t35,
-		           t36, t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
+		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t90, t91):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

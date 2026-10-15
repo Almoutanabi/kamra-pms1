@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **267 endpoints**, generated from the source
+the UI and the AI use. **274 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -29,7 +29,7 @@ Content-Type: application/json
 
 ### `kamra.api.enabled_modules`
 
-**GET/POST**
+**GET/POST** · roles: `Front Desk`, `Finance`, `Revenue Manager`, `Housekeeping`, `Housekeeping Supervisor`, `Kamra Agent`
 
 Which parts of Kamra this property runs. Empty setting = all of
 them, so an existing property keeps working untouched.
@@ -2336,7 +2336,7 @@ a follow-up lands in the diary so the enquiry doesn't go quiet.
 | `end_time` | no | `None` |
 | `source` | no | `'Phone'` |
 | `requirements` | no | `None` |
-| `follow_up_days` | no | `2` |
+| `follow_up_days` | no | `None` |
 | `with_venue_line` | no | `1` |
 | `sales_owner` | no | `None` |
 
@@ -2485,14 +2485,15 @@ sides agreed and stays put.
 
 The usual three-milestone schedule, dated off this function: an
 advance to hold the hall, a second call before the date, the rest on
-completion. Editable afterwards like any other term.
+completion. Editable afterwards like any other term. Unset arguments
+come from Settings -> Banquets & Groups.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `function` | yes |  |
-| `advance_percent` | no | `25` |
-| `interim_percent` | no | `50` |
-| `interim_days_before` | no | `15` |
+| `advance_percent` | no | `None` |
+| `interim_percent` | no | `None` |
+| `interim_days_before` | no | `None` |
 
 ### `kamra.banquet.record_receipt`
 
@@ -3439,6 +3440,88 @@ snapshots that are too heavy for the feed.
 | Param | Required | Default |
 | --- | --- | --- |
 | `name` | yes |  |
+
+
+## Settings hub (module settings)
+
+### `kamra.settings.settings_schema`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Revenue Manager`, `Housekeeping`, `Housekeeping Supervisor`
+
+Every settings page this user may see for the property, with current
+values. Pages they can't change come back read-only (can_edit=False).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.settings.save_settings`
+
+**POST** · roles: `Finance`, `Revenue Manager`, `Housekeeping Supervisor`
+
+Change some settings on one module page. Validates every key against
+the registry, refuses keys from another module, and writes one
+Activity log row with the before/after values.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `module` | yes |  |
+| `changes` | yes |  |
+
+### `kamra.settings.set_module_enabled`
+
+**POST** · roles: `Hotel Admin`
+
+Switch one module on or off for the property.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `module` | yes |  |
+| `enabled` | yes |  |
+
+
+## Staff & access
+
+### `kamra.staff.staff_roles`
+
+**GET/POST**
+
+The roles a person can hold, and whether the caller may hand each out.
+
+### `kamra.staff.list_staff`
+
+**GET/POST**
+
+Everyone with a Kamra role who can reach this property.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.staff.save_staff`
+
+**POST**
+
+Add a person, or change an existing person's roles, property access
+and whether they can sign in.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `email` | yes |  |
+| `full_name` | yes |  |
+| `roles` | yes |  |
+| `properties` | no | `None` |
+| `enabled` | no | `1` |
+| `send_welcome` | no | `0` |
+
+### `kamra.staff.role_matrix`
+
+**GET/POST**
+
+Per role, the settings pages it may change (admins: all of them).
 
 
 ## Public (no auth - booking page, QR menu)

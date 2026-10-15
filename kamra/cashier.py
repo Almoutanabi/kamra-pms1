@@ -13,6 +13,7 @@ from frappe.utils import now_datetime
 
 from kamra.authz import require_roles
 from kamra.business_date import ensure_business_date, get_business_date
+from kamra.settings import get_setting
 
 CASH_MODES = ("Cash",)
 CARD_MODES = ("Card",)
@@ -59,7 +60,7 @@ def ensure_cashier(property: str, user: str | None = None) -> str:
 		"user": user,
 		"property": property,
 		"is_floating": 0,
-		"max_cash_refund": 5000,
+		"max_cash_refund": get_setting(property, "max_cash_refund"),
 	})
 	doc.insert(ignore_permissions=True)
 	return doc.name

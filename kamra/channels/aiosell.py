@@ -224,7 +224,7 @@ def parse_webhook(conn, payload) -> list[dict]:
 			"phone": guest.get("phone") or "",
 			"email": guest.get("email") or "",
 			"total": total,
-			"currency": amount.get("currency") or "INR",
+			"currency": amount.get("currency") or frappe.db.get_value("Property", conn.property, "currency"),
 			"notes": payload.get("specialRequests") or "",
 		})
 	return out

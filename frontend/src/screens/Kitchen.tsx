@@ -298,14 +298,14 @@ function Line({ it, order, busy, onAction, big }: {
           className={cn("shrink-0", big ? "h-12 px-6 text-base" : "h-9 px-3 text-xs")}>
           <Check className={big ? "size-5" : "size-4"} />{t("Ready")}
         </Button>
-      ) : (
+      ) : order.accepted_at ? (
         <Button variant="outline" disabled={busy === order.name + it.name}
           onClick={() => onAction("mark_prepared", { item_row: it.name })}
           className={cn("shrink-0 border-brand-600 text-brand-700",
             big ? "h-12 px-6 text-base" : "h-9 px-3 text-xs")}>
           {t("Mark ready")}
         </Button>
-      )}
+      ) : null}
     </li>
   )
 }
@@ -474,7 +474,7 @@ function TicketDetail({ order, onClose, onAction, busy, now }: {
         {!order.accepted_at && anyCooking ? (
           <Button disabled={busy === order.name} onClick={() => onAction("accept_ticket", {})}
             className="h-16 flex-1 justify-center bg-amber-600 text-lg font-bold hover:bg-amber-700">
-            <Play className="size-6" />{t("Start / accept")}
+            <Play className="size-6" />{t("Start")}
           </Button>
         ) : anyCooking ? (
           <Button disabled={busy === order.name} onClick={() => onAction("mark_prepared", {})}
@@ -660,6 +660,7 @@ export default function Kitchen() {
             const stations = [...new Set(live.map((i) => i.prep_station).filter(Boolean))]
             const tags = [...stations, ...serviceTags(o)]
             const anyCooking = live.some((i) => i.state === "cooking")
+            const waiting = !o.accepted_at && anyCooking
             return (
               <div key={o.name}
                 className={cn("flex flex-col overflow-hidden rounded-2xl border-2 bg-white",
@@ -671,8 +672,14 @@ export default function Kitchen() {
                     <span className="min-w-0 text-[10px] font-black uppercase tracking-wider text-zinc-400">
                       {o.kot_no ? `KOT ${o.kot_no} · ` : ""}{o.order_type}
                     </span>
-                    <span className={cn("shrink-0 text-[10px] font-black uppercase tracking-wider", tone.text)}>
-                      {statusWord(secs) === "HELD" ? t("HELD") : statusWord(secs) === "LATE" ? t("LATE") : statusWord(secs) === "COOKING" ? t("COOKING") : t("NEW")}
+                    <span className={cn("shrink-0 text-[10px] font-black uppercase tracking-wider",
+                      waiting ? "text-amber-700" : tone.text)}>
+                      {waiting
+                        ? (statusWord(secs) === "LATE" ? t("LATE") : t("WAITING"))
+                        : statusWord(secs) === "HELD" ? t("HELD")
+                          : statusWord(secs) === "LATE" ? t("LATE")
+                            : statusWord(secs) === "COOKING" ? t("COOKING")
+                              : t("NEW")}
                     </span>
                   </div>
                   <div className="flex items-end justify-between gap-2">
@@ -759,11 +766,11 @@ export default function Kitchen() {
 
                 {anyCooking && (
                   <div className="p-2 pt-0">
-                    {!o.accepted_at ? (
+                    {waiting ? (
                       <Button variant="outline" disabled={busy === o.name}
                         onClick={() => act(o.name, "accept_ticket", {})}
                         className="h-11 w-full justify-center border-amber-400 text-amber-700 hover:bg-amber-50">
-                        <Flame className="size-4" />{t("Start / accept")}
+                        <Play className="size-4" />{t("Start")}
                       </Button>
                     ) : (
                       <Button className="h-11 w-full justify-center" disabled={busy === o.name}

@@ -114,7 +114,7 @@ export default function Tickets() {
         <div className="min-w-0 flex-1">
           <CardTitle>{t("Service Tickets")}</CardTitle>
           <p className="mt-0.5 text-xs text-zinc-500">
-            {t("Guest requests with SLA - Urgent 15m · High 30m · Medium 1h · Low 4h")}
+            {t("Guest requests with deadlines by priority - set them in Settings → Operations")}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">

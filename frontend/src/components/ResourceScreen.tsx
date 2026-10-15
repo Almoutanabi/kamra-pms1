@@ -663,6 +663,11 @@ export function ResourceScreen({
                       linkOptions={linkOptions}
                       t={t}
                     />
+                    {spec.hint && spec.type !== "image" && (
+                      <span className="mt-1 block text-xs leading-relaxed text-zinc-400">
+                        {t(spec.hint)}
+                      </span>
+                    )}
                   </label>
                 ))}
               </div>

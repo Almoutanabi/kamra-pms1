@@ -30,7 +30,12 @@ interface MenuItem {
   is_veg: number
   image: string | null
 }
-interface Outlet { name: string; outlet_name: string; gst_rate: number }
+interface Outlet {
+  name: string
+  outlet_name: string
+  gst_rate: number
+  auto_kot?: 0 | 1
+}
 interface OpenOrder {
   name: string
   label: string
@@ -309,6 +314,9 @@ export default function POS() {
 
   const outletDoc = outlets.find((o) => o.name === outlet)
   const outletName = outletDoc?.outlet_name || outlet
+  // Outlet setting wins over the till's own printer switch: punch, print, KDS.
+  const autoKot = Number(outletDoc?.auto_kot) === 1
+  const willPrintKot = autoKot || printKot
   const gstRate = Number(outletDoc?.gst_rate ?? 5)
   const orderLabel = (d: { table_no?: string | null; room?: string | null; order_type?: string | null; customer_name?: string | null; name?: string }) =>
     d.table_no ? `Table ${d.table_no}`
@@ -344,8 +352,13 @@ export default function POS() {
       customer, address, nc: !!kot.nc, nc_by: ncBy, items: kot.fired_items,
     }
     if (!ticket.items?.length) return
-    setPrintNote(`KOT #${ticket.kot_no ?? "—"} saved${printKot ? " and sent to printer" : ". Turn on Print KOT to send it to the kitchen printer"}.`)
-    if (!printKot) return
+    const kotNo = ticket.kot_no ?? "—"
+    setPrintNote(
+      willPrintKot
+        ? t("KOT {kot} printed and on the kitchen display.", { kot: kotNo })
+        : t("KOT {kot} is on the kitchen display. Turn on Print KOT to send it to the printer.", { kot: kotNo }),
+    )
+    if (!willPrintKot) return
     printSavedKot(ticket)
   }
 
@@ -889,12 +902,19 @@ export default function POS() {
             className="hidden items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-50 md:inline-flex lg:hidden">
             <LayoutGrid className="size-4" />{t("Tables")}
           </button>
-          <button type="button" onClick={() => setPrintKot((v) => !v)}
-            className={"inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-semibold " +
-              (printKot ? "border-brand-600 bg-brand-50 text-brand-800" : "border-zinc-300 bg-white text-zinc-500")}>
-            <Printer className="size-3.5" />
-            <span className="hidden sm:inline">{printKot ? t("KOT printer on") : t("KOT printer off")}</span>
-          </button>
+          {autoKot ? (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-2 text-xs font-semibold text-brand-800">
+              <Printer className="size-3.5" aria-hidden />
+              <span className="hidden sm:inline">{t("KOT prints on send")}</span>
+            </span>
+          ) : (
+            <button type="button" onClick={() => setPrintKot((v) => !v)}
+              className={"inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-semibold " +
+                (printKot ? "border-brand-600 bg-brand-50 text-brand-800" : "border-zinc-300 bg-white text-zinc-500")}>
+              <Printer className="size-3.5" />
+              <span className="hidden sm:inline">{printKot ? t("KOT printer on") : t("KOT printer off")}</span>
+            </button>
+          )}
           <div className="relative">
             <button onClick={() => setHelpOpen((v) => !v)}
               className="rounded-lg border border-zinc-300 bg-white p-2 text-zinc-600 hover:bg-zinc-50"
@@ -1295,7 +1315,12 @@ export default function POS() {
             <Button variant="outline" className="h-11 w-full"
               disabled={busy || cart.length === 0}
               onClick={kotAction}>
-              <Send className="size-4" />{selected ? t("Add round & fire KOT") : t("Send to kitchen")}
+              <Send className="size-4" />
+              {selected
+                ? t("Send round")
+                : autoKot
+                  ? t("Send and print")
+                  : t("Send to kitchen")}
               <kbd className="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">F6</kbd>
             </Button>
 

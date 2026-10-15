@@ -27,7 +27,7 @@ const RegistrationCard = lazy(() => import("./screens/RegistrationCard"))
 const CancellationLetter = lazy(() => import("./screens/CancellationLetter"))
 const Setup = lazy(() => import("./screens/Setup"))
 const HousekeepingBoard = lazy(() => import("./screens/HousekeepingBoard"))
-const Settings = lazy(() => import("./screens/Settings"))
+const Settings = lazy(() => import("./screens/settings/SettingsHub"))
 const SystemHealth = lazy(() => import("./screens/SystemHealth"))
 const BookingEngine = lazy(() => import("./screens/BookingEngine"))
 const Developers = lazy(() => import("./screens/Developers"))
@@ -316,6 +316,7 @@ export default function App() {
           />
           <Route path="setup" element={<Setup />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="settings/:section" element={<Settings />} />
           <Route path="health" element={<SystemHealth />} />
           <Route path="booking-settings" element={<BookingEngine />} />
           <Route path="booking-settings/:section" element={<BookingEngine />} />

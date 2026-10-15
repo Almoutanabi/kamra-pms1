@@ -170,6 +170,9 @@ export function BookingDialog(props: {
     children: 0,
     meal_plan: "",
     voucher_code: "",
+    over_capacity_reason: "",
+    over_capacity_guests: 0,
+    over_capacity_charge: 0,
     company: "",
     travel_agent: "",
     booked_by_name: "",
@@ -316,6 +319,7 @@ export function BookingDialog(props: {
         children: form.children,
         meal_plan: form.meal_plan || undefined,
         voucher_code: form.voucher_code || undefined,
+        over_capacity_charge: form.over_capacity_charge || undefined,
       })
         .then((q) => {
           setQuote(q)
@@ -423,6 +427,9 @@ export function BookingDialog(props: {
     try {
       if (waitlist) {
         const res = await createBooking({
+          over_capacity_reason: form.over_capacity_reason || undefined,
+          over_capacity_guests: form.over_capacity_guests || undefined,
+          over_capacity_charge: form.over_capacity_charge || undefined,
           guest_name: form.guest_name,
           phone: form.phone || undefined,
           guest: profile?.name,
@@ -484,6 +491,9 @@ export function BookingDialog(props: {
         return
       }
       const res = await createBooking({
+        over_capacity_reason: form.over_capacity_reason || undefined,
+          over_capacity_guests: form.over_capacity_guests || undefined,
+          over_capacity_charge: form.over_capacity_charge || undefined,
         guest_name: form.guest_name,
         phone: form.phone || undefined,
         guest: profile?.name,
@@ -604,6 +614,15 @@ export function BookingDialog(props: {
 
   // rooms needed to sleep the whole party in this room type, keeping at
   // least one adult in every room
+  // Over capacity but still inside the extra beds the room type allows:
+  // bookable by arrangement, and the reason is what records who agreed it.
+  const withinExtraBeds =
+    !!selectedRt &&
+    overCapacity &&
+    Number(form.adults) <=
+      Number(selectedRt.adults_capacity || 0) +
+        Number(selectedRt.max_extra_beds || 0)
+
   const roomsNeeded = (() => {
     if (!selectedRt) return 1
     const capA = selectedRt.adults_capacity || form.adults || 1
@@ -1161,6 +1180,55 @@ export function BookingDialog(props: {
                     >
                       Split into {roomsNeeded} rooms
                     </button>
+                    {withinExtraBeds && (
+                      <div className="mt-2 space-y-2 border-t border-amber-200 pt-2">
+                        <div>
+                          {t("Or keep them in one room — up to {beds} more by arrangement, at a price you agree:", {
+                            beds: selectedRt.max_extra_beds ?? 0,
+                          })}
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-medium">
+                              {t("Extra guests")}
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={selectedRt.max_extra_beds ?? 0}
+                              className={inputCls}
+                              value={form.over_capacity_guests}
+                              onChange={(e) =>
+                                set("over_capacity_guests", Math.max(0, Number(e.target.value)))
+                              }
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-medium">
+                              {t("Agreed charge / night")}
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              className={inputCls}
+                              value={form.over_capacity_charge}
+                              onChange={(e) =>
+                                set("over_capacity_charge", Math.max(0, Number(e.target.value)))
+                              }
+                              placeholder={t("What you agreed for them")}
+                            />
+                          </label>
+                        </div>
+                        <input
+                          className={inputCls}
+                          value={form.over_capacity_reason}
+                          onChange={(e) =>
+                            set("over_capacity_reason", e.target.value)
+                          }
+                          placeholder={t("Who agreed it, and why")}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 

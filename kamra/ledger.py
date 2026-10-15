@@ -973,18 +973,16 @@ def require_reason(category: str, reason_code: str | None, free_text: str = "",
 		if row.category != category:
 			frappe.throw(f"Reason code is for {row.category}, not {category}.")
 		if row.requires_supervisor:
-			# Supervisor = Hotel Admin PIN or a second user's PIN via pin check
-			if not supervisor_pin:
-				frappe.throw("SUPERVISOR_PIN_REQUIRED: this reason needs approval.")
-			# Accept any valid cashier PIN from a Finance/Admin user by
-			# temporarily validating against the current user's PIN is wrong;
-			# instead require the property's require_cashier_pin path with a
-			# flag. Practical approach: Hotel Admin / Finance role + their PIN.
 			roles = set(frappe.get_roles())
 			if not (roles & {"Hotel Admin", "Finance", "System Manager",
 			                 "Administrator"}):
-				frappe.throw("Supervisor role required for this reason.")
-			from kamra.authz import require_cashier_pin
-			if property:
-				require_cashier_pin(property, supervisor_pin)
+				frappe.throw("Supervisor role required for this reason.", frappe.PermissionError)
+			pin_required = not property or bool(frappe.db.get_value(
+				"Property", property, "require_cashier_pin"))
+			if pin_required:
+				if not supervisor_pin:
+					frappe.throw("SUPERVISOR_PIN_REQUIRED: this reason needs approval.")
+				from kamra.authz import require_cashier_pin
+				if property:
+					require_cashier_pin(property, supervisor_pin)
 	return reason_code or free_text.strip()[:140]

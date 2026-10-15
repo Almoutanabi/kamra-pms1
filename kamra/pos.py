@@ -5,6 +5,10 @@ Flow: a captain (or a guest via QR) places an order -> the captain confirms
 it -> firing the KOT sends it to the kitchen display -> the kitchen marks
 items prepared -> delivering the order posts it to the guest's room folio
 (handled by the POS Order controller) or it's settled at the outlet.
+
+An outlet can turn on auto KOT. Firing then also accepts the ticket, so
+the kitchen display shows it as started, and the till prints the slip
+without a separate Start or a per-browser printer switch.
 """
 
 import frappe
@@ -23,7 +27,7 @@ COURSE_ORDER = ("Starter", "Main", "Dessert", "Drink")
 def outlets(property: str):
 	return frappe.get_all(
 		"POS Outlet", filters={"property": property, "disabled": 0},
-		fields=["name", "outlet_name", "outlet_type", "gst_rate"],
+		fields=["name", "outlet_name", "outlet_type", "gst_rate", "auto_kot"],
 		order_by="outlet_name")
 
 
@@ -214,15 +218,20 @@ def _flag_cleaning_if_freed(doc):
 
 
 def _upcoming_reservations(outlet: str):
-	"""Booked reservations from an hour ago to four hours out - the window
-	in which a table should read as Reserved on the map."""
+	"""Booked reservations inside the window in which a table should read
+	as Reserved on the map - by default an hour ago to four hours out
+	(Settings -> F&B)."""
 	from frappe.utils import add_to_date, now_datetime
+	from kamra.settings import get_setting
+	prop = frappe.db.get_value("POS Outlet", outlet, "property")
+	before = int(get_setting(prop, "pos_reservation_before_min"))
+	after = int(get_setting(prop, "pos_reservation_after_min"))
 	now = now_datetime()
 	return frappe.get_all(
 		"POS Table Reservation",
 		filters={"outlet": outlet, "status": "Booked",
-		         "reserved_at": ("between", [add_to_date(now, hours=-1),
-		                                     add_to_date(now, hours=4)])},
+		         "reserved_at": ("between", [add_to_date(now, minutes=-before),
+		                                     add_to_date(now, minutes=after)])},
 		fields=["name", "table_no", "guest_name", "phone", "party_size",
 		        "reserved_at", "notes"],
 		order_by="reserved_at asc")
@@ -498,12 +507,16 @@ def fire_kot(order: str, course: str | None = None):
 	Pass a course to send only that course and hold the rest - the table
 	orders once, the kitchen cooks the mains when the starters are cleared.
 	Each line is stamped with the moment it was fired: that, not when the
-	captain opened the tab, is when the cook's clock starts."""
+	captain opened the tab, is when the cook's clock starts.
+
+	Outlets with auto KOT on also accept the ticket here, so the kitchen
+	does not press Start, and the response tells the till to print."""
 	doc = frappe.get_doc("POS Order", order)
 	courses = _courses_of(doc) if course else {}
 	now = frappe.utils.now()
 	fired = []
 	fired_rows = []
+	auto = bool(frappe.db.get_value("POS Outlet", doc.outlet, "auto_kot"))
 	for it in doc.items:
 		if it.kot_status == "New" and not it.voided:
 			if course and courses.get(it.menu_item) != course:
@@ -531,6 +544,11 @@ def fire_kot(order: str, course: str | None = None):
 	doc.kot_fired = 1
 	if doc.status in ("Placed", "Confirmed"):
 		doc.status = "Preparing"
+	# Auto KOT: the pass has the ticket the moment it is punched. A manual
+	# outlet still waits for accept_ticket, so a printed slip is not proof
+	# anyone has seen it.
+	if fired and auto and not doc.accepted_at:
+		doc.accepted_at = now
 	doc.save()
 	# Ingredients leave the shelf now - when the chef starts cooking - not when
 	# the bill is paid: a line voided after firing consumed real food and bills
@@ -552,6 +570,8 @@ def fire_kot(order: str, course: str | None = None):
 	doc.db_set("last_kot_ticket", frappe.as_json(history), update_modified=False)
 	return {"ok": True, "status": doc.status, "kot_no": doc.kot_no,
 	        "nc": bool(doc.nc), "fired_items": fired, "ticket": ticket,
+	        "auto_print": bool(auto and fired),
+	        "accepted_at": doc.accepted_at,
 	        "stock_alerts": alerts}
 
 

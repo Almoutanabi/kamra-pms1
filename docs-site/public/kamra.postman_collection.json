@@ -6436,7 +6436,7 @@
       "description": "Open a function sheet from an enquiry. The hall's rack rental goes on\nas the first line (that's the number the conversation starts from), and\na follow-up lands in the diary so the enquiry doesn't go quiet.",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"property\": \"Your Property\",\n  \"venue\": \"Your Property-Grand Ballroom\",\n  \"event_date\": \"2026-12-12\",\n  \"customer_name\": \"A. Customer\",\n  \"event_type\": \"Wedding\",\n  \"attendees\": 0,\n  \"end_date\": \"2026-08-31\",\n  \"source\": \"Phone\",\n  \"follow_up_days\": 2,\n  \"with_venue_line\": 1\n}",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"venue\": \"Your Property-Grand Ballroom\",\n  \"event_date\": \"2026-12-12\",\n  \"customer_name\": \"A. Customer\",\n  \"event_type\": \"Wedding\",\n  \"attendees\": 0,\n  \"end_date\": \"2026-08-31\",\n  \"source\": \"Phone\",\n  \"with_venue_line\": 1\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -6840,10 +6840,10 @@
         "kamra.banquet.default_payment_terms"
        ]
       },
-      "description": "The usual three-milestone schedule, dated off this function: an\nadvance to hold the hall, a second call before the date, the rest on\ncompletion. Editable afterwards like any other term.",
+      "description": "The usual three-milestone schedule, dated off this function: an\nadvance to hold the hall, a second call before the date, the rest on\ncompletion. Editable afterwards like any other term. Unset arguments\ncome from Settings -> Banquets & Groups.",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"function\": \"EVT-2026-0001\",\n  \"advance_percent\": 25,\n  \"interim_percent\": 50,\n  \"interim_days_before\": 15\n}",
+       "raw": "{\n  \"function\": \"EVT-2026-0001\"\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -9248,6 +9248,257 @@
         }
        }
       }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Settings hub (module settings)",
+   "item": [
+    {
+     "name": "settings_schema",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.settings.settings_schema",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.settings.settings_schema"
+       ]
+      },
+      "description": "Every settings page this user may see for the property, with current\nvalues. Pages they can't change come back read-only (can_edit=False).",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "save_settings",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.settings.save_settings",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.settings.save_settings"
+       ]
+      },
+      "description": "Change some settings on one module page. Validates every key against\nthe registry, refuses keys from another module, and writes one\nActivity log row with the before/after values.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"module\": \"<module>\",\n  \"changes\": \"<changes>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "set_module_enabled",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.settings.set_module_enabled",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.settings.set_module_enabled"
+       ]
+      },
+      "description": "Switch one module on or off for the property.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"module\": \"<module>\",\n  \"enabled\": \"<enabled>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Staff & access",
+   "item": [
+    {
+     "name": "staff_roles",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.staff.staff_roles",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.staff.staff_roles"
+       ]
+      },
+      "description": "The roles a person can hold, and whether the caller may hand each out."
+     }
+    },
+    {
+     "name": "list_staff",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.staff.list_staff",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.staff.list_staff"
+       ]
+      },
+      "description": "Everyone with a Kamra role who can reach this property.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "save_staff",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.staff.save_staff",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.staff.save_staff"
+       ]
+      },
+      "description": "Add a person, or change an existing person's roles, property access\nand whether they can sign in.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"email\": \"guest@example.com\",\n  \"full_name\": \"A. Guest\",\n  \"roles\": \"<roles>\",\n  \"enabled\": 1,\n  \"send_welcome\": 0\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "role_matrix",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.staff.role_matrix",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.staff.role_matrix"
+       ]
+      },
+      "description": "Per role, the settings pages it may change (admins: all of them)."
      }
     }
    ]

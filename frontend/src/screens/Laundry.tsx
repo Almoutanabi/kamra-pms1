@@ -913,7 +913,7 @@ function PriceMenu({
         <div>
           <CardTitle>{t("Laundry rate card")}</CardTitle>
           <p className="mt-0.5 text-xs text-zinc-400">
-            {t("Per-item prices the app quotes and bills from. Blank express = 1.5× the normal rate.")}
+            {t("Per-item prices the app quotes and bills from. A blank express price uses the multiplier in Settings → Housekeeping.")}
           </p>
         </div>
         {canEdit && (
