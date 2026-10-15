@@ -12,7 +12,6 @@ module for how commits inside the audit are kept out of the site.
 
 from __future__ import annotations
 
-import unittest
 from typing import ClassVar
 from unittest.mock import patch
 
@@ -150,9 +149,11 @@ class NightAuditTestCase(AuditTestCase):
 
 	def test_retry_with_the_closed_date_does_not_post_twice(self):
 		res = self.in_house()
-		folio_mod.run_night_audit(PROP_A)
-		with self.assertRaises(frappe.ValidationError):
-			folio_mod.run_night_audit(PROP_A, YESTERDAY)
+		first = folio_mod.run_night_audit(PROP_A)
+		# a retry naming the closed date answers already_ran (#197)
+		again = folio_mod.run_night_audit(PROP_A, YESTERDAY)
+		self.assertTrue(again.get("already_ran"))
+		self.assertEqual(again["audit"], first["audit"])
 		self.assertEqual(len(self.room_nights(res)), 1)
 		self.assertEqual(self.bd(), TODAY)
 
@@ -201,25 +202,76 @@ class NightAuditTestCase(AuditTestCase):
 		self.assertAlmostEqual(float(self.room_nights(res)[0].amount), 1000,
 		                       places=2)
 
-	# BUG: the booking was priced with its rate plan (get_quote / pricing.quote
-	# apply Rate Plan.modifier_*), but folio._nightly_room_rate never reads
-	# reservation.rate_plan, so the night audit (and checkout's
-	# post_remaining_nights) charge the rack rate. A guest on a "-10%" plan
-	# is billed 1000 a night instead of 900 - the folio disagrees with the
-	# booking's amount_before_tax.
-	@unittest.expectedFailure
-	def test_room_night_honours_the_bookings_rate_plan(self):
-		plan = frappe.get_doc({
-			"doctype": "Rate Plan", "property": PROP_A,
-			"rate_plan_name": "UT Advance Purchase", "modifier_type": "Percent",
-			"modifier_value": -10,
+	# rate plans: the folio's room night is the night the guest was quoted.
+	# folio._nightly_room_rate once ignored reservation.rate_plan, so the
+	# audit and checkout billed the rack rate on a discounted booking.
+
+	def plan(self, name, kind, value):
+		return frappe.get_doc({
+			"doctype": "Rate Plan", "property": PROP_A, "rate_plan_name": name,
+			"code": name.upper().replace(" ", "-"),
+			"modifier_type": kind, "modifier_value": value,
 		}).insert(ignore_permissions=True).name
+
+	def test_room_night_honours_the_bookings_rate_plan(self):
+		plan = self.plan("UT Advance Purchase", "Percent", -10)
 		res = self.in_house(rate_plan=plan)
 		nightly_booked = float(res.amount_before_tax) / res.nights
 		self.assertAlmostEqual(nightly_booked, 900, places=2)
 		folio_mod.run_night_audit(PROP_A)
 		self.assertAlmostEqual(float(self.room_nights(res)[0].amount), 900,
 		                       places=2)
+
+	def test_room_nights_equal_the_quote_night_by_night(self):
+		"""Season on one night + a -10% plan: every posted night equals
+		the quote's night under the same plan, and the stay sums to it."""
+		from kamra.pricing import quote
+		frappe.get_doc({
+			"doctype": "Season", "property": PROP_A, "season_name": "UT Peak",
+			"start_date": d(-2), "end_date": d(-2),
+			"adjustment_type": "Percent", "adjustment_value": 20,
+		}).insert(ignore_permissions=True)
+		plan = self.plan("UT Member", "Percent", -10)
+		res = self.in_house(check_in=d(-3), check_out=d(-1), rate_plan=plan)
+		posted = folio_mod.post_remaining_nights(res)
+		self.assertEqual(posted, 2)
+		q = quote(PROP_A, self.rt, d(-3), d(-1), 2, 0, rate_plan=plan)
+		rows = sorted(self.room_nights(res), key=lambda r: str(r.posting_date))
+		# 1000 then 1200 (season), each 10% off
+		self.assertEqual([round(float(r.amount), 2) for r in rows], [900, 1080])
+		self.assertAlmostEqual(sum(float(r.amount) for r in rows),
+		                       q["room_total"], places=2)
+		self.assertAlmostEqual(q["room_total"], float(res.amount_before_tax),
+		                       places=2)
+
+	def test_amount_rate_plan_is_spread_over_the_stay(self):
+		# the quote adds an Amount plan to the stay total once, so each night
+		# carries its share and the nights sum to what was quoted
+		plan = self.plan("UT Flat Off", "Amount", -400)
+		res = self.in_house(check_in=d(-4), check_out=d(0), rate_plan=plan)
+		self.assertAlmostEqual(float(res.amount_before_tax), 3600, places=2)
+		folio_mod.post_remaining_nights(res)
+		rows = self.room_nights(res)
+		self.assertEqual(len(rows), 4)
+		for r in rows:
+			self.assertAlmostEqual(float(r.amount), 900, places=2)
+
+	def test_rate_plan_applies_on_top_of_small_group_rate(self):
+		rt = make_room_type(PROP_A, "SGV", base_price=8000,
+		                    small_group_max_adults=4,
+		                    small_group_price_per_adult=1500)
+		room = make_room(PROP_A, rt, "301")
+		plan = self.plan("UT SG Plan", "Percent", -10)
+		res = self.in_house(room=room, room_type=rt, rate_plan=plan)
+		folio_mod.run_night_audit(PROP_A)
+		# 2 adults x 1500 per head, then 10% off
+		self.assertAlmostEqual(float(self.room_nights(res)[0].amount), 2700,
+		                       places=2)
+
+	def test_no_plan_bills_the_plan_free_rate(self):
+		res = self.in_house()
+		self.assertAlmostEqual(folio_mod._nightly_room_rate(res, YESTERDAY),
+		                       1000, places=2)
 
 	def test_missing_guest_folio_is_opened(self):
 		res = self.in_house()
@@ -328,17 +380,36 @@ class NightAuditTestCase(AuditTestCase):
 		self.assertEqual(frappe.db.get_value("Reservation", in_house.name,
 		                                     "status"), "Checked In")
 
-	# BUG: business_date.py says every money posting uses the business date,
-	# not the calendar. post_policy_fee stamps posting_date = nowdate(), so a
-	# no-show fee charged by the audit that closes YESTERDAY lands on TODAY -
-	# the next business day - while the room nights of the same run are
-	# dated YESTERDAY. Revenue reports for the closed day miss the fee.
-	@unittest.expectedFailure
+	# every money posting uses the business date, not the calendar: the
+	# fee of a no-show flagged by the audit closing YESTERDAY is dated
+	# YESTERDAY, like the room nights of the same run.
 	def test_no_show_fee_is_dated_on_the_closed_business_date(self):
 		self.set_policy("First Night")
 		res = self.arrival()
 		folio_mod.run_night_audit(PROP_A)
 		fee = [c for c in charges(res.name) if c.description.startswith("No-show")]
+		self.assertEqual(str(fee[0].posting_date), YESTERDAY)
+
+	def test_cancellation_fee_is_dated_on_the_current_business_date(self):
+		# outside the audit the fee belongs to the open business day, which
+		# lags the calendar until the audit rolls it
+		res = self.arrival(check_in=d(3), check_out=d(5))
+		folio_mod.post_policy_fee(res, "First Night", "Cancellation fee (First Night)")
+		fee = [c for c in charges(res.name) if c.description.startswith("Cancellation")]
+		self.assertEqual(str(fee[0].posting_date), YESTERDAY)
+
+	def test_arrival_due_on_the_closed_date_is_a_no_show(self):
+		# end of day for D marks D's unarrived, guaranteed arrivals (Opera)
+		self.set_policy("First Night")
+		due = self.arrival(check_in=YESTERDAY, check_out=d(1))
+		later = self.arrival(check_in=TODAY, check_out=d(2))
+		out = folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(out["no_shows_flagged"], 1)
+		self.assertEqual(frappe.db.get_value("Reservation", due.name, "status"),
+		                 "No Show")
+		self.assertEqual(frappe.db.get_value("Reservation", later.name,
+		                                     "status"), "Confirmed")
+		fee = [c for c in charges(due.name) if c.description.startswith("No-show")]
 		self.assertEqual(str(fee[0].posting_date), YESTERDAY)
 
 	# waitlist ------------------------------------------------------------
@@ -508,21 +579,20 @@ class NightlySchedulerTestCase(AuditTestCase):
 		self.assertEqual(len(charges(res.name, "Room")), 1)
 		self.log_error.assert_not_called()
 
-	# BUG: the 03:00 cron must only close a day that has ended. When the
-	# business date is already TODAY (someone ran the audit by hand before
-	# midnight, or a second worker fires), run_night_audit only refuses a
-	# date AFTER today, so the cron closes TODAY at 03:00: it charges every
-	# in-house guest tonight's room night and rolls the date to tomorrow,
-	# and the evening's real audit is then refused as "ahead of today".
-	@unittest.expectedFailure
+	# the 03:00 cron only closes a day that has ended: with the business
+	# date already TODAY (closed by hand before midnight, or a second
+	# worker), it leaves the property alone (#197).
 	def test_skips_when_business_date_is_today(self):
 		res = make_reservation(PROP_A, self.rt, d(-2), d(2),
 		                       status="Checked In", room=self.room)
 		frappe.db.set_value("Property", PROP_A, "business_date", TODAY)
 		folio_mod.nightly_audit_all_properties()
+		self.assertNotIn(PROP_A, self.calls)  # skipped before the audit
 		self.assertEqual(self.audits(PROP_A), [])
 		self.assertEqual(self.bd(PROP_A), TODAY)
 		self.assertFalse(charges(res.name, "Room"))
+		# B, still on YESTERDAY, was closed as usual
+		self.assertEqual(self.bd(PROP_B), TODAY)
 
 	def test_does_not_close_a_business_date_ahead_of_today(self):
 		frappe.db.set_value("Property", PROP_A, "business_date", d(1))

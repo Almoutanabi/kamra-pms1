@@ -4888,6 +4888,59 @@ def t115():
 	assert frappe.db.get_value("Reservation", out["reservation"], "source") == "Website"
 
 
+@check("night audit for D flags D's unarrived arrivals and dates their fee D")
+def t120():
+	from kamra.folio import run_night_audit
+	today = nowdate()
+	saved = frappe.db.get_value("Property", P, ["business_date", "no_show_charge"],
+	                            as_dict=True)
+	frappe.db.set_value("Property", P, {"business_date": today,
+	                                    "no_show_charge": "First Night"})
+	try:
+		frappe.db.delete("Night Audit Run", {"property": P, "business_date": today})
+		g = _guest("Eval Same Day NoShow", "+91 70000 00120")
+		due = _res(g, today, add_days(today, 1))
+		g2 = _guest("Eval Tomorrow Arrival", "+91 70000 00121")
+		later = _res(g2, add_days(today, 1), add_days(today, 2))
+		run_night_audit(P)
+		assert frappe.db.get_value("Reservation", due.name, "status") == "No Show"
+		assert frappe.db.get_value("Reservation", later.name, "status") == "Confirmed"
+		fee = frappe.get_all("Folio Charge", filters={
+			"reservation": due.name, "description": ("like", "No-show%")},
+			pluck="posting_date")
+		assert [str(x) for x in fee] == [str(today)], fee
+	finally:
+		frappe.db.set_value("Property", P, {
+			"business_date": saved.business_date,
+			"no_show_charge": saved.no_show_charge})
+
+
+@check("room nights under a rate plan add up to the quote's room total")
+def t121():
+	from kamra.folio import _nightly_room_rate
+	from kamra.pricing import quote
+	plans = [frappe.get_doc({
+		"doctype": "Rate Plan", "property": P, "rate_plan_name": name,
+		"code": code, "modifier_type": kind, "modifier_value": value,
+	}).insert(ignore_permissions=True).name
+		for name, code, kind, value in (
+			("Eval NR -15%", "EVNR15", "Percent", -15),
+			("Eval Flat -500", "EVFLAT500", "Amount", -500))]
+	ci, co = "2031-11-03", "2031-11-06"
+	g = _guest("Eval Rate Plan Stay", "+91 70000 00122")
+	for plan in plans:
+		res = frappe.get_doc({
+			"doctype": "Reservation", "property": P, "guest": g,
+			"room_type": RT, "check_in_date": ci, "check_out_date": co,
+			"adults": 2, "auto_price": 1, "rate_plan": plan,
+		}).insert(ignore_permissions=True)
+		q = quote(P, RT, ci, co, 2, 0, rate_plan=plan)
+		nights = sum(_nightly_room_rate(res, add_days(ci, i)) for i in range(3))
+		assert abs(nights - q["room_total"]) < 0.01, (plan, nights, q["room_total"])
+		plain = quote(P, RT, ci, co, 2, 0)["room_total"]
+		assert nights < plain, (plan, nights, plain)
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4906,7 +4959,7 @@ def execute():
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
-		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115):
+		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115, t120, t121):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

@@ -15,7 +15,6 @@ empty-data run, a failure mode and its invariant.
 
 from __future__ import annotations
 
-import unittest
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -411,13 +410,10 @@ class HoldExpiryTestCase(AuditTestCase):
 	def status(self, name):
 		return frappe.db.get_value("Reservation", name, "status")
 
-	# BUG: expire_holds sets cancellation_reason = "Hold / payment window
-	# expired", which is not one of the Reservation.cancellation_reason
-	# Select options (Guest request / Change of plans / Duplicate booking /
-	# Payment failed / ...). Every save fails validation, the error is
-	# swallowed into the Error Log, and no Held / Pending Payment booking is
-	# ever released - their rooms stay blocked for good.
-	@unittest.expectedFailure
+	# expire_holds once set cancellation_reason to a value that is not one
+	# of the field's Select options, so every save failed validation and no
+	# hold was ever released. The reason is now an allowed option ("Other")
+	# with the cause in cancellation_note.
 	def test_expired_holds_are_released(self):
 		from kamra.reservation_state import expire_holds
 		lapsed = self.hold(-10)
@@ -430,9 +426,13 @@ class HoldExpiryTestCase(AuditTestCase):
 		self.assertEqual(self.status(live), "Held")
 		self.assertIsNone(frappe.db.get_value("Reservation", lapsed,
 		                                      "hold_expires_on"))
-		self.assertEqual(frappe.db.get_value("Reservation", lapsed,
-		                                     "cancellation_reason"),
-		                 "Hold / payment window expired")
+		reason, note = frappe.db.get_value(
+			"Reservation", lapsed, ["cancellation_reason", "cancellation_note"])
+		self.assertEqual(reason, "Other")
+		self.assertEqual(note, "Hold / payment window expired")
+		options = frappe.get_meta("Reservation").get_field(
+			"cancellation_reason").options.split("\n")
+		self.assertIn(reason, options)
 
 	def test_confirmed_stay_is_never_expired(self):
 		from kamra.reservation_state import expire_holds
