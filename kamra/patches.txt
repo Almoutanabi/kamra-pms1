@@ -22,3 +22,5 @@ kamra.patches.v36.move_kitchen_ledger_off_stock_ledger_entry
 kamra.patches.v37.move_corporate_clients_off_company
 kamra.patches.v38.keep_existing_messages
 kamra.patches.v39.backfill_company_credit_guest_ledger
+kamra.patches.v40.backfill_charge_ledger
+kamra.patches.v40.apply_city_ledger_payments

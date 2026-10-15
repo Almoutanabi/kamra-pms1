@@ -34,6 +34,7 @@ MODULES = [
     ("crs", "Central reservations (chain)", ""),
     ("dashboards", "Dashboards", ""),
     ("reports", "Reports", ""),
+    ("ledger", "Ledgers (trial balance, city ledger / AR, FX desk)", ""),
     ("agents_api", "Activity ledger", ""),
     ("settings", "Settings hub (module settings)", ""),
     ("staff", "Staff & access", ""),
