@@ -13,8 +13,6 @@ const Login = lazy(() => import("./screens/Login"))
 import { useAuth } from "./lib/auth"
 import { t, useT } from "./lib/i18n"
 import { toFullPath } from "./lib/routing"
-import { CalendarView } from "./components/CalendarView"
-import { ResourceScreen } from "./components/ResourceScreen"
 const Billing = lazy(() => import("./screens/Billing"))
 const PublicBooking = lazy(() => import("./screens/PublicBooking"))
 const PublicListing = lazy(() => import("./screens/PublicListing"))
@@ -58,6 +56,10 @@ const Tickets = lazy(() => import("./screens/Tickets"))
 const Laundry = lazy(() => import("./screens/Laundry"))
 const MenuItems = lazy(() => import("./screens/MenuItems"))
 const Today = lazy(() => import("./screens/Today"))
+const ConfiguredScreen = lazy(() => import("./screens/ConfiguredScreen"))
+const CalendarView = lazy(() =>
+  import("./components/CalendarView").then((m) => ({ default: m.CalendarView })),
+)
 const WhatsAppChat = lazy(() => import("./screens/WhatsAppChat"))
 const CashierTill = lazy(() => import("./screens/CashierTill"))
 const CashierSessions = lazy(() => import("./screens/CashierSessions"))
@@ -66,29 +68,6 @@ const CashierShiftReport = lazy(() => import("./screens/CashierShiftReport"))
 const Ledgers = lazy(() => import("./screens/Ledgers"))
 const FolioHistory = lazy(() => import("./screens/FolioHistory"))
 const CurrencyDesk = lazy(() => import("./screens/CurrencyDesk"))
-import {
-  companiesConfig,
-  guardrailsConfig,
-  housekeepingConfig,
-  lostFoundConfig,
-  channelConnectionsConfig,
-  channelManagerConfig,
-  channelRoomMappingsConfig,
-  mealPlansConfig,
-  ratePlansConfig,
-  reservationsConfig,
-  roomBlocksConfig,
-  outletsConfig,
-  roomTypesConfig,
-  roomsConfig,
-  seasonsConfig,
-  shiftsConfig,
-  travelAgentsConfig,
-  groupsConfig,
-  venueBookingsConfig,
-  venuesConfig,
-  vouchersConfig,
-} from "./screens/configs"
 import ConnectionBanner from "./components/ConnectionBanner"
 
 class ErrorBoundary extends Component<
@@ -224,7 +203,7 @@ export default function App() {
           <Route path="tape" element={<TapeChart />} />
           <Route
             path="reservations"
-            element={<ResourceScreen config={reservationsConfig} />}
+            element={<ConfiguredScreen config="reservationsConfig" />}
           />
           <Route path="grc/:name" element={<RegistrationCard />} />
           <Route path="cancelled/:name" element={<CancellationLetter />} />
@@ -232,35 +211,35 @@ export default function App() {
           <Route path="guests/:name" element={<GuestJourney />} />
           <Route
             path="rooms"
-            element={<ResourceScreen config={roomsConfig} />}
+            element={<ConfiguredScreen config="roomsConfig" />}
           />
           <Route
             path="room-types"
-            element={<ResourceScreen config={roomTypesConfig} />}
+            element={<ConfiguredScreen config="roomTypesConfig" />}
           />
           <Route
             path="room-blocks"
-            element={<ResourceScreen config={roomBlocksConfig} />}
+            element={<ConfiguredScreen config="roomBlocksConfig" />}
           />
           <Route
             path="rate-plans"
-            element={<ResourceScreen config={ratePlansConfig} />}
+            element={<ConfiguredScreen config="ratePlansConfig" />}
           />
           <Route
             path="guardrails"
-            element={<ResourceScreen config={guardrailsConfig} />}
+            element={<ConfiguredScreen config="guardrailsConfig" />}
           />
           <Route
             path="seasons"
-            element={<ResourceScreen config={seasonsConfig} />}
+            element={<ConfiguredScreen config="seasonsConfig" />}
           />
           <Route
             path="vouchers"
-            element={<ResourceScreen config={vouchersConfig} />}
+            element={<ConfiguredScreen config="vouchersConfig" />}
           />
           <Route
             path="meal-plans"
-            element={<ResourceScreen config={mealPlansConfig} />}
+            element={<ConfiguredScreen config="mealPlansConfig" />}
           />
           <Route path="billing" element={<Billing />} />
           <Route path="billing/:name" element={<FolioView />} />
@@ -273,19 +252,19 @@ export default function App() {
           <Route path="folio-history" element={<FolioHistory />} />
           <Route
             path="companies"
-            element={<ResourceScreen config={companiesConfig} />}
+            element={<ConfiguredScreen config="companiesConfig" />}
           />
           <Route
             path="travel-agents"
-            element={<ResourceScreen config={travelAgentsConfig} />}
+            element={<ConfiguredScreen config="travelAgentsConfig" />}
           />
           <Route
             path="events"
-            element={<ResourceScreen config={venueBookingsConfig} />}
+            element={<ConfiguredScreen config="venueBookingsConfig" />}
           />
           <Route
             path="venues"
-            element={<ResourceScreen config={venuesConfig} />}
+            element={<ConfiguredScreen config="venuesConfig" />}
           />
           {/* The old venue calendar created bare Venue Bookings with no
               rental line, no follow-up and no owner - a function that
@@ -304,15 +283,15 @@ export default function App() {
           <Route path="banquet/:name/:kind" element={<BanquetDocument />} />
           <Route
             path="groups"
-            element={<ResourceScreen config={groupsConfig} />}
+            element={<ConfiguredScreen config="groupsConfig" />}
           />
           <Route
             path="lost-found"
-            element={<ResourceScreen config={lostFoundConfig} />}
+            element={<ConfiguredScreen config="lostFoundConfig" />}
           />
           <Route
             path="shifts"
-            element={<ResourceScreen config={shiftsConfig} />}
+            element={<ConfiguredScreen config="shiftsConfig" />}
           />
           <Route path="setup" element={<Setup />} />
           <Route path="settings" element={<Settings />} />
@@ -327,15 +306,15 @@ export default function App() {
           <Route path="whatsapp" element={<WhatsAppChat />} />
           <Route
             path="channels"
-            element={<ResourceScreen config={channelConnectionsConfig} />}
+            element={<ConfiguredScreen config="channelConnectionsConfig" />}
           />
           <Route
             path="channel-manager"
-            element={<ResourceScreen config={channelManagerConfig} />}
+            element={<ConfiguredScreen config="channelManagerConfig" />}
           />
           <Route
             path="ota-mappings"
-            element={<ResourceScreen config={channelRoomMappingsConfig} />}
+            element={<ConfiguredScreen config="channelRoomMappingsConfig" />}
           />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="crs" element={<CRS />} />
@@ -344,14 +323,14 @@ export default function App() {
           <Route path="kitchen" element={<Kitchen />} />
           <Route path="inventory" element={<Inventory />} />
           <Route path="menu-items" element={<MenuItems />} />
-          <Route path="outlets" element={<ResourceScreen config={outletsConfig} />} />
+          <Route path="outlets" element={<ConfiguredScreen config="outletsConfig" />} />
           <Route path="accounting-export" element={<AccountingExport />} />
           <Route path="tickets" element={<Tickets />} />
           <Route path="laundry" element={<Laundry />} />
           <Route path="housekeeping-board" element={<HousekeepingBoard />} />
           <Route
             path="housekeeping"
-            element={<ResourceScreen config={housekeepingConfig} />}
+            element={<ConfiguredScreen config="housekeepingConfig" />}
           />
           <Route
             path="*"
