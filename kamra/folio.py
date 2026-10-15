@@ -248,15 +248,38 @@ def _room_gst(reservation) -> float:
 	discount line). Slab-aware."""
 	from kamra.pricing import room_gst_rate
 
+	locked = locked_night(reservation, reservation.check_in_date)
+	if locked is not None:
+		return float(locked.gst_rate or 0)
+
 	rt = frappe.get_doc("Room Type", reservation.room_type)
 	rate = Decimal(str(_nightly_room_rate(reservation, reservation.check_in_date)))
 	return float(room_gst_rate(reservation.property, rt, rate))
 
 
+def locked_night(reservation, date):
+	"""The rate confirmed for this night at booking (Reservation Night
+	Rate), or None for a stay booked before rates were locked."""
+	key = str(getdate(date))
+	for row in reservation.get("night_rates") or []:
+		if str(row.stay_date) == key:
+			return row
+	return None
+
+
 def _nightly_room_rate(reservation, date) -> float:
-	"""Taxable nightly rate as the guest was quoted it: seasons applied, tax
-	backed out when the property configures tax-inclusive pricing, and the
-	booking's rate plan applied the way pricing.quote applies it."""
+	"""Taxable nightly rate as the guest was quoted it.
+
+	A booking carries its confirmed nightly rates (`night_rates`, locked
+	from the quote that priced it - demand premium included), and the folio
+	bills exactly those: a later season, rate change or a drop in occupancy
+	never re-prices a confirmed stay. Stays booked before rates were locked
+	fall back to pricing the night now: seasons applied, tax backed out when
+	the property configures tax-inclusive pricing, and the booking's rate
+	plan applied the way pricing.quote applies it."""
+	locked = locked_night(reservation, date)
+	if locked is not None:
+		return float(locked.rate or 0)
 	rate = _plan_free_night_rate(reservation, date)
 	plan = reservation.get("rate_plan")
 	if plan:
@@ -312,6 +335,9 @@ def _plan_free_night_rate(reservation, date) -> Decimal:
 
 
 def _nightly_gst(reservation, date) -> float:
+	locked = locked_night(reservation, date)
+	if locked is not None:
+		return float(locked.gst_rate or 0)
 	from kamra.pricing import (
 		occupancy_rate, room_gst_rate, season_adjust, small_group_allows_stay,
 	)
@@ -368,10 +394,14 @@ def post_room_night(reservation, date, folios=None) -> bool:
 	if reservation.meal_plan and not _charge_posted(
 			reservation.name, "Meal Plan", date):
 		mp = frappe.get_doc("Meal Plan", reservation.meal_plan)
-		meal_amount = (
-			(reservation.adults or 1) * float(mp.price_per_adult or 0)
-			+ (reservation.children or 0) * float(mp.price_per_child or 0)
-		)
+		locked = locked_night(reservation, date)
+		if locked is not None:
+			meal_amount = float(locked.meal_amount or 0)
+		else:
+			meal_amount = (
+				(reservation.adults or 1) * float(mp.price_per_adult or 0)
+				+ (reservation.children or 0) * float(mp.price_per_child or 0)
+			)
 		if meal_amount:
 			_append_charge(folios, reservation, "Meal Plan", {
 				"posting_date": date,
@@ -781,6 +811,13 @@ def cancel_invoice(folio_name: str, reason: str) -> dict:
 	return {"cancelled": old, "folio": folio.name}
 
 
+def audit_clock(property: str):
+	"""When the audit is running, on the property's clock - what a late
+	arrival's ETA is compared with. Its own function so tests can pin it."""
+	from kamra.no_show import property_now
+	return property_now(property)
+
+
 def run_night_audit(property: str, business_date: str | None = None) -> dict:
 	"""Automated end-of-day: open missing folios, post the night's room
 	charges for every in-house guest, flag no-shows. Closes only the
@@ -847,31 +884,56 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 	# no-shows: closing day D ends D's arrivals too (Opera end of day), so
 	# a confirmed stay due on or before the closed date that never checked
 	# in is flagged AND charged per the property's policy - on the closed
-	# date, like the room nights of the same run
-	no_show_basis = frappe.db.get_value(
-		"Property", property, "no_show_charge") or "None"
+	# date, like the room nights of the same run. The property's no-show
+	# policy (kamra.no_show) can push that a day later, hold late arrivals
+	# due on the closed date until the next audit, and waive the fee on OTA
+	# bookings (the OTA collects under its own policy).
+	from kamra import no_show
+	pol = no_show.policy(property)
+	cutoff = business_date if pol.timing != no_show.ONE_DAY_LATER \
+		else str(add_days(business_date, -1))
+	run_at = audit_clock(property)
+	held_late: list[dict] = []
+	fees_waived = 0
 	stale = frappe.get_all(
 		"Reservation",
 		filters={
 			"property": property,
 			"status": "Confirmed",
-			"check_in_date": ("<=", business_date),
+			"check_in_date": ("<=", cutoff),
 		},
 		fields=["name"],
+		order_by="check_in_date asc, name asc",
 	)
 	for row in stale:
+		res = frappe.get_doc("Reservation", row.name)
+		if pol.protect_late and str(res.check_in_date) == business_date:
+			why = no_show.late_arrival_reason(res, run_at)
+			if why:
+				held_late.append({"reservation": res.name,
+				                  "guest_name": res.guest_name,
+				                  "eta": res.get("eta") or None,
+				                  "reason": why})
+				log_lines.append(f"held late arrival: {res.name} ({why})")
+				continue
 		frappe.db.set_value("Reservation", row.name, "status", "No Show")
 		no_shows += 1
 		log_lines.append(f"flagged no-show: {row.name}")
-		if no_show_basis != "None":
-			res = frappe.get_doc("Reservation", row.name)
-			fee = post_policy_fee(res, no_show_basis,
-			                      f"No-show charge ({no_show_basis})",
-			                      posting_date=business_date)
-			if fee:
-				amount_posted += Decimal(str(fee))
-				log_lines.append(
-					f"posted no-show charge ₹{fee:,.0f} for {row.name}")
+		if pol.charge == "None":
+			continue
+		if pol.waive_ota and no_show.is_ota_booking(res):
+			fees_waived += 1
+			log_lines.append(
+				f"no-show fee waived for {row.name}: "
+				f"{res.get('channel') or res.get('source') or 'OTA'} booking")
+			continue
+		fee = post_policy_fee(res, pol.charge,
+		                      f"No-show charge ({pol.charge})",
+		                      posting_date=business_date)
+		if fee:
+			amount_posted += Decimal(str(fee))
+			log_lines.append(
+				f"posted no-show charge {fee:,.2f} for {row.name}")
 
 	# purge stale waitlist entries - two days after their requested departure
 	from frappe.utils import add_days as _add_days
@@ -892,6 +954,8 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		"room_charges_posted": charges_posted,
 		"amount_posted": float(amount_posted),
 		"no_shows_flagged": no_shows,
+		"late_arrivals_held": len(held_late),
+		"no_show_fees_waived": fees_waived,
 		"folios_opened": folios_opened,
 		"log": "\n".join(log_lines) or "Nothing to do.",
 	})
@@ -910,7 +974,8 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		property=property,
 		minutes_saved=90,
 		rationale=f"Posted {charges_posted} room nights, flagged {no_shows} "
-		          f"no-shows for {business_date}; business date → {new_bd}",
+		          f"no-shows, held {len(held_late)} late arrivals for "
+		          f"{business_date}; business date → {new_bd}",
 		agent_name="Night Audit",
 		autonomy="Full",
 		channel="API",
@@ -921,6 +986,9 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		"room_charges_posted": charges_posted,
 		"amount_posted": float(amount_posted),
 		"no_shows_flagged": no_shows,
+		"late_arrivals_held": len(held_late),
+		"held_late_arrivals": held_late,
+		"no_show_fees_waived": fees_waived,
 		"folios_opened": folios_opened,
 		"business_date": business_date,
 		"next_business_date": new_bd,

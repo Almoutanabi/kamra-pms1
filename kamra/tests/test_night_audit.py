@@ -676,3 +676,405 @@ class NightAuditPermissionTestCase(AuditTestCase):
 		self.assertTrue({"Front Desk", "Finance", "Kamra Agent"}
 		                <= set(api.run_night_audit._kamra_roles))
 		self.assertNotIn("Housekeeping", api.run_night_audit._kamra_roles)
+
+
+def at_time(day: str, hhmm: str):
+	"""A datetime on `day` at HH:MM, for pinning the audit's clock."""
+	from datetime import datetime
+	return datetime.strptime(f"{day} {hhmm}", "%Y-%m-%d %H:%M")
+
+
+class NoShowPolicyTestCase(AuditTestCase):
+	"""The per-property no-show policy (kamra.no_show) as the night audit
+	applies it: timing, late-arrival protection, the OTA fee waiver, and the
+	release of non-guaranteed arrivals."""
+
+	def setUp(self):
+		super().setUp()
+		self.at(TODAY)
+		make_property(PROP_A, business_date=YESTERDAY,
+		              no_show_charge="First Night")
+		self.rt = make_room_type(PROP_A, "STD", base_price=1000)
+		self.rooms = [make_room(PROP_A, self.rt, f"10{i}") for i in range(1, 6)]
+		# several unassigned arrivals share a night in some tests
+		frappe.db.set_value("Room Type", self.rt, "overbooking_pct", 100)
+		# the audit closing YESTERDAY, run by hand late that evening
+		self.clock(YESTERDAY, "23:00")
+
+	def clock(self, day, hhmm):
+		if getattr(self, "_clock", None):
+			self._clock.stop()
+		self._clock = patch.object(folio_mod, "audit_clock",
+		                           return_value=at_time(day, hhmm))
+		self._clock.start()
+		self.addCleanup(lambda c=self._clock: c.stop() if c else None)
+
+	def policy(self, **values):
+		frappe.db.set_value("Property", PROP_A, values)
+
+	def due(self, check_in=YESTERDAY, check_out=None, **kw):
+		return make_reservation(PROP_A, self.rt, check_in,
+		                        check_out or d(1), status="Confirmed", **kw)
+
+	def status(self, res):
+		return frappe.db.get_value("Reservation", res.name, "status")
+
+	def fees(self, res):
+		return [c for c in charges(res.name) if c.description.startswith("No-show")]
+
+	# timing --------------------------------------------------------------
+
+	def test_default_timing_no_shows_on_the_arrival_dates_audit(self):
+		res = self.due()
+		folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "No Show")
+
+	def test_one_day_later_keeps_the_arrival_due_in_for_a_day(self):
+		self.policy(no_show_timing="One day later")
+		today_due = self.due()
+		older = self.due(check_in=d(-2))
+		out = folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(today_due), "Confirmed")
+		self.assertEqual(self.status(older), "No Show")
+		self.assertEqual(out["no_shows_flagged"], 1)
+		# the next day's audit catches it, fee dated on that closed date
+		self.clock(TODAY, "23:00")
+		self.at(d(1))
+		folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(today_due), "No Show")
+		self.assertEqual([str(f.posting_date) for f in self.fees(today_due)], [TODAY])
+
+	# late arrivals ---------------------------------------------------------
+
+	def test_eta_after_a_manual_evening_audit_is_held(self):
+		res = self.due(eta="01:00")  # lands at 01:00 the next morning
+		out = folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "Confirmed")
+		self.assertEqual(out["no_shows_flagged"], 0)
+		self.assertEqual(out["late_arrivals_held"], 1)
+		self.assertEqual(out["held_late_arrivals"][0]["reservation"], res.name)
+		self.assertFalse(self.fees(res))
+		run = frappe.get_doc("Night Audit Run", out["audit"])
+		self.assertEqual(run.late_arrivals_held, 1)
+		self.assertIn(f"held late arrival: {res.name}", run.log)
+
+	def test_scheduled_3am_run_after_a_1am_eta_no_shows(self):
+		res = self.due(eta="01:00")
+		self.clock(TODAY, "03:00")
+		out = folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "No Show")
+		self.assertEqual(out["late_arrivals_held"], 0)
+		self.assertEqual(len(self.fees(res)), 1)
+
+	def test_evening_eta_before_and_after_the_run(self):
+		later = self.due(eta="11:30 pm")
+		earlier = self.due(eta="21:00")
+		folio_mod.run_night_audit(PROP_A)  # runs at 23:00
+		self.assertEqual(self.status(later), "Confirmed")
+		self.assertEqual(self.status(earlier), "No Show")
+
+	def test_planned_arrival_time_counts_as_an_eta(self):
+		res = self.due(planned_check_in_time="23:45")
+		folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "Confirmed")
+
+	def test_late_arrival_flag_holds_without_an_eta(self):
+		res = self.due(late_arrival=1)
+		self.clock(TODAY, "03:00")
+		out = folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "Confirmed")
+		self.assertEqual(out["held_late_arrivals"][0]["reason"],
+		                 "flagged late arrival")
+
+	def test_held_arrival_is_no_showed_at_the_next_audit(self):
+		res = self.due(late_arrival=1)
+		folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "Confirmed")
+		self.clock(d(1), "03:00")
+		self.at(d(1))
+		out = folio_mod.run_night_audit(PROP_A)  # closes TODAY
+		self.assertEqual(self.status(res), "No Show")
+		self.assertEqual(out["late_arrivals_held"], 0)
+		self.assertEqual([str(f.posting_date) for f in self.fees(res)], [TODAY])
+
+	def test_protection_off_no_shows_a_late_eta(self):
+		self.policy(protect_late_arrivals=0)
+		res = self.due(eta="01:00", late_arrival=1)
+		out = folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "No Show")
+		self.assertEqual(out["late_arrivals_held"], 0)
+
+	def test_protection_covers_only_arrivals_due_on_the_closed_date(self):
+		res = self.due(check_in=d(-3), late_arrival=1)
+		folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "No Show")
+
+	def test_eta_parsing(self):
+		from datetime import time
+
+		from kamra.no_show import parse_eta
+		self.assertEqual(parse_eta("14:30"), time(14, 30))
+		self.assertEqual(parse_eta("1 am"), time(1, 0))
+		self.assertEqual(parse_eta("9.45pm"), time(21, 45))
+		self.assertEqual(parse_eta("12 am"), time(0, 0))
+		self.assertEqual(parse_eta("midnight"), time(0, 0))
+		self.assertEqual(parse_eta("late night"), "late")
+		self.assertIsNone(parse_eta(""))
+		self.assertIsNone(parse_eta("not sure"))
+
+	# OTA fee waiver --------------------------------------------------------
+
+	def test_ota_no_show_is_flagged_without_a_fee(self):
+		res = self.due(check_in=d(-2), source="OTA", channel="Booking.com")
+		direct = self.due(check_in=d(-2))
+		out = folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(self.status(res), "No Show")
+		self.assertFalse(self.fees(res))
+		self.assertEqual(len(self.fees(direct)), 1)
+		self.assertEqual(out["no_show_fees_waived"], 1)
+		self.assertAlmostEqual(out["amount_posted"], 1000, places=2)
+		run = frappe.get_doc("Night Audit Run", out["audit"])
+		self.assertIn(f"no-show fee waived for {res.name}", run.log)
+		self.assertEqual(run.no_show_fees_waived, 1)
+
+	def test_a_channel_alone_marks_an_ota_booking(self):
+		res = self.due(check_in=d(-2), channel="Agoda")
+		folio_mod.run_night_audit(PROP_A)
+		self.assertFalse(self.fees(res))
+
+	def test_waiver_off_charges_the_ota_no_show(self):
+		self.policy(waive_no_show_fee_for_ota=0)
+		res = self.due(check_in=d(-2), source="OTA", channel="Booking.com")
+		out = folio_mod.run_night_audit(PROP_A)
+		self.assertEqual(len(self.fees(res)), 1)
+		self.assertEqual(out["no_show_fees_waived"], 0)
+
+	# release of non-guaranteed arrivals -----------------------------------
+
+	def release(self, hhmm, day=TODAY):
+		from kamra.no_show import release_for_property
+		return release_for_property(PROP_A, now=at_time(day, hhmm))
+
+	def test_release_time_blank_is_off(self):
+		res = self.due(check_in=TODAY, check_out=d(2))
+		self.assertEqual(self.release("23:59"), [])
+		self.assertEqual(self.status(res), "Confirmed")
+
+	def test_non_guaranteed_arrival_is_released_after_the_time(self):
+		self.policy(non_guaranteed_release_time="18:00")
+		res = self.due(check_in=TODAY, check_out=d(2))
+		self.assertEqual(self.release("17:45"), [])
+		self.assertEqual(self.status(res), "Confirmed")
+		self.assertEqual(self.release("18:00"), [res.name])
+		doc = frappe.get_doc("Reservation", res.name)
+		self.assertEqual(doc.status, "Cancelled")
+		self.assertEqual(float(doc.cancellation_fee or 0), 0)
+		self.assertIn("Non-guaranteed", doc.cancellation_note)
+		self.assertFalse(charges(res.name))
+		self.assertTrue(frappe.db.exists("Agent Action Log", {
+			"action_type": "non_guaranteed_release", "reference_name": res.name}))
+		# idempotent: nothing left to release
+		self.assertEqual(self.release("18:15"), [])
+
+	def test_guaranteed_arrivals_are_kept(self):
+		self.policy(non_guaranteed_release_time="18:00")
+		paid = self.due(check_in=TODAY, check_out=d(2), advance_paid=500)
+		ota = self.due(check_in=TODAY, check_out=d(2), source="OTA")
+		corporate = self.due(check_in=TODAY, check_out=d(2),
+		                     booking_type="Corporate")
+		late = self.due(check_in=TODAY, check_out=d(2), late_arrival=1)
+		deposit = self.due(check_in=TODAY, check_out=d(2))
+		folio = frappe.get_doc("Folio", folio_mod.open_folio(deposit))
+		folio.append("payments", {"amount": 300, "mode": "Cash",
+		                          "posting_date": TODAY})
+		folio.save(ignore_permissions=True)
+		other_day = self.due(check_in=d(1), check_out=d(2))
+		self.assertEqual(self.release("19:00"), [])
+		for res in (paid, ota, corporate, late, deposit, other_day):
+			self.assertEqual(self.status(res), "Confirmed", res.name)
+
+	def test_booking_made_after_the_release_time_is_kept(self):
+		self.policy(non_guaranteed_release_time="18:00")
+		res = self.due(check_in=TODAY, check_out=d(2))
+		frappe.db.set_value("Reservation", res.name, "creation",
+		                    f"{TODAY} 18:30:00", update_modified=False)
+		self.assertEqual(self.release("19:00"), [])
+		self.assertEqual(self.status(res), "Confirmed")
+
+
+class RateLockTestCase(AuditTestCase):
+	"""A booking bills the nightly rates confirmed when it was made
+	(Reservation Night Rate): later seasons, rate changes or a drop in
+	demand never re-price it; an amendment re-quotes only once the new
+	price is confirmed."""
+
+	properties = (PROP_A,)
+
+	def setUp(self):
+		super().setUp()
+		self.at(TODAY)
+		make_property(PROP_A, business_date=YESTERDAY)
+		self.rt = make_room_type(PROP_A, "STD", base_price=1000)
+		self.rt_deluxe = make_room_type(PROP_A, "DLX", base_price=2500)
+		self.rooms = [make_room(PROP_A, self.rt, f"10{i}") for i in range(1, 5)]
+		self.deluxe_room = make_room(PROP_A, self.rt_deluxe, "201")
+
+	def in_house(self, **kw):
+		return make_reservation(PROP_A, self.rt, d(-3), d(2),
+		                        status="Checked In", room=self.rooms[0], **kw)
+
+	def season(self, start, end, pct):
+		return frappe.get_doc({
+			"doctype": "Season", "property": PROP_A,
+			"season_name": f"UT {start} {pct}", "start_date": start,
+			"end_date": end, "adjustment_type": "Percent",
+			"adjustment_value": pct,
+		}).insert(ignore_permissions=True)
+
+	def night(self, res, date):
+		rows = [r for r in charges(res.name, "Room") if str(r.posting_date) == str(date)]
+		return float(rows[0].amount)
+
+	def test_booking_locks_one_rate_per_night(self):
+		res = self.in_house()
+		self.assertEqual([str(r.stay_date) for r in res.night_rates],
+		                 [d(-3), d(-2), d(-1), d(0), d(1)])
+		self.assertTrue(all(float(r.rate) == 1000 for r in res.night_rates))
+		self.assertTrue(res.rate_lock_key)
+
+	def test_season_added_after_booking_does_not_change_the_bill(self):
+		res = self.in_house()
+		amount = float(res.amount_after_tax)
+		self.season(d(-1), d(-1), 50)
+		folio_mod.run_night_audit(PROP_A)
+		self.assertAlmostEqual(self.night(res, YESTERDAY), 1000, places=2)
+		# an unrelated save keeps the confirmed price too
+		doc = frappe.get_doc("Reservation", res.name)
+		doc.special_requests = "Extra pillows"
+		doc.save(ignore_permissions=True)
+		self.assertAlmostEqual(float(doc.amount_after_tax), amount, places=2)
+
+	def test_demand_premium_is_billed_after_occupancy_drops(self):
+		hurdle = frappe.get_doc({
+			"doctype": "Hurdle Rate", "property": PROP_A, "room_type": self.rt,
+			"occupancy_from": 0, "premium_pct": 20,
+		}).insert(ignore_permissions=True)
+		res = self.in_house()
+		self.assertAlmostEqual(float(res.night_rates[0].rate), 1200, places=2)
+		self.assertEqual(float(res.night_rates[0].demand_premium_pct), 20)
+		frappe.db.set_value("Hurdle Rate", hurdle.name, "disabled", 1)
+		folio_mod.run_night_audit(PROP_A)
+		self.assertAlmostEqual(self.night(res, YESTERDAY), 1200, places=2)
+
+	def test_stay_without_locked_rates_falls_back_to_pricing_now(self):
+		res = self.in_house()
+		frappe.db.delete("Reservation Night Rate", {"parent": res.name})
+		self.season(d(-1), d(-1), 50)
+		folio_mod.run_night_audit(PROP_A)
+		self.assertAlmostEqual(self.night(res, YESTERDAY), 1500, places=2)
+
+	def test_no_show_first_night_fee_uses_the_locked_rate(self):
+		frappe.db.set_value("Property", PROP_A, "no_show_charge", "First Night")
+		res = make_reservation(PROP_A, self.rt, d(-1), d(1))
+		self.season(d(-1), d(-1), 50)
+		folio_mod.run_night_audit(PROP_A)
+		fee = [c for c in charges(res.name) if c.description.startswith("No-show")]
+		self.assertAlmostEqual(float(fee[0].amount), 1000, places=2)
+
+	def test_amend_stay_needs_the_new_price_confirmed(self):
+		from kamra import api
+		res = make_reservation(PROP_A, self.rt, d(5), d(7), room=self.rooms[1])
+		self.season(d(7), d(7), 50)
+		pv = api.amend_stay_preview(res.name, d(5), d(8))
+		self.assertTrue(pv["needs_confirmation"])
+		self.assertEqual([n["rate"] for n in pv["nights"]], [1000, 1000, 1500])
+		with self.assertRaises(api.PriceConfirmationRequired):
+			api.amend_stay(res.name, d(5), d(8))
+		doc = frappe.get_doc("Reservation", res.name)
+		self.assertEqual(str(doc.check_out_date), d(7))
+		self.assertEqual(len(doc.night_rates), 2)
+		out = api.amend_stay(res.name, d(5), d(8), confirm_price=1)
+		self.assertAlmostEqual(float(out["amount_after_tax"]), pv["new_amount"], places=2)
+		doc = frappe.get_doc("Reservation", res.name)
+		self.assertEqual([float(r.rate) for r in doc.night_rates], [1000, 1000, 1500])
+
+	def test_amend_with_an_unchanged_total_needs_no_confirmation(self):
+		from kamra import api
+		res = make_reservation(PROP_A, self.rt, d(5), d(7), room=self.rooms[1])
+		out = api.amend_stay(res.name, d(6), d(8))
+		self.assertAlmostEqual(float(out["amount_after_tax"]),
+		                       float(res.amount_after_tax), places=2)
+
+	def test_same_type_move_keeps_the_locked_rates(self):
+		from kamra import api
+		res = make_reservation(PROP_A, self.rt, d(5), d(7), room=self.rooms[1])
+		self.season(d(5), d(6), 50)
+		pv = api.room_move_preview(res.name, self.rooms[2])
+		self.assertFalse(pv["needs_confirmation"])
+		api.move_reservation(res.name, self.rooms[2])
+		doc = frappe.get_doc("Reservation", res.name)
+		self.assertEqual(doc.room, self.rooms[2])
+		self.assertEqual([float(r.rate) for r in doc.night_rates], [1000, 1000])
+
+	def test_upgrade_move_needs_the_new_price_confirmed(self):
+		from kamra import api
+		res = make_reservation(PROP_A, self.rt, d(5), d(7), room=self.rooms[1])
+		pv = api.room_move_preview(res.name, self.deluxe_room)
+		self.assertTrue(pv["needs_confirmation"])
+		with self.assertRaises(api.PriceConfirmationRequired):
+			api.move_reservation(res.name, self.deluxe_room)
+		api.move_reservation(res.name, self.deluxe_room, confirm_price=1)
+		doc = frappe.get_doc("Reservation", res.name)
+		self.assertEqual(doc.room_type, self.rt_deluxe)
+		self.assertEqual([float(r.rate) for r in doc.night_rates], [2500, 2500])
+		self.assertAlmostEqual(float(doc.amount_after_tax), pv["new_amount"], places=2)
+
+	def test_backfill_locks_old_bookings_once(self):
+		from kamra.patches.v40 import lock_confirmed_night_rates as patch_mod
+		hurdle = frappe.get_doc({
+			"doctype": "Hurdle Rate", "property": PROP_A, "room_type": self.rt,
+			"occupancy_from": 0, "premium_pct": 20,
+		}).insert(ignore_permissions=True)
+		quoted = make_reservation(PROP_A, self.rt, d(5), d(7), room=self.rooms[1])
+		plain = make_reservation(PROP_A, self.rt, d(5), d(7), room=self.rooms[2])
+		for res in (quoted, plain):
+			frappe.db.delete("Reservation Night Rate", {"parent": res.name})
+			frappe.db.set_value("Reservation", res.name, "rate_lock_key", None)
+		# a booking from before quote snapshots: priced the way the folio
+		# bills it today (no demand premium in that path)
+		frappe.db.set_value("Reservation", plain.name, "quote_snapshot", None)
+		frappe.db.set_value("Hurdle Rate", hurdle.name, "disabled", 1)
+		patch_mod.lock(frappe.get_doc("Reservation", quoted.name))
+		patch_mod.lock(frappe.get_doc("Reservation", plain.name))
+		q = frappe.get_doc("Reservation", quoted.name)
+		self.assertEqual([float(r.rate) for r in q.night_rates], [1200, 1200])
+		self.assertTrue(q.rate_lock_key)
+		p = frappe.get_doc("Reservation", plain.name)
+		self.assertEqual([float(r.rate) for r in p.night_rates], [1000, 1000])
+		# idempotent
+		patch_mod.lock(frappe.get_doc("Reservation", quoted.name))
+		self.assertEqual(frappe.db.count("Reservation Night Rate",
+		                                 {"parent": quoted.name}), 2)
+		# and the lock holds on the next save
+		q.special_requests = "late"
+		q.save(ignore_permissions=True)
+		self.assertEqual([float(r.rate) for r in q.night_rates], [1200, 1200])
+
+	def test_channel_booking_locks_the_channels_nightly_prices(self):
+		from kamra.channel_manager import lock_channel_rates
+		doc = frappe.get_doc({
+			"doctype": "Reservation", "property": PROP_A, "room_type": self.rt,
+			"guest": frappe.get_doc({"doctype": "Guest", "first_name": "UT OTA"})
+			         .insert(ignore_permissions=True).name,
+			"check_in_date": d(5), "check_out_date": d(7), "adults": 2,
+			"source": "OTA", "channel": "Booking.com", "auto_price": 0,
+			"amount_after_tax": 3000,
+		})
+		lock_channel_rates(doc, 3000, [{"date": d(5), "amount": 1000},
+		                               {"date": d(6), "amount": 2000}])
+		doc.insert(ignore_permissions=True)
+		# Fixed tax mode on the test property: whatever its rate, the nights
+		# carry the channel's 1:2 split and add back up to the OTA total
+		gross = [float(r.rate) * (1 + float(r.gst_rate) / 100) for r in doc.night_rates]
+		self.assertAlmostEqual(sum(gross), 3000, delta=0.05)
+		self.assertAlmostEqual(gross[1] / gross[0], 2, places=2)

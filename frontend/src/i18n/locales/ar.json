@@ -1253,5 +1253,17 @@
   "The guest is in-house: the old room is marked Dirty for housekeeping.": "النزيل مقيم: تُعلَّم الغرفة السابقة متسخة للتدبير المنزلي.",
   "Guest request": "طلب النزيل",
   "Upgrade": "ترقية",
-  "Noise / complaint": "إزعاج / شكوى"
+  "Noise / complaint": "إزعاج / شكوى",
+  "Held late arrivals": "وصول متأخر محجوز",
+  "Still Due In. The next night audit marks them no-show if they have not checked in.": "لا يزالون في قائمة الوصول. يسجّلهم تدقيق الليل التالي كعدم حضور إن لم يسجّلوا الدخول.",
+  "No-show fee waived on {n} OTA booking(s).": "أُعفي {n} من حجوزات وكالات السفر الإلكترونية من رسوم عدم الحضور.",
+  "{n} late arrival(s) held": "{n} وصول متأخر محجوز",
+  "This change re-prices the stay from {from} to {to}. Confirm the new price?": "هذا التغيير يعيد تسعير الإقامة من {from} إلى {to}. هل تؤكد السعر الجديد؟",
+  "Night audit & no-shows": "تدقيق الليل وعدم الحضور",
+  "Mark no-shows": "تسجيل عدم الحضور",
+  "At audit for arrival date": "عند تدقيق تاريخ الوصول",
+  "One day later": "بعد يوم واحد",
+  "Hold late arrivals until the next audit": "احتجاز الوصول المتأخر حتى التدقيق التالي",
+  "No no-show fee on OTA bookings": "بلا رسوم عدم حضور على حجوزات وكالات السفر الإلكترونية",
+  "Release non-guaranteed arrivals at": "إلغاء الحجوزات غير المضمونة عند"
 }

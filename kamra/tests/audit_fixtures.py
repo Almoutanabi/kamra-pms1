@@ -72,6 +72,10 @@ def make_property(name: str, **fields) -> str:
 		"disabled": 0, "rates_include_tax": 0, "room_levy_percent": 0,
 		"require_cashier_pin": 0, "guest_retention_months": 0,
 		"message_retention_days": 0, "security_deposit_amount": 0,
+		# no-show policy at its defaults; the policy tests change it
+		"no_show_timing": "At audit for arrival date",
+		"protect_late_arrivals": 1, "waive_no_show_fee_for_ota": 1,
+		"non_guaranteed_release_time": None, "timezone": None,
 	}
 	payload.update(fields)
 	if frappe.db.exists("Property", name):

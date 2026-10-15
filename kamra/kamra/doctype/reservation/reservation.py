@@ -315,13 +315,8 @@ class Reservation(Document):
 				title=_("Blacklisted guest"),
 			)
 
-	def apply_pricing(self):
-		"""Recompute money from the pricing engine while auto_price is on.
-		Turn auto_price off to hold manually negotiated amounts."""
-		if not getattr(self, "auto_price", 0) or not self.room_type:
-			return
-		from kamra.pricing import quote
-
+	def quote_inputs(self) -> dict:
+		"""What the pricing engine needs to price this stay as it stands."""
 		voucher_code = None
 		if self.voucher:
 			voucher_code = frappe.db.get_value(
@@ -343,17 +338,57 @@ class Reservation(Document):
 			free_children = max(free_children, int(self.infants))
 
 		billable_children = max(0, int(self.children or 0) - free_children)
+		return {
+			"property": self.property,
+			"room_type": self.room_type,
+			"check_in_date": str(self.check_in_date),
+			"check_out_date": str(self.check_out_date),
+			"adults": int(self.adults or 0),
+			"children": billable_children,
+			"meal_plan": self.meal_plan or None,
+			"rate_plan": self.rate_plan or None,
+			"voucher_code": voucher_code,
+			"over_capacity_charge": float(self.get("over_capacity_charge") or 0),
+		}
 
-		q = quote(
-			property=self.property,
-			room_type=self.room_type,
-			check_in_date=self.check_in_date,
-			check_out_date=self.check_out_date,
-			adults=self.adults,
-			children=billable_children,
-			meal_plan=self.meal_plan,
-			rate_plan=self.rate_plan,
-			voucher_code=voucher_code,
+	@staticmethod
+	def rate_lock_key_for(inputs: dict) -> str:
+		import hashlib
+		import json
+		raw = json.dumps(inputs, sort_keys=True, default=str)
+		return hashlib.sha1(raw.encode()).hexdigest()[:20]  # nosec B324 -- change detector, not security
+
+	def requote(self, check_voucher_limits: bool = False) -> dict:
+		"""Price the stay as it stands now, without counting this booking
+		in the house's occupancy. Used by the save path and the amendment
+		previews, so a preview and the save that follows agree."""
+		from kamra.pricing import quote
+		return quote(**self.quote_inputs(),
+		             check_voucher_limits=check_voucher_limits,
+		             exclude_reservation=None if self.is_new() else self.name)
+
+	def apply_pricing(self):
+		"""Price the booking from the engine while auto_price is on, and lock
+		the confirmed nightly rates (`night_rates`).
+
+		Once the stay has its rates, a save that does not change what is
+		being sold (dates, room type, party, meal / rate plan, voucher)
+		keeps them: later rate, season or demand changes never re-price a
+		confirmed booking. Changing what is sold re-quotes and re-locks;
+		the desk endpoints (amend_stay, move_reservation) show that price
+		and ask for confirmation first. Turn auto_price off to hold manually
+		negotiated amounts."""
+		if not getattr(self, "auto_price", 0) or not self.room_type:
+			return
+		inputs = self.quote_inputs()
+		key = self.rate_lock_key_for(inputs)
+		if (not self.is_new() and self.get("night_rates")
+				and self.get("rate_lock_key") == key
+				and not self.has_value_changed("auto_price")):
+			self._apply_commission()
+			return
+
+		q = self.requote(
 			# the voucher's dates and use limit apply when it is first
 			# attached; a saved booking keeps its discount on later edits
 			check_voucher_limits=bool(
@@ -369,6 +404,44 @@ class Reservation(Document):
 			snap = dict(q)
 			snap["idempotency_key"] = getattr(self, "idempotency_key", None)
 			self.quote_snapshot = json.dumps(snap, default=str)
+		self.set_night_rates(q)
+		self.rate_lock_key = key
+		self._apply_commission()
+
+	def set_night_rates(self, q: dict):
+		"""Lock the quote's nights on the booking - the rates the folio bills.
+
+		A rate plan works on the stay total, so each night carries its share
+		of the planned total (same spread as folio._rate_plan_factor), and
+		the last night absorbs rounding so the nights add up to the quote's
+		room total exactly."""
+		nightly = q.get("nightly") or []
+		plan_free = sum(float(n["rate"]) for n in nightly)
+		room_total = float(q.get("room_total") or 0)
+		factor = room_total / plan_free if plan_free else 1.0
+		meal = 0.0
+		if self.meal_plan:
+			mp = frappe.db.get_value(
+				"Meal Plan", self.meal_plan,
+				["price_per_adult", "price_per_child"], as_dict=True) or {}
+			meal = ((self.adults or 1) * float(mp.get("price_per_adult") or 0)
+			        + (self.children or 0) * float(mp.get("price_per_child") or 0))
+		rows, running = [], 0.0
+		for i, n in enumerate(nightly):
+			rate = round(float(n["rate"]) * factor, 2)
+			if i == len(nightly) - 1 and plan_free:
+				rate = round(room_total - running, 2)
+			running += rate
+			rows.append({
+				"stay_date": n["date"],
+				"rate": rate,
+				"gst_rate": float(n.get("gst_rate") or 0),
+				"meal_amount": meal,
+				"demand_premium_pct": float(n.get("demand_premium_pct") or 0),
+			})
+		self.set("night_rates", rows)
+
+	def _apply_commission(self):
 		if getattr(self, "travel_agent", None):
 			pct = frappe.db.get_value(
 				"Travel Agent", self.travel_agent, "commission_pct") or 0

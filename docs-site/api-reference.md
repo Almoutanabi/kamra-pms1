@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **274 endpoints**, generated from the source
+the UI and the AI use. **276 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -1255,21 +1255,26 @@ One writer for the tape chart, the reservation drawer and the GRC (#113).
 The new room may be a DIFFERENT room type (e.g. Standard -> Suite): the
 reservation's room type follows the room it moves into, so upgrades and
 downgrades are allowed. If the booking auto-prices, the new type's rate
-applies; a manually-priced booking keeps its amount.
+is quoted and locked - shown first by room_move_preview, and refused
+unless confirm_price=1 when it changes the bill. A same-type move keeps
+the locked nightly rates; a manually-priced booking keeps its amount.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `reservation` | yes |  |
 | `new_room` | yes |  |
 | `reason` | no | `None` |
+| `confirm_price` | no | `0` |
 
 ### `kamra.api.room_move_preview`
 
 **GET/POST** · roles: `Front Desk`, `Kamra Agent`
 
 What a move would do to the bill before the desk confirms it: a
-same-type swap keeps the price; an upgrade / downgrade on an auto-priced
-booking is re-quoted at the new type's rate by the pricing engine.
+same-type swap keeps the price (and the locked nightly rates); an
+upgrade / downgrade on an auto-priced booking is re-quoted at the new
+type's rate by the pricing engine, and move_reservation then needs
+confirm_price=1.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1291,18 +1296,54 @@ booking's current type is listed first.
 | `check_in_date` | no | `None` |
 | `check_out_date` | no | `None` |
 
-### `kamra.api.amend_stay`
+### `kamra.api.amend_stay_preview`
 
 **GET/POST** · roles: `Front Desk`, `Kamra Agent`
 
-Extend / shorten a stay. Re-prices when auto_price is on; the
-overlap guard validates the new window.
+What new dates would do to the bill, before anything changes: the
+current and new totals and the new nightly rates, priced by the engine
+from today's rules. amend_stay needs confirm_price=1 when the total
+changes.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `reservation` | yes |  |
 | `check_in_date` | yes |  |
 | `check_out_date` | yes |  |
+
+### `kamra.api.amend_stay`
+
+**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+
+Extend / shorten a stay; the overlap guard validates the new window.
+
+An auto-priced stay is re-quoted for its new dates and its nightly
+rates re-locked. That changes what the guest pays, so call
+amend_stay_preview first, show the new price, and pass confirm_price=1;
+without it a change in the total is refused. A manually-priced stay
+keeps its amount.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `check_in_date` | yes |  |
+| `check_out_date` | yes |  |
+| `confirm_price` | no | `0` |
+
+### `kamra.api.set_late_arrival`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Flag (or unflag) a confirmed arrival as arriving late, optionally with
+the ETA the guest gave. With the property's late-arrival protection on,
+the night audit holds a flagged arrival as Due In instead of marking it
+a no-show; the next audit decides.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `late_arrival` | no | `1` |
+| `eta` | no | `None` |
 
 ### `kamra.api.booking_options`
 

@@ -136,7 +136,7 @@ MODULES: tuple[Module, ...] = (
 	),
 	# --- modules -----------------------------------------------------------
 	Module(
-		"front-desk", "Front Desk", "Arrivals, holds and the day view.",
+		"front-desk", "Front Desk", "Arrivals, holds, no-shows and the day view.",
 		editors=("Hotel Admin",),
 		related=(("Rooms", "/rooms"), ("Room types", "/room-types")),
 		sections=(
@@ -152,6 +152,26 @@ MODULES: tuple[Module, ...] = (
 				S("hold_minutes", "Hold unconfirmed bookings for", "number", 120, P, min=5, max=10080, unit="min"),
 				S("sell_message", "Sell message", "textarea", store=P,
 				  hint="Shown in the booking dialog and used by the AI agent as its upsell prompt."),
+			)),
+			Section("noshow", "Night audit & no-shows",
+			        "When the night audit turns an arrival that never came into a No Show, and who pays for it. "
+			        "The fee itself is the no-show charge under Stay policies.", (
+				S("no_show_timing", "Mark no-shows", "select", "At audit for arrival date", P,
+				  options=("At audit for arrival date", "One day later"),
+				  hint="At audit for arrival date: the audit closing the arrival date marks it. "
+				       "One day later: the arrival stays Due In until the next day's audit."),
+				S("protect_late_arrivals", "Hold late arrivals until the next audit", "check", 1, P,
+				  hint="An arrival due on the day being closed stays Due In if it is flagged Late arrival, "
+				       "or its ETA is later than the moment the audit runs (property time; an ETA before "
+				       "06:00 means after midnight). The next audit marks it a no-show if it still has not arrived."),
+				S("waive_no_show_fee_for_ota", "No no-show fee on OTA bookings", "check", 1, P,
+				  hint="Bookings from an OTA or channel are still marked No Show, but no fee is posted - "
+				       "the OTA charges the guest under its own policy."),
+				S("non_guaranteed_release_time", "Release non-guaranteed arrivals at", "time", None, P,
+				  hint="Leave blank to never release. At this time, today's arrivals with no advance, "
+				       "payment or deposit on the folio, and that are not an OTA or company booking, "
+				       "are cancelled with no fee and the room goes back on sale. Late arrivals and "
+				       "bookings made after this time are kept."),
 			)),
 			Section("dayview", "Hourly view", "The time window on the day-use / hourly tape.", (
 				S("hourly_view_start", "Day starts", "time", "06:00", P),

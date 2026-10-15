@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useOutletContext } from "react-router-dom"
 import type { ShellContext } from "../AppShell"
 import { ChevronDown, ChevronLeft, ChevronRight, Lock, Sparkles, Star } from "lucide-react"
-import { call, getCurrentProperty } from "../lib/api"
+import { amendStayConfirmed, call, getCurrentProperty, moveRoomConfirmed, type RepricePreview } from "../lib/api"
 import { serverError } from "../lib/resource"
 import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
@@ -267,6 +267,14 @@ export default function TapeChart() {
       .catch(() => setFreeRooms([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel, draft.check_in, draft.check_out])
+
+  // a change to what is sold re-prices the stay; the server refuses it until
+  // the new price is confirmed
+  const money = (n: number) => `${cur()}${Math.round(n).toLocaleString(moneyLocale())}`
+  const askPrice = (p: RepricePreview) =>
+    window.confirm(t("This change re-prices the stay from {from} to {to}. Confirm the new price?", {
+      from: money(p.current_amount), to: money(p.new_amount),
+    }))
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true)
@@ -635,17 +643,15 @@ export default function TapeChart() {
               <Button variant="outline" onClick={() => setSel(null)}>{t("Close")}</Button>
               {draft.room !== sel.room && (
                 <Button disabled={busy}
-                  onClick={() => act(() => call("kamra.api.move_reservation",
-                    { reservation: sel.name, new_room: draft.room }))}>
+                  onClick={() => act(() => moveRoomConfirmed(sel.name, draft.room, askPrice))}>
                   {t("Move room")}
                 </Button>
               )}
               {(draft.check_in !== sel.check_in_date ||
                 draft.check_out !== sel.check_out_date) && (
                 <Button disabled={busy}
-                  onClick={() => act(() => call("kamra.api.amend_stay",
-                    { reservation: sel.name, check_in_date: draft.check_in,
-                      check_out_date: draft.check_out }))}>
+                  onClick={() => act(() => amendStayConfirmed(sel.name, draft.check_in,
+                    draft.check_out, askPrice))}>
                   {t("Update stay")}
                 </Button>
               )}

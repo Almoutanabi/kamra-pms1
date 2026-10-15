@@ -4941,6 +4941,184 @@ def t121():
 		assert nights < plain, (plan, nights, plain)
 
 
+FAR = "2032-05-10"  # a night no other check books
+
+
+@check("a demand-premium night is billed at the quoted rate after occupancy drops")
+def t180():
+	from kamra.folio import _nightly_room_rate, post_room_night
+	from kamra.pricing import forecast_occupancy, quote
+	ci, co = FAR, add_days(FAR, 1)
+	g = _guest("Eval Demand Filler", "+91 70000 00180")
+	filler = _res(g, ci, co)
+	occ = forecast_occupancy(P, ci)
+	assert occ > 0, occ
+	frappe.get_doc({
+		"doctype": "Hurdle Rate", "property": P, "room_type": RT,
+		"occupancy_from": occ, "premium_pct": 25,
+	}).insert(ignore_permissions=True)
+	g2 = _guest("Eval Demand Guest", "+91 70000 00181")
+	res = _res(g2, ci, co)
+	quoted = float(res.night_rates[0].rate)
+	assert quoted == 5000, quoted  # 4000 + 25% premium
+	assert float(res.night_rates[0].demand_premium_pct) == 25
+	# the filler cancels: the house is emptier and a fresh quote drops
+	frappe.db.set_value("Reservation", filler.name, "status", "Cancelled")
+	fresh = quote(P, RT, ci, co, 2, 0, exclude_reservation=res.name)
+	assert fresh["room_total"] == 4000, fresh["room_total"]
+	# ...but the confirmed booking still bills its quoted night
+	res = frappe.get_doc("Reservation", res.name)
+	assert _nightly_room_rate(res, ci) == quoted
+	res.special_requests = "quiet room"
+	res.save(ignore_permissions=True)
+	assert float(res.night_rates[0].rate) == quoted
+	from kamra.folio import open_folio
+	open_folio(res)
+	post_room_night(res, ci)
+	amt = frappe.get_all("Folio Charge", filters={
+		"reservation": res.name, "charge_type": "Room"}, pluck="amount")
+	assert [float(a) for a in amt] == [quoted], amt
+
+
+@check("a season added after booking never re-prices the confirmed stay")
+def t181():
+	from kamra.folio import _nightly_room_rate
+	ci, co = add_days(FAR, 3), add_days(FAR, 5)
+	res = _res(_guest("Eval Season Lock", "+91 70000 00182"), ci, co)
+	before = float(res.amount_after_tax)
+	frappe.get_doc({
+		"doctype": "Season", "property": P, "season_name": "Eval Late Season",
+		"start_date": ci, "end_date": co, "adjustment_type": "Percent",
+		"adjustment_value": 50, "priority": 50,
+	}).insert(ignore_permissions=True)
+	res = frappe.get_doc("Reservation", res.name)
+	res.special_requests = "anything"
+	res.save(ignore_permissions=True)
+	assert float(res.amount_after_tax) == before, (res.amount_after_tax, before)
+	assert _nightly_room_rate(res, ci) == 4000
+
+
+@check("amend_stay re-prices only after the new price is confirmed")
+def t182():
+	from kamra import api
+	ci, co = add_days(FAR, 8), add_days(FAR, 10)
+	res = _res(_guest("Eval Amend Lock", "+91 70000 00183"), ci, co)
+	frappe.get_doc({
+		"doctype": "Season", "property": P, "season_name": "Eval Amend Season",
+		"start_date": co, "end_date": co, "adjustment_type": "Percent",
+		"adjustment_value": 50, "priority": 50,
+	}).insert(ignore_permissions=True)
+	new_co = add_days(co, 1)
+	pv = api.amend_stay_preview(res.name, ci, new_co)
+	assert pv["needs_confirmation"] and [n["rate"] for n in pv["nights"]] == [4000, 4000, 6000], pv
+	try:
+		api.amend_stay(res.name, ci, new_co)
+		raise AssertionError("re-priced without confirm_price")
+	except api.PriceConfirmationRequired:
+		pass
+	assert str(frappe.db.get_value("Reservation", res.name, "check_out_date")) == str(co)
+	out = api.amend_stay(res.name, ci, new_co, confirm_price=1)
+	assert abs(float(out["amount_after_tax"]) - pv["new_amount"]) < 0.01, (out, pv)
+	rates = frappe.get_all("Reservation Night Rate", filters={"parent": res.name},
+	                       fields=["rate"], order_by="stay_date asc", pluck="rate")
+	assert [float(r) for r in rates] == [4000, 4000, 6000], rates
+
+
+def _audit_eval(day_close, run_at, fn):
+	"""Run the audit closing `day_close` with the clock pinned at run_at."""
+	from datetime import datetime
+	from unittest.mock import patch
+
+	from kamra import folio
+	frappe.db.set_value("Property", P, "business_date", day_close)
+	frappe.db.delete("Night Audit Run", {"property": P, "business_date": day_close})
+	with patch.object(folio, "audit_clock", return_value=datetime.strptime(run_at, "%Y-%m-%d %H:%M")):
+		return fn()
+
+
+@check("night audit holds a late arrival whose ETA is after the run, then no-shows it")
+def t183():
+	from kamra.folio import run_night_audit
+	yesterday = add_days(nowdate(), -1)
+	saved = frappe.db.get_value("Property", P, ["business_date", "no_show_charge",
+	                            "protect_late_arrivals"], as_dict=True)
+	frappe.db.set_value("Property", P, {"no_show_charge": "First Night",
+	                                    "protect_late_arrivals": 1})
+	try:
+		late = _res(_guest("Eval Late ETA", "+91 70000 00184"), yesterday,
+		            nowdate(), allow_past=1)
+		frappe.db.set_value("Reservation", late.name, "eta", "01:30")
+		out = _audit_eval(yesterday, f"{yesterday} 23:00",
+		                  lambda: run_night_audit(P))
+		assert frappe.db.get_value("Reservation", late.name, "status") == "Confirmed"
+		assert [h["reservation"] for h in out["held_late_arrivals"]] == [late.name], out
+		out = _audit_eval(nowdate(), f"{nowdate()} 23:30",
+		                  lambda: run_night_audit(P))
+		assert frappe.db.get_value("Reservation", late.name, "status") == "No Show"
+	finally:
+		frappe.db.set_value("Property", P, dict(saved))
+
+
+@check("an OTA no-show is flagged but carries no fee (the OTA collects)")
+def t184():
+	from kamra.folio import run_night_audit
+	today = nowdate()
+	saved = frappe.db.get_value("Property", P, ["business_date", "no_show_charge",
+	                            "waive_no_show_fee_for_ota"], as_dict=True)
+	frappe.db.set_value("Property", P, {"no_show_charge": "First Night",
+	                                    "waive_no_show_fee_for_ota": 1})
+	try:
+		ota = _res(_guest("Eval OTA NoShow", "+91 70000 00185"), today,
+		           add_days(today, 1))
+		frappe.db.set_value("Reservation", ota.name, {"source": "OTA",
+		                                              "channel": "Booking.com"})
+		out = _audit_eval(today, f"{today} 23:59", lambda: run_night_audit(P))
+		assert frappe.db.get_value("Reservation", ota.name, "status") == "No Show"
+		assert out["no_show_fees_waived"] >= 1, out
+		assert not frappe.get_all("Folio Charge", filters={
+			"reservation": ota.name, "description": ("like", "No-show%")})
+	finally:
+		frappe.db.set_value("Property", P, dict(saved))
+
+
+@check("non-guaranteed same-day arrivals are released at the release time, fee-free")
+def t185():
+	from datetime import datetime
+
+	from kamra.no_show import release_for_property
+	day = add_days(FAR, 20)
+	frappe.db.set_value("Property", P, "non_guaranteed_release_time", "18:00")
+	loose = _res(_guest("Eval Release", "+91 70000 00186"), day, add_days(day, 1))
+	paid = _res(_guest("Eval Release Paid", "+91 70000 00187"), day, add_days(day, 1))
+	frappe.db.set_value("Reservation", paid.name, "advance_paid", 1000)
+	at = lambda hm: datetime.strptime(f"{day} {hm}", "%Y-%m-%d %H:%M")  # noqa: E731
+	assert release_for_property(P, now=at("17:59")) == []
+	assert release_for_property(P, now=at("18:05")) == [loose.name]
+	assert frappe.db.get_value("Reservation", loose.name, "status") == "Cancelled"
+	assert float(frappe.db.get_value("Reservation", loose.name, "cancellation_fee") or 0) == 0
+	assert frappe.db.get_value("Reservation", paid.name, "status") == "Confirmed"
+
+
+@check("an OTA booking bills the channel's own nightly prices")
+def t186():
+	from kamra.channel_manager import lock_channel_rates
+	ci, co = add_days(FAR, 25), add_days(FAR, 27)
+	doc = frappe.get_doc({
+		"doctype": "Reservation", "property": P, "room_type": RT,
+		"guest": _guest("Eval OTA Rates", "+91 70000 00188"),
+		"check_in_date": ci, "check_out_date": co, "adults": 2,
+		"source": "OTA", "channel": "Agoda", "auto_price": 0,
+		"amount_after_tax": 10500,
+	})
+	lock_channel_rates(doc, 10500, [{"date": ci, "amount": 4500},
+	                                {"date": add_days(ci, 1), "amount": 6000}])
+	doc.insert(ignore_permissions=True)
+	rows = sorted(doc.night_rates, key=lambda r: str(r.stay_date))
+	gross = [float(r.rate) * (1 + float(r.gst_rate) / 100) for r in rows]
+	assert abs(sum(gross) - 10500) < 0.05, gross
+	assert abs(gross[0] - 4500) < 0.05 and abs(gross[1] - 6000) < 0.05, gross
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4959,7 +5137,8 @@ def execute():
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
-		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115, t120, t121):
+		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115, t120, t121,
+		           t180, t181, t182, t183, t184, t185, t186):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

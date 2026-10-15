@@ -201,7 +201,7 @@ flowchart LR
   desk["Front desk SPA<br/>React + Vite"] --> api
   book["Booking engine<br/>/book"] --> api
   hk["Housekeeping<br/>/hk"] --> api
-  agent["Claude / any MCP client"] --> mcp["MCP server<br/>86 tools"] --> api
+  agent["Claude / any MCP client"] --> mcp["MCP server<br/>89 tools"] --> api
   api["Governed API<br/>RBAC · property scope · audit log"] --> core["PMS core<br/>pricing · folios · night audit"]
   core --> pack["Country pack<br/>tax · invoices · integrations"]
   core --> db[("Frappe v16<br/>MariaDB")]

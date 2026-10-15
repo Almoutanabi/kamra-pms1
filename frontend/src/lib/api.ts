@@ -1538,6 +1538,10 @@ export interface ReservationDetail {
   rate_plan: string | null
   special_requests: string | null
   eta: string | null
+  /** Flagged late: the night audit holds it as Due In, not a no-show. */
+  late_arrival?: number
+  /** Room rate confirmed per night at booking - what the folio bills. */
+  night_rates?: { date: string; rate: number; demand_premium_pct: number }[]
   precheckin_status: string | null
   precheckin_token: string | null
   amount_after_tax: number
@@ -1623,13 +1627,75 @@ export const developerInfo = () =>
 export const generateApiKey = () =>
   call<{ api_key: string; api_secret: string }>("kamra.api.generate_api_key")
 
+/** What an amendment would do to the bill (amend_stay_preview /
+ * room_move_preview). A booking bills the nightly rates confirmed at
+ * booking; a change to what is sold re-quotes them, and the server refuses
+ * the change unless the new price is confirmed. */
+export interface RepricePreview {
+  current_amount: number
+  new_amount: number
+  difference: number
+  needs_confirmation: boolean
+  nights: { date: string; rate: number; demand_premium_pct: number }[]
+}
+
+export const amendStayPreview = (
+  reservation: string,
+  check_in_date: string,
+  check_out_date: string,
+) =>
+  call<RepricePreview>("kamra.api.amend_stay_preview", {
+    reservation,
+    check_in_date,
+    check_out_date,
+  })
+
 export const amendStay = (
   reservation: string,
   check_in_date: string,
   check_out_date: string,
+  confirm_price = 0,
 ) =>
   call<{ nights: number; amount_after_tax: number }>("kamra.api.amend_stay", {
     reservation,
     check_in_date,
     check_out_date,
+    confirm_price,
+  })
+
+/** Preview the new price, ask the user when it changes, then amend with the
+ * price confirmed. Resolves null when the user declines. */
+export async function amendStayConfirmed(
+  reservation: string,
+  check_in_date: string,
+  check_out_date: string,
+  ask: (p: RepricePreview) => boolean,
+) {
+  const p = await amendStayPreview(reservation, check_in_date, check_out_date)
+  if (p.needs_confirmation && !ask(p)) return null
+  return amendStay(reservation, check_in_date, check_out_date, p.needs_confirmation ? 1 : 0)
+}
+
+/** Same for a room move: a different room type re-prices the stay. */
+export async function moveRoomConfirmed(
+  reservation: string,
+  new_room: string,
+  ask: (p: RepricePreview) => boolean,
+  reason?: string,
+) {
+  const p = await call<RepricePreview>("kamra.api.room_move_preview", { reservation, new_room })
+  if (p.needs_confirmation && !ask(p)) return null
+  return call<{ room: string; room_type: string }>("kamra.api.move_reservation", {
+    reservation,
+    new_room,
+    reason,
+    confirm_price: p.needs_confirmation ? 1 : 0,
+  })
+}
+
+export const setLateArrival = (reservation: string, late_arrival: boolean, eta?: string) =>
+  call<{ ok: boolean }>("kamra.api.set_late_arrival", {
+    reservation,
+    late_arrival: late_arrival ? 1 : 0,
+    ...(eta !== undefined ? { eta } : {}),
   })
