@@ -2476,26 +2476,38 @@ def reservation_detail(reservation: str):
 		["name", "status", "grand_total", "payments_total", "balance"],
 		as_dict=True,
 	)
-	if folio and res.status in ("Checked In", "Checked Out"):
+	# once the guest has arrived, or the booking has ended without a stay
+	# (no-show / cancelled), the folio IS the bill: a no-show owes only the
+	# policy fee posted there, never the original booking total
+	settled_on_folio = res.status in (
+		"Checked In", "Checked Out", "No Show", "Cancelled")
+	if folio and settled_on_folio:
 		money = {
 			"total": float(folio.grand_total or 0),
 			"paid": float(folio.payments_total or 0),
 			"due": float(folio.balance or 0),
 			"has_folio": True,
+			"source": "folio",
 		}
+	elif settled_on_folio:
+		# ended without a fee or a payment - nothing is owed
+		money = {"total": 0.0, "paid": float(res.advance_paid or 0),
+		         "due": 0.0, "has_folio": False, "source": "folio"}
 	elif folio:
 		# opened early for a deposit: room nights post from check-in, so
 		# the booking total is the bill; the folio holds what was paid
 		total = float(res.amount_after_tax or 0)
 		paid = float(folio.payments_total or 0)
 		money = {"total": total, "paid": paid,
-		         "due": max(0.0, round(total - paid, 2)), "has_folio": True}
+		         "due": max(0.0, round(total - paid, 2)), "has_folio": True,
+		         "source": "booking"}
 	else:
 		# no folio yet (still Confirmed) - the booking-time advance is all we know
 		adv = float(res.advance_paid or 0)
 		total = float(res.amount_after_tax or 0)
 		money = {"total": total, "paid": adv,
-		         "due": max(0.0, total - adv), "has_folio": False}
+		         "due": max(0.0, total - adv), "has_folio": False,
+		         "source": "booking"}
 
 	booker = None
 	if res.booked_by_name:

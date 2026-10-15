@@ -1546,7 +1546,14 @@ export interface ReservationDetail {
   travel_agent: string | null
   room_number: string | null
   folio_name: string | null
-  money: { total: number; paid: number; due: number; has_folio: boolean }
+  money: {
+    total: number
+    paid: number
+    due: number
+    has_folio: boolean
+    // "folio" once the stay has started or ended (no-show, cancelled)
+    source?: "folio" | "booking"
+  }
   /** Deposit before arrival (#114): expected by policy, received, still due. */
   deposit: import("../components/DepositPanel").DepositState
   guest: {
