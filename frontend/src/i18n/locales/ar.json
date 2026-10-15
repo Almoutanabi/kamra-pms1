@@ -1253,5 +1253,6 @@
   "The guest is in-house: the old room is marked Dirty for housekeeping.": "النزيل مقيم: تُعلَّم الغرفة السابقة متسخة للتدبير المنزلي.",
   "Guest request": "طلب النزيل",
   "Upgrade": "ترقية",
-  "Noise / complaint": "إزعاج / شكوى"
+  "Noise / complaint": "إزعاج / شكوى",
+  "Unassigned floor": "طابق غير محدد"
 }

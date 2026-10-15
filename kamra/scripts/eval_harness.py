@@ -4941,6 +4941,126 @@ def t121():
 		assert nights < plain, (plan, nights, plain)
 
 
+@check("setup wizard rooms get a floor (derived, or the one given)")
+def t140():
+	from kamra import api
+	assert api.default_floor("101") == "1"
+	assert api.default_floor("1205") == "12"
+	assert api.default_floor("007") == "Ground"
+	assert api.default_floor("Room 3") == "Ground"
+	out = api.setup_property({
+		"property": {"property_name": "EVAL Wizard Floors", "city": "Testville"},
+		"room_types": [{"code": "WZ", "name": "Wizard Room", "base_price": 3000}],
+		"rooms": [
+			{"room_type_code": "WZ", "numbers": ["101", "214", "Cottage"]},
+			{"room_type_code": "WZ", "numbers": ["P1"], "floor": "Penthouse"},
+		],
+	})
+	floors = dict(frappe.get_all(
+		"Room", filters={"property": out["property"]},
+		fields=["room_number", "floor"], as_list=True))
+	assert floors == {"101": "1", "214": "2", "Cottage": "Ground",
+	                  "P1": "Penthouse"}, floors
+
+
+@check("property kind change in Settings applies the rental preset, keeps explicit values")
+def t141():
+	from kamra.property_presets import STR_MODULES
+	from kamra.settings import save_settings
+	a = frappe.get_doc({"doctype": "Property", "property_name": "EVAL Kind Switch A",
+	                    "city": "Testville"}).insert(ignore_permissions=True)
+	save_settings(a.name, "general", {"property_kind": "Short Term Rental"})
+	mods = frappe.db.get_value("Property", a.name, "enabled_modules")
+	assert mods == ",".join(STR_MODULES), mods
+	assert "booking-engine" in mods.split(","), mods
+	# and back: the untouched STR list was the preset, so hotel = all again
+	save_settings(a.name, "general", {"property_kind": "Hotel"})
+	assert not frappe.db.get_value("Property", a.name, "enabled_modules")
+
+	# explicit admin choices survive a kind switch
+	b = frappe.get_doc({"doctype": "Property", "property_name": "EVAL Kind Switch B",
+	                    "city": "Testville", "enabled_modules": "front-desk,admin,fnb",
+	                    "overbooking_pct": 7, "hold_minutes": 45,
+	                    "booking_mode": "Request to Book"}).insert(ignore_permissions=True)
+	save_settings(b.name, "general", {"property_kind": "Short Term Rental"})
+	row = frappe.db.get_value("Property", b.name, [
+		"property_kind", "enabled_modules", "overbooking_pct", "hold_minutes",
+		"booking_mode"], as_dict=True)
+	assert row.property_kind == "Short Term Rental", row
+	assert row.enabled_modules == "front-desk,admin,fnb", row
+	assert (row.overbooking_pct, row.hold_minutes, row.booking_mode) == (
+		7, 45, "Request to Book"), row
+
+
+@check("demo heal fills doctype defaults a defaults-skipped seed left blank")
+def t142():
+	from kamra.scripts.seed_demo import heal_seed_defaults
+	was = frappe.flags.in_import
+	frappe.flags.in_import = True  # what the old demo reset left on
+	try:
+		prop = frappe.get_doc({"doctype": "Property", "property_name": "EVAL Blank Seed",
+		                       "city": "Testville"}).insert(ignore_permissions=True)
+		rt = frappe.get_doc({"doctype": "Room Type", "property": prop.name,
+		                     "room_type_code": "BLK", "room_type_name": "Blank",
+		                     "base_price": 3000}).insert(ignore_permissions=True)
+		room = frappe.get_doc({"doctype": "Room", "property": prop.name,
+		                       "room_number": "B1", "room_type": rt.name,
+		                       "floor": "1"}).insert(ignore_permissions=True)
+	finally:
+		frappe.flags.in_import = was
+	assert not frappe.db.get_value("Room", room.name, "housekeeping_status")
+	assert heal_seed_defaults((prop.name, P)) > 0
+	assert frappe.db.get_value("Room", room.name, "housekeeping_status") == "Clean"
+	row = frappe.db.get_value("Property", prop.name, [
+		"property_kind", "booking_engine_enabled", "gst_rate_low",
+		"gst_rate_high", "hold_minutes"], as_dict=True)
+	assert row.property_kind == "Hotel" and row.booking_engine_enabled == 1, row
+	assert (row.gst_rate_low, row.gst_rate_high, row.hold_minutes) == (5, 18, 120), row
+	# a property that got its defaults is not a heal target
+	assert heal_seed_defaults((P,)) == 0
+
+
+@check("demo seed: defaults applied, past-dated stays seeded, rentals are STR, tickets name real rooms")
+def t143():
+	from kamra.scripts import seed_demo
+	if frappe.db.exists("Property", seed_demo.PROPERTY):
+		# a dev site that already has the demo: the idempotent path must
+		# still leave the villa / homestay as bookable rentals
+		seed_demo.seed_generic_properties()
+	else:
+		before = frappe.db.get_default("kamra_demo_mode")
+		was = frappe.flags.in_import
+		frappe.flags.in_import = True  # reset_demo sets it for its wipe
+		try:
+			seed_demo.execute()
+		finally:
+			frappe.flags.in_import = was
+			frappe.db.set_default("kamra_demo_mode", before or "")
+		assert frappe.flags.in_import == was
+		dp = seed_demo.PROPERTY
+		assert not frappe.db.sql(
+			"select name from tabRoom where property=%s and ifnull(housekeeping_status,'')=''", dp)
+		pr = frappe.db.get_value("Property", dp, [
+			"booking_engine_enabled", "gst_rate_low", "checkin_time"], as_dict=True)
+		assert pr.booking_engine_enabled == 1 and pr.gst_rate_low == 5 and pr.checkin_time, pr
+		past = frappe.db.count("Reservation", {
+			"property": dp, "status": "Checked In", "check_in_date": ("<", nowdate())})
+		assert past >= 5, past
+		for subject, room in frappe.get_all(
+				"Service Ticket", filters={"property": dp, "room": ("is", "set")},
+				fields=["subject", "room"], as_list=True):
+			num = frappe.db.get_value("Room", room, "room_number")
+			assert num, (subject, room)
+			digits = [w for w in subject.replace(",", " ").split() if w.isdigit() and len(w) == 3]
+			assert not digits or digits == [num], (subject, num)
+	for name in seed_demo.RENTALS:
+		row = frappe.db.get_value("Property", name, [
+			"property_kind", "booking_engine_enabled", "enabled_modules"], as_dict=True)
+		assert row and row.property_kind == "Short Term Rental", (name, row)
+		assert row.booking_engine_enabled == 1, (name, row)
+		assert "booking-engine" in (row.enabled_modules or "booking-engine"), (name, row)
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4959,7 +5079,8 @@ def execute():
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
-		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115, t120, t121):
+		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113,
+		           t114, t115, t120, t121, t140, t141, t142, t143):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

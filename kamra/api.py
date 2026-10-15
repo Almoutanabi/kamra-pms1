@@ -356,6 +356,19 @@ def _apply_country_defaults(p: dict):
 		p["room_levy_label"] = pack.ROOM_LEVY_LABEL
 
 
+def default_floor(room_number: str) -> str:
+	"""Best-guess floor for a room the wizard creates without one.
+
+	Hotel numbering puts the floor before the last two digits (101 -> 1,
+	1205 -> 12). Floor 0 and anything that isn't hotel numbering (1, G01,
+	"Room 3", "Villa A") is a small place's ground floor.
+	"""
+	n = str(room_number or "").strip()
+	if n.isdigit() and len(n) >= 3 and int(n[:-2]):
+		return str(int(n[:-2]))
+	return "Ground"
+
+
 @frappe.whitelist()
 def setup_property(payload):
 	"""One-call property onboarding - the wizard's submit button and the
@@ -452,9 +465,12 @@ def setup_property(payload):
 		if not rt_name:
 			frappe.throw(f"Unknown room type code {spec['room_type_code']}")
 		for num in spec["numbers"]:
+			num = str(num).strip()
 			frappe.get_doc({
 				"doctype": "Room", "property": prop.name,
-				"room_number": str(num).strip(), "room_type": rt_name,
+				"room_number": num, "room_type": rt_name,
+				# the Today room board groups by floor - never leave it blank
+				"floor": str(spec.get("floor") or "").strip() or default_floor(num),
 			}).insert()
 			rooms_created += 1
 
