@@ -853,7 +853,10 @@ def t18():
 	# yesterday's un-arrived booking → no-show flagged AND charged
 	g3 = _guest("Eval NoShow", "+91 70000 00017")
 	ns = _res(g3, add_days(nowdate(), -1), nowdate(), allow_past=1)
-	run_night_audit(P, nowdate())
+	# the audit closes only the current business date
+	frappe.db.set_value("Property", P, "business_date", nowdate())
+	frappe.db.delete("Night Audit Run", {"property": P, "business_date": nowdate()})
+	run_night_audit(P)
 	assert frappe.db.get_value("Reservation", ns.name, "status") == "No Show"
 	ns_folio = frappe.db.get_value(
 		"Folio", {"reservation": ns.name, "folio_type": "Guest"})
@@ -4071,6 +4074,46 @@ def t86():
 	assert frappe.db.exists("City Ledger Entry", {"folio": folio2}), "credit stay never reached AR"
 
 
+@check("night audit refuses a future or non-current date; a no-show's due comes from its folio")
+def t87():
+	from kamra import api
+	from kamra.folio import run_night_audit
+	today = nowdate()
+	frappe.db.set_value("Property", P, {"business_date": today,
+	                                    "no_show_charge": "First Night"})
+	frappe.db.delete("Night Audit Run", {"property": P})
+
+	# closing a date other than the current business date is refused
+	for bad in (add_days(today, -3), add_days(today, 2)):
+		try:
+			run_night_audit(P, bad)
+			raise AssertionError(f"audit closed non-current date {bad}")
+		except frappe.ValidationError:
+			pass
+
+	# the business date may not run ahead of the calendar: once today is
+	# closed (bd -> tomorrow), a second click is refused, not a 2nd night
+	g = _guest("Eval NoShow Due", "+91 70000 00088")
+	ns = _res(g, add_days(today, -1), add_days(today, 2), allow_past=1)
+	run_night_audit(P)
+	assert getdate(frappe.db.get_value("Property", P, "business_date")) == getdate(add_days(today, 1))
+	try:
+		run_night_audit(P)
+		raise AssertionError("audit ran for a business date that hasn't started")
+	except frappe.ValidationError as e:
+		assert "ahead of today" in str(e), e
+	assert getdate(frappe.db.get_value("Property", P, "business_date")) == getdate(add_days(today, 1))
+
+	# the no-show owes the policy fee on its folio, not the booking total
+	assert frappe.db.get_value("Reservation", ns.name, "status") == "No Show"
+	folio = frappe.db.get_value("Folio", {"reservation": ns.name, "folio_type": "Guest"},
+	                            ["grand_total", "balance"], as_dict=True)
+	money = api.reservation_detail(ns.name)["money"]
+	assert money["source"] == "folio", money
+	assert abs(money["due"] - float(folio.balance)) < 0.01, (money, folio)
+	assert money["total"] < float(ns.amount_after_tax), (money, ns.amount_after_tax)
+
+
 @check("settings: module pages validate, save and drive the code that reads them")
 def t90():
 	import json
@@ -4152,7 +4195,7 @@ def execute():
 		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t90, t91):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

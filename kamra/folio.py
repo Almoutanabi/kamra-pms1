@@ -750,7 +750,21 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		frappe.local.lang = "en"
 	from kamra.business_date import ensure_business_date, get_business_date
 	ensure_business_date(property)
-	business_date = business_date or get_business_date(property)
+	current = get_business_date(property)
+	business_date = business_date or current
+	# The audit only ever closes the property's current business date. A
+	# different date would post into a closed day or skip days, and then
+	# set the business date to that date + 1.
+	if getdate(business_date) != getdate(current):
+		frappe.throw(frappe._("Night audit can only close the current business date "
+		               "({0}).").format(current))
+	# A day can't be closed before it has happened. Without this, repeated
+	# clicks rolled the business date into the future and charged in-house
+	# guests a room night (and no-shows a fee) per click.
+	if getdate(business_date) > getdate(nowdate()):
+		frappe.throw(frappe._("Business date {0} is already ahead of today ({1}). "
+		               "Night audit for it can run once that day has "
+		               "started.").format(business_date, nowdate()))
 	# per property AND date - a global AUDIT-<date> name would make the
 	# second property's audit silently no-op every night
 	audit_name = f"AUDIT-{business_date}-{property}"

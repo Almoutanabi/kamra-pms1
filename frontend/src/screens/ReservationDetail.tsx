@@ -314,7 +314,7 @@ export default function ReservationDetail({
           </div>
         </div>
         <p className="mt-2 text-xs text-zinc-400">
-          {d.status === "Checked In" || d.status === "Checked Out"
+          {money.source === "folio"
             ? "Live from the guest folio."
             : money.has_folio
               ? "Booking total; deposits sit on the guest folio and count at check-in."
