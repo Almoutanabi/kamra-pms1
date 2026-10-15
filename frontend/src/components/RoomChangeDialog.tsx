@@ -121,6 +121,9 @@ export default function RoomChangeDialog(props: {
         reservation: props.reservation,
         new_room: pick.name,
         reason: note.trim() ? `${reason}: ${note.trim()}` : reason,
+        // the dialog shows the re-priced total before this button; pressing
+        // it is the confirmation the server asks for
+        confirm_price: 1,
       })
       props.onMoved(r)
       props.onClose()

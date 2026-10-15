@@ -224,6 +224,10 @@ def parse_webhook(conn, payload) -> list[dict]:
 			"phone": guest.get("phone") or "",
 			"email": guest.get("email") or "",
 			"total": total,
+			# the channel's own price per night - the reservation locks
+			# these (scaled to the total) as its confirmed nightly rates
+			"nightly": [{"date": p.get("date"), "amount": float(p.get("sellRate") or 0)}
+			            for p in prices if p.get("date")],
 			"currency": amount.get("currency") or frappe.db.get_value("Property", conn.property, "currency"),
 			"notes": payload.get("specialRequests") or "",
 		})

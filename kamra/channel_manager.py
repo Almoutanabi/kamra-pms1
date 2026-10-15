@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hmac
 import json
+from decimal import Decimal
 
 import frappe
 from frappe.utils import add_days, nowdate
@@ -368,6 +369,8 @@ def _apply_event(conn, e: dict, requested_reason: str | None = None) -> dict:
 		doc.auto_price = 0 if requested_reason or e.get("total") else 1
 		if e.get("total") or requested_reason:
 			doc.amount_after_tax = e.get("total") or 0
+		if not doc.auto_price:
+			lock_channel_rates(doc, e.get("total"), e.get("nightly"))
 		old_transition = frappe.flags.kamra_status_transition
 		try:
 			if requested_reason:
@@ -404,6 +407,7 @@ def _apply_event(conn, e: dict, requested_reason: str | None = None) -> dict:
 	})
 	if e.get("total"):
 		doc.amount_after_tax = e["total"]
+		lock_channel_rates(doc, e["total"], e.get("nightly"))
 	doc.insert(ignore_permissions=True)
 	from kamra.savings import log_action
 	log_action("channel.booking", "Reservation", doc.name, conn.property,
@@ -415,6 +419,48 @@ def _apply_event(conn, e: dict, requested_reason: str | None = None) -> dict:
 	# on_reservation_change doc_event this insert fires - no ad-hoc enqueue.
 	return {"ota_ref": e.get("ota_ref"), "result": "booked",
 	        "reservation": doc.name}
+
+
+def lock_channel_rates(doc, total_after_tax, nightly=None) -> None:
+	"""Lock an OTA booking's nightly rates from the channel's own prices.
+
+	The OTA sold the stay at its price (`total_after_tax`, tax included), so
+	the folio must bill that - not today's rack rate. The channel's per-night
+	prices say how the total splits across the nights (an even split when it
+	sends none); each night's share has the room tax backed out at the slab
+	its own pre-tax rate falls in. A zero total (currency mismatch, retained
+	for staff) locks nothing."""
+	total = float(total_after_tax or 0)
+	if total <= 0 or not doc.room_type:
+		return
+	from frappe.utils import date_diff, getdate
+
+	from kamra.pricing import room_gst_rate
+
+	nights = max(date_diff(doc.check_out_date, doc.check_in_date), 1)
+	dates = [str(add_days(doc.check_in_date, i)) for i in range(nights)]
+	given = {str(getdate(n["date"])): float(n.get("amount") or 0)
+	         for n in (nightly or []) if n.get("date")}
+	weights = [given.get(d, 0.0) for d in dates]
+	if not sum(weights):
+		weights = [1.0] * nights
+	rt = frappe.get_doc("Room Type", doc.room_type)
+	rows, running = [], 0.0
+	scale = total / sum(weights)
+	for i, (d, w) in enumerate(zip(dates, weights, strict=True)):
+		gross = round(total - running, 2) if i == nights - 1 else round(w * scale, 2)
+		running += gross
+		gst = Decimal(str(room_gst_rate(doc.property, rt, Decimal(str(gross)))))
+		pre = Decimal(str(gross)) / (1 + gst / 100)
+		gst2 = Decimal(str(room_gst_rate(doc.property, rt, pre)))
+		if gst2 != gst:  # the slab follows the pre-tax rate
+			gst = gst2
+			pre = Decimal(str(gross)) / (1 + gst / 100)
+		rows.append({"stay_date": d, "rate": round(float(pre), 2),
+		             "gst_rate": float(gst), "meal_amount": 0,
+		             "demand_premium_pct": 0})
+	doc.set("night_rates", rows)
+	doc.rate_lock_key = None
 
 
 def _reconcile_booking_rooms(conn, booking_id: str, keep: set) -> None:

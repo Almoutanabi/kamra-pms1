@@ -2707,6 +2707,12 @@ def reservation_detail(reservation: str):
 		"rate_plan": res.rate_plan,
 		"special_requests": res.special_requests,
 		"eta": res.eta,
+		"late_arrival": int(res.get("late_arrival") or 0),
+		# the nightly rates confirmed at booking - what the folio bills
+		"night_rates": [
+			{"date": str(n.stay_date), "rate": float(n.rate or 0),
+			 "demand_premium_pct": float(n.demand_premium_pct or 0)}
+			for n in (res.get("night_rates") or [])],
 		"precheckin_status": res.precheckin_status,
 		"precheckin_token": res.get("precheckin_token"),
 		# the scan itself is never in this payload - id_document is only the
@@ -3988,14 +3994,16 @@ def venue_calendar(property: str, start_date: str | None = None, days: int = 14)
 @frappe.whitelist()
 @require_roles("Front Desk", "Kamra Agent")
 def move_reservation(reservation: str, new_room: str,
-                     reason: str | None = None):
+                     reason: str | None = None, confirm_price: int = 0):
 	"""Room move / upgrade - mid-stay or before arrival. Overlap guard re-runs.
 	One writer for the tape chart, the reservation drawer and the GRC (#113).
 
 	The new room may be a DIFFERENT room type (e.g. Standard -> Suite): the
 	reservation's room type follows the room it moves into, so upgrades and
 	downgrades are allowed. If the booking auto-prices, the new type's rate
-	applies; a manually-priced booking keeps its amount."""
+	is quoted and locked - shown first by room_move_preview, and refused
+	unless confirm_price=1 when it changes the bill. A same-type move keeps
+	the locked nightly rates; a manually-priced booking keeps its amount."""
 	doc = frappe.get_doc("Reservation", reservation)
 	from kamra.crs import assert_property_access
 	assert_property_access(doc.property)
@@ -4005,10 +4013,13 @@ def move_reservation(reservation: str, new_room: str,
 		frappe.throw(_("Room {0} is not in this property.").format(new_room))
 	old_room = doc.room
 	old_type = doc.room_type
+	old_amount = float(doc.amount_after_tax or 0)
 	new_type = frappe.db.get_value("Room", new_room, "room_type")
-	doc.room = new_room
 	if new_type and new_type != doc.room_type:
-		doc.room_type = new_type  # upgrade / downgrade
+		# upgrade / downgrade: the room type follows the room
+		_require_price_confirmation(
+			_reprice_preview(doc, room_type=new_type), confirm_price)
+	doc.room = new_room
 	doc.save()
 	if doc.status == "Checked In" and old_room and old_room != new_room:
 		frappe.db.set_value("Room", old_room,
@@ -4019,6 +4030,9 @@ def move_reservation(reservation: str, new_room: str,
 	note = f"{old_room} → {new_room}"
 	if new_type and new_type != old_type:
 		note += f" · {old_type} → {new_type}"
+	if abs(float(doc.amount_after_tax or 0) - old_amount) >= 0.01:
+		note += (f" · re-priced {old_amount:,.2f} → "
+		         f"{float(doc.amount_after_tax or 0):,.2f} (confirmed)")
 	if (reason or "").strip():
 		note += f" · {reason.strip()[:140]}"
 	log_action("room_move", "Reservation", doc.name, doc.property, rationale=note)
@@ -4026,35 +4040,82 @@ def move_reservation(reservation: str, new_room: str,
 	        "amount_after_tax": float(doc.amount_after_tax or 0)}
 
 
+class PriceConfirmationRequired(frappe.ValidationError):
+	"""An amendment would change what the guest pays; the caller has to see
+	the new price (the *_preview endpoint) and pass confirm_price=1."""
+
+
+def _reprice_preview(res, **changes) -> dict:
+	"""What saving these changes would do to the bill - priced by the same
+	code the save runs (Reservation.requote), the booking itself left out of
+	the house's occupancy. Nothing is written.
+
+	A booking with manual pricing (auto_price off) keeps its amount; one
+	whose price inputs do not change keeps its locked nightly rates."""
+	current = float(res.amount_after_tax or 0)
+	old_key = res.get("rate_lock_key")
+	for k, v in changes.items():
+		res.set(k, v)
+	out = {"current_amount": current, "new_amount": current,
+	       "difference": 0.0, "auto_price": bool(res.get("auto_price")),
+	       "reprices": False, "needs_confirmation": False, "nights": []}
+	if not res.get("auto_price") or not res.room_type:
+		return out
+	inputs = res.quote_inputs()
+	if res.get("night_rates") and old_key == res.rate_lock_key_for(inputs):
+		return out  # same stay, same locked rates
+	q = res.requote()
+	plan_free = sum(float(n["rate"]) for n in q["nightly"]) or 1.0
+	factor = float(q["room_total"]) / plan_free
+	new = round(float(q["amount_after_tax"]), 2)
+	out.update({
+		"new_amount": new,
+		"difference": round(new - current, 2),
+		"reprices": True,
+		"needs_confirmation": abs(new - current) >= 0.01,
+		"nights": [{"date": n["date"], "rate": round(float(n["rate"]) * factor, 2),
+		            "demand_premium_pct": n.get("demand_premium_pct") or 0}
+		           for n in q["nightly"]],
+	})
+	return out
+
+
+def _require_price_confirmation(preview: dict, confirm_price) -> None:
+	if preview["needs_confirmation"] and not cint(confirm_price):
+		frappe.throw(
+			_("This change re-prices the stay from {0} to {1}. Show the guest "
+			  "the new price, then confirm it (confirm_price=1).").format(
+				f"{preview['current_amount']:,.2f}",
+				f"{preview['new_amount']:,.2f}"),
+			exc=PriceConfirmationRequired, title=_("Confirm the new price"))
+
+
 @frappe.whitelist()
 @require_roles("Front Desk", "Kamra Agent")
 def room_move_preview(reservation: str, new_room: str):
 	"""What a move would do to the bill before the desk confirms it: a
-	same-type swap keeps the price; an upgrade / downgrade on an auto-priced
-	booking is re-quoted at the new type's rate by the pricing engine."""
+	same-type swap keeps the price (and the locked nightly rates); an
+	upgrade / downgrade on an auto-priced booking is re-quoted at the new
+	type's rate by the pricing engine, and move_reservation then needs
+	confirm_price=1."""
 	res = frappe.get_doc("Reservation", reservation)
 	from kamra.crs import assert_property_access
 	assert_property_access(res.property)
 	new_type = frappe.db.get_value("Room", new_room, "room_type")
-	current = float(res.amount_after_tax or 0)
-	new_amount = current
-	if new_type and new_type != res.room_type and res.get("auto_price"):
-		from kamra.pricing import quote
-		voucher = frappe.db.get_value("Discount Voucher", res.voucher,
-		                              "voucher_code") if res.get("voucher") else None
-		new_amount = float(quote(
-			res.property, new_type, str(res.check_in_date),
-			str(res.check_out_date), int(res.adults or 1),
-			int(res.children or 0), res.meal_plan or None,
-			res.rate_plan or None, voucher)["amount_after_tax"])
+	same_type = new_type == res.room_type
+	pv = _reprice_preview(res, **({} if same_type or not new_type
+	                              else {"room_type": new_type}))
 	return {
-		"same_type": new_type == res.room_type,
+		"same_type": same_type,
 		"new_room_type": new_type,
 		"new_room_type_name": frappe.db.get_value(
 			"Room Type", new_type, "room_type_name") if new_type else None,
-		"current_amount": current, "new_amount": round(new_amount, 2),
-		"difference": round(new_amount - current, 2),
-		"auto_price": bool(res.get("auto_price")),
+		"current_amount": pv["current_amount"],
+		"new_amount": pv["new_amount"],
+		"difference": pv["difference"],
+		"needs_confirmation": pv["needs_confirmation"],
+		"nights": pv["nights"],
+		"auto_price": pv["auto_price"],
 		"in_house": res.status == "Checked In",
 	}
 
@@ -4104,22 +4165,75 @@ def movable_rooms(reservation: str, check_in_date: str | None = None,
 
 @frappe.whitelist()
 @require_roles("Front Desk", "Kamra Agent")
-def amend_stay(reservation: str, check_in_date: str, check_out_date: str):
-	"""Extend / shorten a stay. Re-prices when auto_price is on; the
-	overlap guard validates the new window."""
+def amend_stay_preview(reservation: str, check_in_date: str, check_out_date: str):
+	"""What new dates would do to the bill, before anything changes: the
+	current and new totals and the new nightly rates, priced by the engine
+	from today's rules. amend_stay needs confirm_price=1 when the total
+	changes."""
 	doc = frappe.get_doc("Reservation", reservation)
+	from kamra.crs import assert_property_access
+	assert_property_access(doc.property)
+	return _reprice_preview(doc, check_in_date=check_in_date,
+	                        check_out_date=check_out_date)
+
+
+@frappe.whitelist()
+@require_roles("Front Desk", "Kamra Agent")
+def amend_stay(reservation: str, check_in_date: str, check_out_date: str,
+               confirm_price: int = 0):
+	"""Extend / shorten a stay; the overlap guard validates the new window.
+
+	An auto-priced stay is re-quoted for its new dates and its nightly
+	rates re-locked. That changes what the guest pays, so call
+	amend_stay_preview first, show the new price, and pass confirm_price=1;
+	without it a change in the total is refused. A manually-priced stay
+	keeps its amount."""
+	doc = frappe.get_doc("Reservation", reservation)
+	from kamra.crs import assert_property_access
+	assert_property_access(doc.property)
 	if doc.status not in ("Confirmed", "Checked In"):
 		frappe.throw("Only active reservations can be amended.")
 	old = f"{doc.check_in_date}→{doc.check_out_date}"
-	doc.check_in_date = check_in_date
-	doc.check_out_date = check_out_date
+	old_amount = float(doc.amount_after_tax or 0)
+	_require_price_confirmation(
+		_reprice_preview(doc, check_in_date=check_in_date,
+		                 check_out_date=check_out_date), confirm_price)
 	doc.save()
 	from kamra.savings import log_action
 	log_action("amend_stay", "Reservation", doc.name, doc.property,
 	           rationale=f"{old} → {check_in_date}→{check_out_date}; "
-	                     f"new total ₹{doc.amount_after_tax or 0:,.0f}")
+	                     f"total {old_amount:,.2f} → "
+	                     f"{float(doc.amount_after_tax or 0):,.2f}"
+	                     + (" (new price confirmed)" if cint(confirm_price) else ""))
 	return {"ok": True, "nights": doc.nights,
+	        "previous_amount": old_amount,
 	        "amount_after_tax": doc.amount_after_tax}
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", "Kamra Agent")
+def set_late_arrival(reservation: str, late_arrival: int = 1,
+                     eta: str | None = None):
+	"""Flag (or unflag) a confirmed arrival as arriving late, optionally with
+	the ETA the guest gave. With the property's late-arrival protection on,
+	the night audit holds a flagged arrival as Due In instead of marking it
+	a no-show; the next audit decides."""
+	doc = frappe.get_doc("Reservation", reservation)
+	from kamra.crs import assert_property_access
+	assert_property_access(doc.property)
+	if doc.status != "Confirmed":
+		frappe.throw(_("Only an arrival that has not checked in can be flagged late."))
+	values = {"late_arrival": 1 if cint(late_arrival) else 0}
+	if eta is not None:
+		values["eta"] = (eta or "").strip()[:60] or None
+	frappe.db.set_value("Reservation", doc.name, values)
+	from kamra.savings import log_action
+	log_action("late_arrival", "Reservation", doc.name, doc.property,
+	           rationale=(f"{doc.name} flagged late arrival"
+	                      if values["late_arrival"] else
+	                      f"{doc.name} late-arrival flag cleared")
+	                     + (f" · ETA {values['eta']}" if values.get("eta") else ""))
+	return {"ok": True, **values}
 
 
 @frappe.whitelist()

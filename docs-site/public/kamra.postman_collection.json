@@ -3689,10 +3689,10 @@
         "kamra.api.move_reservation"
        ]
       },
-      "description": "Room move / upgrade - mid-stay or before arrival. Overlap guard re-runs.\nOne writer for the tape chart, the reservation drawer and the GRC (#113).\n\nThe new room may be a DIFFERENT room type (e.g. Standard -> Suite): the\nreservation's room type follows the room it moves into, so upgrades and\ndowngrades are allowed. If the booking auto-prices, the new type's rate\napplies; a manually-priced booking keeps its amount.",
+      "description": "Room move / upgrade - mid-stay or before arrival. Overlap guard re-runs.\nOne writer for the tape chart, the reservation drawer and the GRC (#113).\n\nThe new room may be a DIFFERENT room type (e.g. Standard -> Suite): the\nreservation's room type follows the room it moves into, so upgrades and\ndowngrades are allowed. If the booking auto-prices, the new type's rate\nis quoted and locked - shown first by room_move_preview, and refused\nunless confirm_price=1 when it changes the bill. A same-type move keeps\nthe locked nightly rates; a manually-priced booking keeps its amount.",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"new_room\": \"<new_room>\"\n}",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"new_room\": \"<new_room>\",\n  \"confirm_price\": 0\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -3726,7 +3726,7 @@
         "kamra.api.room_move_preview"
        ]
       },
-      "description": "What a move would do to the bill before the desk confirms it: a\nsame-type swap keeps the price; an upgrade / downgrade on an auto-priced\nbooking is re-quoted at the new type's rate by the pricing engine.",
+      "description": "What a move would do to the bill before the desk confirms it: a\nsame-type swap keeps the price (and the locked nightly rates); an\nupgrade / downgrade on an auto-priced booking is re-quoted at the new\ntype's rate by the pricing engine, and move_reservation then needs\nconfirm_price=1.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"new_room\": \"<new_room>\"\n}",
@@ -3776,6 +3776,43 @@
      }
     },
     {
+     "name": "amend_stay_preview",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.amend_stay_preview",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.amend_stay_preview"
+       ]
+      },
+      "description": "What new dates would do to the bill, before anything changes: the\ncurrent and new totals and the new nightly rates, priced by the engine\nfrom today's rules. amend_stay needs confirm_price=1 when the total\nchanges.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
      "name": "amend_stay",
      "request": {
       "method": "POST",
@@ -3800,10 +3837,47 @@
         "kamra.api.amend_stay"
        ]
       },
-      "description": "Extend / shorten a stay. Re-prices when auto_price is on; the\noverlap guard validates the new window.",
+      "description": "Extend / shorten a stay; the overlap guard validates the new window.\n\nAn auto-priced stay is re-quoted for its new dates and its nightly\nrates re-locked. That changes what the guest pays, so call\namend_stay_preview first, show the new price, and pass confirm_price=1;\nwithout it a change in the total is refused. A manually-priced stay\nkeeps its amount.",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\"\n}",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\",\n  \"confirm_price\": 0\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "set_late_arrival",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.set_late_arrival",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.set_late_arrival"
+       ]
+      },
+      "description": "Flag (or unflag) a confirmed arrival as arriving late, optionally with\nthe ETA the guest gave. With the property's late-arrival protection on,\nthe night audit holds a flagged arrival as Due In instead of marking it\na no-show; the next audit decides.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"late_arrival\": 1\n}",
        "options": {
         "raw": {
          "language": "json"

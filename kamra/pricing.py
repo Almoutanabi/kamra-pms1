@@ -134,19 +134,25 @@ def _child_charge(rt, adults: int, children: int,
 	return max(0, children - free_seats) * per_child
 
 
-def forecast_occupancy(property: str, date) -> float:
+def forecast_occupancy(property: str, date,
+                       exclude: str | None = None) -> float:
 	"""Property occupancy for a future date: live reservations covering that
-	night over sellable rooms. This is the demand signal hurdle tiers key on."""
+	night over sellable rooms. This is the demand signal hurdle tiers key on.
+
+	`exclude` leaves one reservation out - re-quoting a saved booking must
+	not count the booking itself, or an amendment would price against a
+	house the original booking never saw."""
 	total = frappe.db.count("Room", {"property": property})
 	if not total:
 		return 0.0
 	sold = frappe.db.sql(
 		"""SELECT COUNT(*) FROM `tabReservation`
 		   WHERE property = %(p)s AND status IN ('Confirmed', 'Checked In')
+		     AND name != %(x)s
 		     AND check_in_date <= %(d)s
 		     AND GREATEST(check_out_date,
 		                  DATE_ADD(check_in_date, INTERVAL 1 DAY)) > %(d)s""",
-		{"p": property, "d": str(date)})[0][0]
+		{"p": property, "d": str(date), "x": exclude or ""})[0][0]
 	return round(sold / total * 100, 1)
 
 
@@ -389,6 +395,7 @@ def quote(
 	voucher_code: str | None = None,
 	check_voucher_limits: bool = True,
 	over_capacity_charge: float = 0,
+	exclude_reservation: str | None = None,
 ) -> dict:
 	nights = date_diff(check_out_date, check_in_date)
 	day_use = nights == 0
@@ -416,7 +423,8 @@ def quote(
 		# premium applies and the tier's floor holds - decided here, in
 		# code, never by the caller
 		if str(date) not in occ_cache:
-			occ_cache[str(date)] = forecast_occupancy(property, date)
+			occ_cache[str(date)] = forecast_occupancy(
+				property, date, exclude=exclude_reservation)
 		rate, tier = demand_adjust(property, room_type, date, rate,
 		                           occupancy=occ_cache[str(date)])
 		# guests above capacity, at the price agreed on this booking

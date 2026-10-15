@@ -17,13 +17,14 @@ import {
 
 import {
   acceptBookingRequest,
-  amendStay,
+  amendStayConfirmed,
   checkIn,
   declineBookingRequest,
   checkOut,
   idDocumentImage,
   promoteWaitlist,
   reservationDetail,
+  setLateArrival,
   verifyPrecheckin,
   type ReservationDetail as Detail,
 } from "../lib/api"
@@ -420,10 +421,37 @@ export default function ReservationDetail({
             <Button
               className="mt-3"
               disabled={busy}
-              onClick={() => act(() => amendStay(name, ci, co))}
+              onClick={() =>
+                act(() =>
+                  amendStayConfirmed(name, ci, co, (p) =>
+                    window.confirm(
+                      `New dates re-price this stay: ${inr(p.current_amount)} → ${inr(p.new_amount)}` +
+                        ` (${p.difference >= 0 ? "+" : "−"}${inr(Math.abs(p.difference))}).` +
+                        " Confirm the new price with the guest?",
+                    ),
+                  ),
+                )
+              }
             >
               {busy ? "Updating…" : "Update dates & re-price"}
             </Button>
+          )}
+          {d.status === "Confirmed" && (
+            <label className="mt-3 flex items-start gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={Boolean(d.late_arrival)}
+                disabled={busy}
+                onChange={(e) => act(() => setLateArrival(name, e.target.checked))}
+              />
+              <span>
+                Late arrival
+                <span className="block text-xs text-zinc-400">
+                  The night audit holds this arrival as Due In instead of marking a no-show; the next audit decides.
+                </span>
+              </span>
+            </label>
           )}
           <dl className="mt-3 grid grid-cols-2 gap-3">
             <Field label="Nights" value={d.nights} />
@@ -434,6 +462,18 @@ export default function ReservationDetail({
               }`}
             />
             {d.eta && <Field label="ETA" value={d.eta} />}
+            {d.night_rates && d.night_rates.length > 0 && (
+              <Field
+                label="Confirmed rate / night"
+                value={
+                  new Set(d.night_rates.map((n) => n.rate)).size === 1
+                    ? inr(d.night_rates[0].rate)
+                    : `${inr(Math.min(...d.night_rates.map((n) => n.rate)))}–${inr(
+                        Math.max(...d.night_rates.map((n) => n.rate)),
+                      )}`
+                }
+              />
+            )}
             {d.precheckin_status && d.precheckin_status !== "Not Started" && (
               <Field label="Pre-check-in" value={d.precheckin_status} />
             )}

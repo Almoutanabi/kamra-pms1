@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Kamra exposes **92 governed tools** on the hosted MCP
+Kamra exposes **95 governed tools** on the hosted MCP
 endpoint (`/mcp`) and the stdio sidecar (`mcp/kamra_mcp.py`). Every
 call runs as the connected user — **role** permissions apply, tools
 are further filtered by the property's **enabled modules**, prices
@@ -158,21 +158,51 @@ folio balance (paid/due), booker, and which actions are available.
 
 Endpoint: `kamra.api.reservation_detail`.
 
-### `amend_stay(reservation, check_in_date, check_out_date)`
+### `amend_stay_preview(reservation, check_in_date, check_out_date)`
 
-Change a stay's dates (extend/shorten). Re-prices when auto_price
-is on and re-checks room overlaps. Confirm the new dates with staff
-before calling.
+What new dates would do to a stay's bill before anything changes:
+current and new totals, the difference and the new nightly rates,
+priced by the engine. Read-only. Call before amend_stay and tell the
+guest / staff the new price.
+
+Endpoint: `kamra.api.amend_stay_preview`.
+
+### `amend_stay(reservation, check_in_date, check_out_date, confirm_price)`
+
+Change a stay's dates (extend/shorten). An auto-priced stay is
+re-quoted and its nightly rates re-locked; when the total changes the
+call is refused unless confirm_price=1, so run amend_stay_preview
+first and confirm the new price with staff. Re-checks room overlaps.
 
 Endpoint: `kamra.api.amend_stay`.
 Mutating — logged to the activity ledger.
 
-### `move_room(reservation, new_room)`
+### `move_room(reservation, new_room, confirm_price)`
 
 Move a stay to a different room (pre-arrival or mid-stay). Overlap
-guard re-runs; on a checked-in move the old room goes Dirty.
+guard re-runs; on a checked-in move the old room goes Dirty. A move to
+another room type re-prices an auto-priced stay: check
+room_move_preview and pass confirm_price=1 once the new price is
+agreed. A same-type move keeps the confirmed rates.
 
 Endpoint: `kamra.api.move_reservation`.
+Mutating — logged to the activity ledger.
+
+### `room_move_preview(reservation, new_room)`
+
+What moving a stay to a room would do to the bill: same type keeps
+the price; another type is re-quoted. Read-only.
+
+Endpoint: `kamra.api.room_move_preview`.
+
+### `set_late_arrival(reservation, late_arrival, eta)`
+
+Flag a confirmed arrival as arriving late (late_arrival=1), with the
+guest's ETA if known, or clear the flag (late_arrival=0). With the
+property's late-arrival protection on, the night audit holds it as
+Due In instead of marking a no-show.
+
+Endpoint: `kamra.api.set_late_arrival`.
 Mutating — logged to the activity ledger.
 
 ### `guest_lookup(search)`
@@ -439,8 +469,12 @@ Endpoint: `kamra.api.position_briefing`.
 ### `run_night_audit(business_date)`
 
 Run the end-of-day for the property's current business date: post
-the night's room charges for in-house guests, flag no-shows, then roll
-the business date forward. business_date is optional; if given it must
+the night's room charges for in-house guests at their confirmed
+nightly rates, flag no-shows per the property's no-show policy, then
+roll the business date forward. Late arrivals due on the closed date
+(flagged late, or ETA after the run) may be held as Due In and are
+listed in held_late_arrivals; OTA no-shows may carry no fee
+(no_show_fees_waived). business_date is optional; if given it must
 equal the current business date. A day that already closed returns
 already_ran instead of posting again.
 
