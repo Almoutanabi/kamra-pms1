@@ -23,6 +23,9 @@ interface BoardRoom {
   occupancy_status: "Vacant" | "Occupied"
   guest_name: string | null
   due_out: boolean
+  /** a same-day (hourly) stay - the room turns today, at etd */
+  day_use?: boolean
+  etd?: string | null
   task: {
     name: string
     type: string
@@ -233,6 +236,11 @@ export default function HousekeepingBoard() {
                         </div>
                         {r.guest_name && (
                           <div className="mt-1 truncate text-xs opacity-80">{r.guest_name}</div>
+                        )}
+                        {r.day_use && (
+                          <div className="mt-1 inline-flex items-center gap-1 rounded bg-violet-100/80 px-1.5 py-0.5 text-[11px] font-medium text-violet-800">
+                            {r.etd ? t("Day use · out {time}", { time: r.etd }) : t("Day use")}
+                          </div>
                         )}
                         {r.task && (
                           <div className="mt-1.5 flex items-center gap-1 truncate rounded bg-white/70 px-1.5 py-0.5 text-[11px] text-zinc-700">

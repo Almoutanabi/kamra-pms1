@@ -400,6 +400,9 @@ class Reservation(Document):
 	def validate_blacklist(self):
 		if not self.guest or not self.is_new():
 			return
+		# a Hotel Admin confirmed this one guest, with a reason (api._blacklist_gate)
+		if frappe.flags.get("kamra_blacklist_override") == self.guest:
+			return
 		flagged, reason = frappe.db.get_value(
 			"Guest", self.guest, ["blacklisted", "blacklist_reason"]
 		) or (0, None)

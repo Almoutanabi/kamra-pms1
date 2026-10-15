@@ -136,14 +136,19 @@ def record_charge_ledger(folio_doc, charge_row, session: str | None = None):
 	)
 
 
-def record_payment_ledger(folio_doc, payment_row, session: str | None = None):
+def record_payment_ledger(folio_doc, payment_row, session: str | None = None,
+                          ledger: str | None = None):
+	"""ledger overrides where the row lands: a security-deposit refund is
+	stored as a Refund row on the folio but releases the Deposit ledger
+	(the liability), not the Guest ledger."""
 	kind = payment_row.get("payment_kind") or "Payment"
 	code_meta = PAYMENT_CODES.get(kind)
 	code = code_meta[0] if code_meta else None
 	if code and not frappe.db.exists("Transaction Code", code):
 		ensure_default_transaction_codes()
 	amt = float(payment_row.get("amount") or 0)
-	ledger = "Deposit" if kind in ("Advance", "Security Deposit") else "Guest"
+	ledger = ledger or ("Deposit" if kind in ("Advance", "Security Deposit")
+	                    else "Guest")
 	# Payments credit the ledger (reduce what guest owes / increase liability)
 	write_ledger_entry(
 		property=folio_doc.property,

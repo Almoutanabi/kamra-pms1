@@ -237,6 +237,78 @@ def _upcoming_reservations(outlet: str):
 		order_by="reserved_at asc")
 
 
+def _parse_tables(raw: str) -> list[tuple[str, int | None, str | None]]:
+	"""An outlet's table list: "[Main Hall]" starts an area; "T1:4" = table
+	T1 with 4 seats; plain "T1" works too."""
+	tables = []
+	area = None
+	for line in (raw or "").replace(",", "\n").splitlines():
+		line = line.strip()
+		if not line:
+			continue
+		if line.startswith("[") and line.endswith("]"):
+			area = line[1:-1].strip() or None
+			continue
+		name, _sep, seats = line.partition(":")
+		tables.append((name.strip(),
+		               int(seats) if seats.strip().isdigit() else None, area))
+	return tables
+
+
+def menu_url(outlet: str, table: str | None = None,
+             room: str | None = None) -> str:
+	"""The guest QR-menu address (the SPA's /menu/:outlet, which reads
+	?table= / ?room= and posts through public_api.qr_order)."""
+	from urllib.parse import quote, urlencode
+	q = {"table": table} if table else {"room": room} if room else {}
+	url = f"{frappe.utils.get_url()}/kamra/menu/{quote(outlet, safe='')}"
+	return f"{url}?{urlencode(q, quote_via=quote)}" if q else url
+
+
+@frappe.whitelist()
+@require_roles("Front Desk", "Finance", "Hotel Admin", "Kamra Agent")
+def qr_targets(property: str):
+	"""Everything a printable QR sheet needs: each restaurant outlet's tables
+	with their QR-ordering link, and each room with the in-room dining link
+	(the Room Service outlet's menu, tagged with the room). The codes are
+	drawn in the browser - no QR web service sees these links."""
+	from kamra.crs import assert_property_access
+	assert_property_access(property)
+	prop_name = frappe.db.get_value("Property", property, "property_name")
+	outlets = frappe.get_all(
+		"POS Outlet", filters={"property": property, "disabled": 0},
+		fields=["name", "outlet_name", "outlet_type", "tables"],
+		order_by="outlet_name")
+	out_tables = []
+	for o in outlets:
+		if o.outlet_type == "Room Service":
+			continue
+		out_tables.append({
+			"outlet": o.name, "outlet_name": o.outlet_name,
+			"outlet_type": o.outlet_type, "menu_url": menu_url(o.name),
+			"tables": [{"table": t, "seats": seats, "area": area,
+			            "url": menu_url(o.name, table=t)}
+			           for t, seats, area in _parse_tables(o.tables)],
+		})
+	room_service = next((o for o in outlets if o.outlet_type == "Room Service"),
+	                    None)
+	rooms = frappe.get_all(
+		"Room", filters={"property": property},
+		fields=["name", "room_number", "room_type", "floor"],
+		order_by="room_number asc")
+	return {
+		"property_name": prop_name or property,
+		"outlets": out_tables,
+		"room_service": {"outlet": room_service.name,
+		                 "outlet_name": room_service.outlet_name}
+		if room_service else None,
+		"rooms": [{"room": r.name, "room_number": r.room_number,
+		           "room_type": r.room_type, "floor": r.floor,
+		           "url": menu_url(room_service.name, room=r.name)
+		           if room_service else None} for r in rooms],
+	}
+
+
 @frappe.whitelist()
 @require_roles(*POS_ROLES)
 def table_map(outlet: str):
@@ -245,21 +317,8 @@ def table_map(outlet: str):
 	or ready (everything prepared, awaiting service/settle). A table holds
 	any number of bills (separate parties, split bills); the tile carries
 	them all and shows the most urgent state."""
-	raw = frappe.db.get_value("POS Outlet", outlet, "tables") or ""
-	tables = []
-	area = None
-	for line in raw.replace(",", "\n").splitlines():
-		line = line.strip()
-		if not line:
-			continue
-		# "[Main Hall]" starts an area; "T1:4" = table T1 with 4 seats;
-		# plain "T1" works too
-		if line.startswith("[") and line.endswith("]"):
-			area = line[1:-1].strip() or None
-			continue
-		name, _sep, seats = line.partition(":")
-		tables.append((name.strip(),
-		               int(seats) if seats.strip().isdigit() else None, area))
+	tables = _parse_tables(
+		frappe.db.get_value("POS Outlet", outlet, "tables") or "")
 	running = open_orders(outlet)
 	by_table: dict[str, list] = {}
 	for r in running:

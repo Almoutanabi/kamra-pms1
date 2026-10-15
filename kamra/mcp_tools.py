@@ -727,6 +727,44 @@ TOOLS: tuple[ToolSpec, ...] = (
 		group="Billing",
 	),
 	_t(
+		"security_deposit_status",
+		"api.security_deposit",
+		"""The stay's refundable security (damage) deposit: the property's
+		policy amount, what is held, withheld and refunded, and whether it is
+		still holding up check-out. Withholding and refunding are done by
+		staff at the desk (cashier PIN) - not by an agent.""",
+		{"reservation": _p("string")},
+		required=("reservation",),
+		group="Billing",
+	),
+	_t(
+		"collect_security_deposit",
+		"api.collect_security_deposit",
+		"""Record a refundable security deposit the guest has paid (villas:
+		the damage deposit). It is held on the guest folio as a liability,
+		not revenue, and refunded or withheld at check-out. mode: one of the
+		property's payment modes. Confirm the amount with staff first.""",
+		{
+			"reservation": _p("string"),
+			"amount": _p("number"),
+			"mode": _p("string"),
+			"reference": _p("string"),
+		},
+		required=("reservation", "amount", "mode"),
+		mutating=True,
+		group="Billing",
+	),
+	_t(
+		"waive_security_deposit",
+		"api.waive_security_deposit",
+		"""Waive the property's security deposit for one stay. A reason is
+		required and goes on the record; refused once money was taken.""",
+		{"reservation": _p("string"), "reason": _p("string")},
+		required=("reservation", "reason"),
+		mutating=True,
+		group="Billing",
+	),
+	_t(
 		"run_night_audit",
 		"api.run_night_audit",
 		"""Run the end-of-day for the property's current business date: post

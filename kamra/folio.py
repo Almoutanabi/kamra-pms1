@@ -254,8 +254,41 @@ def _room_gst(reservation) -> float:
 
 
 def _nightly_room_rate(reservation, date) -> float:
-	"""Taxable nightly rate: seasons applied, tax backed out when the
-	property configures tax-inclusive pricing."""
+	"""Taxable nightly rate as the guest was quoted it: seasons applied, tax
+	backed out when the property configures tax-inclusive pricing, and the
+	booking's rate plan applied the way pricing.quote applies it."""
+	rate = _plan_free_night_rate(reservation, date)
+	plan = reservation.get("rate_plan")
+	if plan:
+		rate *= _rate_plan_factor(reservation, plan)
+	return float(rate)
+
+
+def _rate_plan_factor(reservation, plan) -> Decimal:
+	"""The stay's rate-plan factor, worked out once per loaded reservation:
+	a plan that adds or fixes an amount works on the whole stay's total, so
+	every night of the stay has to be priced to find one night's share."""
+	from kamra.pricing import rate_plan_factor
+
+	key = (plan, str(reservation.check_in_date), str(reservation.check_out_date),
+	       reservation.adults, reservation.children, reservation.room_type,
+	       reservation.get("over_capacity_charge"))
+	flags = getattr(reservation, "flags", None)
+	cache = flags.get("_kamra_plan_factor") if flags is not None else None
+	if cache and cache[0] == key:
+		return cache[1]
+	start = getdate(reservation.check_in_date)
+	nights = max((getdate(reservation.check_out_date) - start).days, 1)
+	total = sum((_plan_free_night_rate(reservation, add_days(start, i))
+	             for i in range(nights)), Decimal(0))
+	factor = rate_plan_factor(plan, total)
+	if flags is not None:
+		flags["_kamra_plan_factor"] = (key, factor)
+	return factor
+
+
+def _plan_free_night_rate(reservation, date) -> Decimal:
+	"""One night before the rate plan - the per-night step of pricing.quote."""
 	from kamra.pricing import (
 		occupancy_rate, rates_include_tax, room_gst_rate, season_adjust,
 		small_group_allows_stay,
@@ -275,7 +308,7 @@ def _nightly_room_rate(reservation, date) -> float:
 	if rates_include_tax(reservation.property):
 		gst = room_gst_rate(reservation.property, rt, rate)
 		rate = rate / (Decimal(1) + gst / Decimal(100))
-	return float(rate)
+	return rate
 
 
 def _nightly_gst(reservation, date) -> float:
@@ -562,11 +595,16 @@ def policy_fee(reservation, basis: str, pct: float | None = None) -> float:
 
 
 def post_policy_fee(reservation, basis: str, label: str,
-                    pct: float | None = None) -> float:
+                    pct: float | None = None,
+                    posting_date: str | None = None) -> float:
 	"""Open the guest folio and post a policy fee (no-show / late
 	cancellation). Returns the pre-tax amount posted.
 
-	`pct` posts that percentage of the stay, for a tiered policy."""
+	`pct` posts that percentage of the stay, for a tiered policy.
+	`posting_date` is the business day the fee belongs to: the night audit
+	passes the date it is closing; left out (a cancellation at the desk) it
+	is the property's current business date - never the calendar, which
+	runs a day ahead between midnight and the audit."""
 	amount = policy_fee(reservation, basis, pct=pct)
 	if amount <= 0:
 		return 0.0
@@ -576,8 +614,11 @@ def post_policy_fee(reservation, basis: str, label: str,
 	already = any(c.description == label for c in folio.charges)
 	if already:
 		return 0.0
+	if not posting_date:
+		from kamra.business_date import get_business_date
+		posting_date = get_business_date(reservation.property)
 	folio.append("charges", {
-		"posting_date": nowdate(),
+		"posting_date": str(posting_date),
 		"charge_type": "Misc",
 		"reservation": reservation.name,
 		"description": label,
@@ -803,8 +844,10 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 			amount_posted += Decimal(str(_nightly_room_rate(res, business_date)))
 			log_lines.append(f"posted room night {business_date} for {res.name}")
 
-	# no-shows: confirmed arrivals whose date has passed - flagged AND
-	# charged per the property's policy
+	# no-shows: closing day D ends D's arrivals too (Opera end of day), so
+	# a confirmed stay due on or before the closed date that never checked
+	# in is flagged AND charged per the property's policy - on the closed
+	# date, like the room nights of the same run
 	no_show_basis = frappe.db.get_value(
 		"Property", property, "no_show_charge") or "None"
 	stale = frappe.get_all(
@@ -812,7 +855,7 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		filters={
 			"property": property,
 			"status": "Confirmed",
-			"check_in_date": ("<", business_date),
+			"check_in_date": ("<=", business_date),
 		},
 		fields=["name"],
 	)
@@ -823,7 +866,8 @@ def run_night_audit(property: str, business_date: str | None = None) -> dict:
 		if no_show_basis != "None":
 			res = frappe.get_doc("Reservation", row.name)
 			fee = post_policy_fee(res, no_show_basis,
-			                      f"No-show charge ({no_show_basis})")
+			                      f"No-show charge ({no_show_basis})",
+			                      posting_date=business_date)
 			if fee:
 				amount_posted += Decimal(str(fee))
 				log_lines.append(

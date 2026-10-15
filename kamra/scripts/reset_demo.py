@@ -103,6 +103,13 @@ def reset() -> dict:
 	frappe.clear_cache()
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- reset script runs outside the request cycle
 
+	# in_import was only for the wipe. Left on, Document.insert skips
+	# _set_defaults and every seeded row lands without its doctype
+	# defaults (blank room status, folio type, GST rates, booking engine
+	# off ...). seed_demo guards this too; clear it here so nothing that
+	# runs after the wipe inherits it.
+	frappe.flags.in_import = False
+
 	# seed_demo is idempotent *if* the property still exists; we just
 	# deleted it, so this rebuilds rooms, guests, stays and showcase.
 	from kamra.scripts.seed_demo import execute as seed_demo

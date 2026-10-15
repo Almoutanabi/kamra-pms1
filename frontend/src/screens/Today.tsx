@@ -8,7 +8,7 @@ import {
   ListChecks,
   PieChart,
 } from "lucide-react"
-import { useNavigate, useOutletContext } from "react-router-dom"
+import { Link, useNavigate, useOutletContext } from "react-router-dom"
 import {
   call,
   checkOut,
@@ -35,7 +35,6 @@ import type { ShellContext } from "../AppShell"
 import CheckInDialog from "../components/CheckInDialog"
 import BookingRequests from "../components/BookingRequests"
 import { serverError } from "../lib/resource"
-import { toFullPath } from "../lib/routing"
 import { cur, moneyLocale } from "../lib/money"
 import { useT } from "../lib/i18n"
 
@@ -140,13 +139,13 @@ function ReservationList(props: {
                 </span>
               )}
               {row.status === "Confirmed" && (
-                <a
-                  href={toFullPath(`/grc/${encodeURIComponent(row.name)}`)}
+                <Link
+                  to={`/grc/${encodeURIComponent(row.name)}`}
                   className="ml-2 font-medium text-brand-700 hover:underline"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {t("GRC")}
-                </a>
+                </Link>
               )}
               {row.status === "Confirmed" &&
                 row.precheckin_status !== "Submitted" &&
@@ -184,9 +183,14 @@ function ReservationList(props: {
   )
 }
 
+// Rooms saved without a floor still need a row on the board, or they
+// silently vanish from Today. They group under this key.
+const NO_FLOOR = "__none__"
+
 function ordinalFloor(f: string, t: (s: string, vars?: Record<string, string | number>) => string) {
+  if (f === NO_FLOOR) return t("Unassigned floor")
   const n = Number(f)
-  if (Number.isNaN(n)) return t("{f} Floor", { f })
+  if (Number.isNaN(n)) return /floor/i.test(f) ? f : t("{f} Floor", { f })
   const s = ["th", "st", "nd", "rd"]
   const v = n % 100
   return t("{n}{ord} Floor", { n, ord: s[(v - 20) % 10] || s[v] || s[0] })
@@ -351,9 +355,10 @@ export default function Today() {
   const tasksN = Number(kpi?.housekeeping?.open_tasks ?? 0)
   const overdueN = Number(kpi?.housekeeping?.overdue_tasks ?? 0)
   const allRooms = snap?.rooms ?? []
-  const floors = Array.from(
-    new Set(allRooms.map((r) => r.floor).filter(Boolean)),
-  ).sort() as string[]
+  const floorOf = (r: RoomRow) => (r.floor || "").trim() || NO_FLOOR
+  const floors = Array.from(new Set(allRooms.map(floorOf))).sort((a, b) =>
+    a === NO_FLOOR ? 1 : b === NO_FLOOR ? -1 : a.localeCompare(b, undefined, { numeric: true }),
+  )
   const shownFloors = floor === "All" ? floors : [floor]
   const renderRoom = (room: RoomRow) => {
     const next =
@@ -576,7 +581,7 @@ export default function Today() {
                     </div>
                     <div className="grid flex-1 grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7">
                       {allRooms
-                        .filter((r) => r.floor === fl)
+                        .filter((r) => floorOf(r) === fl)
                         .map((room) => renderRoom(room))}
                     </div>
                   </div>
