@@ -26,40 +26,99 @@ upgrade-breaking changes (removed doctypes / API contracts).
   quotation, desk-led guest response, department checklists + notify on
   Confirm (Sales/Finance/HK/F&B), and quote no-response chase reminders
 
+### Features (next release)
+
+* **front desk:** Request to Book inbox on Today, with Accept (assigns a room,
+  re-checks availability) and Decline (reason required, guest notified where
+  messaging is set up) ([#207](https://github.com/Kamra-PMS/kamra-pms/pull/207))
+* **front desk:** per-property no-show policy under Settings → Front desk →
+  Night audit & no-shows: when to mark no-shows, protect late arrivals, waive
+  the fee for OTA bookings, and an optional release time for non-guaranteed
+  arrivals ([#210](https://github.com/Kamra-PMS/kamra-pms/pull/210))
+* **revenue:** rate lock — each night's confirmed rate is saved at booking
+  and billed exactly; date or room-type changes show the new price and need
+  confirmation before saving ([#210](https://github.com/Kamra-PMS/kamra-pms/pull/210))
+* **rentals:** security deposits — collect, waive, withhold part for damage,
+  and refund the rest, all through the cashier till and ledger ([#206](https://github.com/Kamra-PMS/kamra-pms/pull/206))
+* **booking:** day-use (hourly) bookings from the booking screen ([#206](https://github.com/Kamra-PMS/kamra-pms/pull/206))
+* **f&b:** printable QR codes for restaurant tables and rooms ([#206](https://github.com/Kamra-PMS/kamra-pms/pull/206))
+* **finance:** record a company's payment against its city-ledger balance,
+  oldest bills first or picked by folio ([#209](https://github.com/Kamra-PMS/kamra-pms/pull/209))
+* **inventory:** booking a whole villa takes its rooms off sale and vice
+  versa; unused group-block rooms are held until the cutoff, then released
+  automatically ([#207](https://github.com/Kamra-PMS/kamra-pms/pull/207))
+
+### Bug Fixes (next release)
+
+* **ledger:** room nights, meal plans, levies, fees, add-ons and POS room
+  charges now reach the ledger, and company payments clear AR; patches
+  backfill past entries ([#209](https://github.com/Kamra-PMS/kamra-pms/pull/209))
+* **night audit:** room nights bill the rate-plan price; no-show fees are
+  dated to the day being closed; expired holds release their rooms ([#202](https://github.com/Kamra-PMS/kamra-pms/pull/202))
+* **front desk:** the booking page shows the advance due now; blacklisted
+  guests are flagged, with a logged Hotel Admin override and a blacklist
+  control on the guest profile; the reservation panel refreshes after a
+  gateway payment; meal plan names, the GRC link, AI provider settings and
+  the app list are fixed ([#205](https://github.com/Kamra-PMS/kamra-pms/pull/205))
+* **demo & setup:** seeded records get their defaults, wizard rooms get a
+  floor, rentals are seeded as rentals, and past-dated seed bookings no longer
+  crash the reset ([#204](https://github.com/Kamra-PMS/kamra-pms/pull/204))
+* **performance:** the first page load downloads about a third less
+  JavaScript; React and the router are cached across releases ([#208](https://github.com/Kamra-PMS/kamra-pms/pull/208))
+
+## [2.6.13](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.12...v2.6.13) (2026-10-15)
+
+
+### Features
+
+* **settings:** a settings hub with per-module pages and a Staff & access
+  page ([#175](https://github.com/Kamra-PMS/kamra-pms/pull/175))
+* **pricing:** tiered cancellation bands, peak-date rules (minimum stay,
+  non-refundable) and whole-place occupancy ([930e1cd](https://github.com/Kamra-PMS/kamra-pms/commit/930e1cd5c086221da26254008c5e1ca9a5b75137))
+* **pos:** sending an order auto-accepts and prints the KOT ([3565805](https://github.com/Kamra-PMS/kamra-pms/commit/3565805d7af3ffc8c28393e5666485040e7b8ca3))
+* **ui:** every dropdown gets a padded chevron instead of the flush native
+  arrow ([9297665](https://github.com/Kamra-PMS/kamra-pms/commit/929766581dc03856157e142195aec50cf91d6fa9))
+
+
 ### Bug Fixes
 
 * **night audit:** the audit only closes the property's current business
-  date and refuses a date ahead of the calendar ([#184](https://github.com/Kamra-PMS/kamra-pms/pull/184), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197)).
-  Repeated clicks had pushed a property's business date days into the future,
-  posting a no-show charge for a day that hadn't happened; the 03:00 scheduled
-  run no longer closes a day that has only just started
+  date and refuses a date ahead of the calendar, and the 03:00 scheduled run
+  no longer closes a day that has only just started. Repeated clicks had
+  pushed a property's business date days ahead and posted a no-show charge
+  for a day that hadn't happened ([#184](https://github.com/Kamra-PMS/kamra-pms/pull/184), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
 * **front desk:** a no-show or cancelled booking shows what its folio says is
-  owed (the policy fee), not the original booking total; Today and the
-  reservation panel now agree on the amount due, and a refund owed on a
-  cancelled advance is shown ([#184](https://github.com/Kamra-PMS/kamra-pms/pull/184), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
+  owed (the policy fee), not the original booking total. Today and the
+  reservation panel agree on the amount due, and a refund owed on a cancelled
+  advance is shown ([#184](https://github.com/Kamra-PMS/kamra-pms/pull/184), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
 * **housekeeping:** staff stay signed in on the `/hk` phone app after posting
-  a charge or delivering laundry ([#189](https://github.com/Kamra-PMS/kamra-pms/pull/189));
-  guest links (ID upload, laundry, `/book`, QR order) no longer disturb a
-  signed-in staff session
-* **ledger:** transferring a balance to the city ledger credits the guest
-  ledger as well as debiting AR, so the trial balance stays even ([#190](https://github.com/Kamra-PMS/kamra-pms/pull/190));
-  a patch backfills earlier transfers
-* **rentals:** a whole-villa (entire place) booking checks in as one unit and
-  marks the villa's rooms occupied, then dirty with clean tasks at checkout ([#191](https://github.com/Kamra-PMS/kamra-pms/pull/191))
+  a charge or delivering laundry, and guest links (ID upload, laundry, `/book`,
+  QR order) no longer disturb a signed-in staff session ([#189](https://github.com/Kamra-PMS/kamra-pms/pull/189), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
+* **ledger:** a city-ledger transfer credits the guest ledger as well as
+  debiting AR, so the trial balance stays even. A patch backfills earlier
+  transfers ([#190](https://github.com/Kamra-PMS/kamra-pms/pull/190), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
+* **rentals:** a whole-villa booking checks in as one unit. A villa type with
+  its own units checks in to one unit, and Out of Order rooms keep their status
+  at check-out ([#191](https://github.com/Kamra-PMS/kamra-pms/pull/191), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
 * **kamra agent:** booking tools accept room type, meal plan and rate plan
-  names or codes ("Deluxe", "Breakfast") and refuse unknown ones with the valid
-  options; retried agent bookings return the first booking instead of booking
-  twice; Chat and MCP actions reach the AI activity log ([#193](https://github.com/Kamra-PMS/kamra-pms/pull/193))
-* **mcp:** the 401 sent to an unauthenticated MCP client now points at the
-  protected-resource metadata path the server actually serves ([#198](https://github.com/Kamra-PMS/kamra-pms/pull/198))
-* **kamra agent:** a second room picked up from a group block is no longer
-  treated as a duplicate; a retry with a different meal plan or party size
-  books normally; a reused idempotency key for a different booking is refused;
-  copilot bookings are recorded as AI Agent with the Chat channel ([#196](https://github.com/Kamra-PMS/kamra-pms/pull/196))
-* **rentals:** a villa type with its own units checks in to one unit; Out of
-  Order rooms keep their status at check-out ([#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
+  names or codes and refuse unknown ones with the valid options. A retried
+  booking returns the first one instead of booking twice, while a changed
+  meal plan or party size, or a second room from a group block, books
+  normally. A reused idempotency key for a different booking is refused, and
+  Chat and MCP actions reach the AI activity log ([#193](https://github.com/Kamra-PMS/kamra-pms/pull/193), [#196](https://github.com/Kamra-PMS/kamra-pms/pull/196))
+* **mcp:** an unauthenticated MCP client is pointed at the protected-resource
+  metadata path the server actually serves ([#198](https://github.com/Kamra-PMS/kamra-pms/pull/198))
 * **demo:** a demo reset keeps the agent service user, so website bookings
   keep working afterwards ([#188](https://github.com/Kamra-PMS/kamra-pms/pull/188))
+* **channel manager:** unassigned stays count against OTA inventory, and a
+  refused OTA sale is kept as a requested booking, then cancelled cleanly ([#181](https://github.com/Kamra-PMS/kamra-pms/pull/181), [e9c1fbe](https://github.com/Kamra-PMS/kamra-pms/commit/e9c1fbe8a1a70331b998260409338845eb7db63d))
+* **booking:** the party is capped at what the room can sleep, with the room
+  type locked before the capacity check ([#180](https://github.com/Kamra-PMS/kamra-pms/pull/180))
+* **security:** strict property scope applies to Frappe reads and fails
+  closed ([bbadf36](https://github.com/Kamra-PMS/kamra-pms/commit/bbadf36f0cdb3fe24ce5a6ccaf52ee037ea4fbfd), [c13c60b](https://github.com/Kamra-PMS/kamra-pms/commit/c13c60b428373816e16095c03b1b6559a5306789))
+* **cashier:** the supervisor role is honoured when the property PIN is
+  off ([#182](https://github.com/Kamra-PMS/kamra-pms/pull/182))
+* **verify:** Kamra Verify stays hidden until its hub service is live ([21b9be2](https://github.com/Kamra-PMS/kamra-pms/commit/21b9be2976e11ab1a1777277b939f104e922b9b2))
 
 ## [2.6.12](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.11...v2.6.12) (2026-10-12)
 
