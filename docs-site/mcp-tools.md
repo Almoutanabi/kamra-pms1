@@ -419,7 +419,7 @@ up / remaining), rooming list, tied event and master folio.
 
 Endpoint: `kamra.api.group_detail`.
 
-### `pickup_group_room(group_booking, room_type, guest_name, phone)`
+### `pickup_group_room(group_booking, room_type, guest_name, phone, adults, children, idempotency_key)`
 
 Name a guest into a group's room block — creates their reservation on
 the group's dates against the held inventory.
