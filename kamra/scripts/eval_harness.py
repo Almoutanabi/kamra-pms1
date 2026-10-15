@@ -4888,6 +4888,309 @@ def t115():
 	assert frappe.db.get_value("Reservation", out["reservation"], "source") == "Website"
 
 
+
+# --- security deposits, day use, printable QR (t170-t179) -----------------
+
+def _dep_room(number):
+	name = frappe.db.exists("Room", {"property": P, "room_number": number})
+	if name:
+		frappe.db.set_value("Room", name, "room_type", RT)
+		return name
+	return frappe.get_doc({
+		"doctype": "Room", "property": P, "room_number": number,
+		"room_type": RT,
+	}).insert(ignore_permissions=True).name
+
+
+def _dep_stay(number, phone):
+	from frappe.utils import add_days
+	g = _guest(f"Eval Deposit {number}", phone)
+	res = _res(g, nowdate(), add_days(nowdate(), 1), _dep_room(number))
+	res.status = "Checked In"
+	res.save(ignore_permissions=True)
+	folio = frappe.db.get_value(
+		"Folio", {"reservation": res.name, "folio_type": "Guest"})
+	if not folio:
+		from kamra.folio import open_folio
+		folio = open_folio(res)
+	# the stay's own bill is posted and paid, so the folio's credit is the
+	# deposit (check-out would post the night otherwise)
+	from kamra.folio import post_remaining_nights
+	post_remaining_nights(res)
+	owed = float(frappe.db.get_value("Folio", folio, "balance") or 0)
+	if owed > 0:
+		from kamra import api
+		api.add_folio_payment(folio, "Cash", owed)
+	return res, folio
+
+
+def _ledger(folio, ledger):
+	rows = frappe.get_all("Folio Ledger Entry",
+	                      filters={"folio": folio, "ledger": ledger},
+	                      fields=["debit", "credit"])
+	return (sum(float(r.debit or 0) for r in rows),
+	        sum(float(r.credit or 0) for r in rows))
+
+
+@check("security deposit: collect is a folio payment held in the Deposit ledger, logged")
+def t170():
+	from kamra import api
+	res, folio = _dep_stay("E170", "+91 70000 00170")
+	g0 = _ledger(folio, "Guest")
+	st = api.collect_security_deposit(res.name, 10000, "Cash")
+	assert st["status"] == "Held" and st["held"] == 10000, st
+	fd = frappe.get_doc("Folio", folio)
+	assert ("Security Deposit", 10000.0) in {
+		(p.payment_kind, float(p.amount)) for p in fd.payments}
+	# a liability, not revenue: credited to Deposit, Guest ledger untouched
+	assert _ledger(folio, "Deposit") == (0, 10000.0), _ledger(folio, "Deposit")
+	assert _ledger(folio, "Guest") == g0, (_ledger(folio, "Guest"), g0)
+	assert frappe.db.exists("Agent Action Log",
+	                        {"action_type": "collect_security_deposit"})
+	for bad in (0, -5):
+		try:
+			api.collect_security_deposit(res.name, bad, "Cash")
+			raise AssertionError("non-positive deposit accepted")
+		except frappe.ValidationError:
+			pass
+	try:
+		api.collect_security_deposit(res.name, 100, "Bitcoin")
+		raise AssertionError("unknown payment mode accepted")
+	except frappe.ValidationError:
+		pass
+
+
+@check("security deposit: withhold posts a damage charge and moves Deposit -> Guest ledger")
+def t171():
+	from kamra import api
+	res, folio = _dep_stay("E171", "+91 70000 00171")
+	g0 = _ledger(folio, "Guest")
+	api.collect_security_deposit(res.name, 10000, "Cash")
+	for amt, reason in ((3000, ""), (20000, "broken lamp")):
+		try:
+			api.withhold_security_deposit(res.name, amt, reason)
+			raise AssertionError(f"withhold {amt}/{reason!r} accepted")
+		except frappe.ValidationError:
+			pass
+	st = api.withhold_security_deposit(res.name, 3000, "Broken lamp")
+	assert st["withheld"] == 3000 and st["held"] == 7000, st
+	assert st["status"] == "Withheld", st
+	fd = frappe.get_doc("Folio", folio)
+	dmg = [c for c in fd.charges if "withheld" in (c.description or "")]
+	assert len(dmg) == 1 and float(dmg[0].amount) == 3000, dmg
+	# no second payment row: the deposit already on the folio pays it
+	assert sum(1 for p in fd.payments
+	           if p.payment_kind == "Security Deposit") == 1
+	assert abs(float(fd.balance) - (-7000)) < 0.01, fd.balance
+	assert _ledger(folio, "Deposit") == (3000.0, 10000.0), _ledger(folio, "Deposit")
+	# Guest: damage charge debit 3000, deposit applied credit 3000
+	g1 = _ledger(folio, "Guest")
+	assert (g1[0] - g0[0], g1[1] - g0[1]) == (3000.0, 3000.0), (g1, g0)
+	assert frappe.db.exists("Agent Action Log",
+	                        {"action_type": "withhold_security_deposit"})
+
+
+@check("security deposit: refund the rest via the refund path, Deposit ledger nets to zero, check-out clears")
+def t172():
+	from kamra import api
+	res, folio = _dep_stay("E172", "+91 70000 00172")
+	g0 = _ledger(folio, "Guest")
+	api.collect_security_deposit(res.name, 10000, "UPI")
+	api.withhold_security_deposit(res.name, 2500, "Stained sofa")
+	# check-out refuses while the guest is still owed the deposit
+	try:
+		api.check_out(res.name)
+		raise AssertionError("check-out with a held deposit")
+	except frappe.ValidationError:
+		pass
+	try:
+		api.refund_security_deposit(res.name, 9000)
+		raise AssertionError("refund above the held balance")
+	except frappe.ValidationError:
+		pass
+	st = api.refund_security_deposit(res.name)
+	assert st["held"] == 0 and st["refunded"] == 7500, st
+	assert st["status"] == "Refunded", st
+	fd = frappe.get_doc("Folio", folio)
+	refunds = [p for p in fd.payments if p.payment_kind == "Refund"]
+	assert len(refunds) == 1 and float(refunds[0].amount) == -7500, refunds
+	assert refunds[0].mode == "UPI", refunds[0].mode  # back the way it came
+	assert abs(float(fd.balance)) < 0.01, fd.balance
+	d, c = _ledger(folio, "Deposit")
+	assert abs(d - c) < 0.01, (d, c)  # liability fully released
+	g1 = _ledger(folio, "Guest")
+	assert (g1[0] - g0[0], g1[1] - g0[1]) == (2500.0, 2500.0), (g1, g0)
+	kinds = [h["kind"] for h in st["history"]]
+	assert kinds.count("Collected") == 1 and "Withheld" in kinds \
+		and "Refunded" in kinds, kinds
+	api.check_out(res.name)
+	assert frappe.db.get_value("Reservation", res.name, "status") == "Checked Out"
+
+
+@check("security deposit: refund can't take back what the bill owes; a deposit the bill used is applied at check-out")
+def t173():
+	from kamra import api
+	res, folio = _dep_stay("E173", "+91 70000 00173")
+	api.collect_security_deposit(res.name, 5000, "Cash")
+	api.add_folio_charge(folio, "Misc", "Extra bed", 4000)
+	try:
+		api.refund_security_deposit(res.name, 5000)
+		raise AssertionError("refunded a deposit the bill is using")
+	except frappe.ValidationError:
+		pass
+	# the last 1,000 handed back through the folio's own refund form can't
+	# then be refunded again from the deposit panel
+	api.refund_folio_payment(folio, 1000, "Cash", "deposit change returned")
+	try:
+		api.refund_security_deposit(res.name, 1000)
+		raise AssertionError("deposit refunded twice")
+	except frappe.ValidationError:
+		pass
+	# the settled bill used the deposit: check-out records it as applied
+	api.check_out(res.name)
+	dep = frappe.get_doc("Security Deposit", {"reservation": res.name})
+	assert float(dep.balance) == 0 and dep.status == "Withheld", dep.as_dict()
+	assert "check-out" in (dep.reason or ""), dep.reason
+	d, c = _ledger(folio, "Deposit")
+	assert abs(d - c) < 0.01, (d, c)
+	assert frappe.db.exists("Agent Action Log",
+	                        {"action_type": "apply_security_deposit"})
+
+
+@check("security deposit: waive needs a reason, is refused once paid; roles gate withhold/refund")
+def t174():
+	from kamra import api
+	from kamra.deposit import deposit_satisfied
+	frappe.db.set_value("Property", P, "security_deposit_amount", 8000)
+	try:
+		res, folio = _dep_stay("E174", "+91 70000 00174")
+		st = api.security_deposit(res.name)
+		assert st["status"] == "Required" and st["due"] == 8000, st
+		assert not deposit_satisfied(res.name)
+		try:
+			api.waive_security_deposit(res.name, "  ")
+			raise AssertionError("waived without a reason")
+		except frappe.ValidationError:
+			pass
+		st = api.waive_security_deposit(res.name, "Repeat guest, owner approved")
+		assert st["status"] == "Waived" and st["due"] == 0, st
+		assert deposit_satisfied(res.name)
+		try:
+			api.collect_security_deposit(res.name, 8000, "Cash")
+			raise AssertionError("collected on a waived deposit")
+		except frappe.ValidationError:
+			pass
+
+		res2, _f = _dep_stay("E175", "+91 70000 00175")
+		api.collect_security_deposit(res2.name, 8000, "Cash")
+		try:
+			api.waive_security_deposit(res2.name, "changed mind")
+			raise AssertionError("waived a deposit already paid")
+		except frappe.ValidationError:
+			pass
+		frappe.set_user("hk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+		try:
+			for fn, args in ((api.withhold_security_deposit, (res2.name, 100, "x")),
+			                 (api.refund_security_deposit, (res2.name,))):
+				try:
+					fn(*args)
+					raise AssertionError(f"housekeeping ran {fn.__name__}")
+				except frappe.PermissionError:
+					pass
+		finally:
+			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	finally:
+		frappe.db.set_value("Property", P, "security_deposit_amount", 0)
+
+
+@check("security deposit: the folio's own Security Deposit payment keeps the record in step")
+def t176():
+	from kamra import api
+	res, folio = _dep_stay("E176", "+91 70000 00176")
+	api.add_folio_payment(folio, "Card", 3000, kind="Security Deposit")
+	st = api.reservation_detail(res.name)["security_deposit"]
+	assert st["held"] == 3000 and st["can_refund"] and st["blocks_checkout"], st
+
+
+@check("day use: desk booking with a time slot, priced by the quote, refuses a backwards slot")
+def t177():
+	from kamra import api
+	from kamra.pricing import quote
+	d = "2035-03-14"
+	q = quote(P, RT, d, d, 2, 0)
+	assert q["day_use"] and q["nights"] == 0 and q["amount_after_tax"] > 0, q
+	out = api.create_booking(P, RT, d, d, "Eval Day Use", phone="+91 70000 00177",
+	                         check_in_time="11:00", check_out_time="16:30")
+	r = frappe.get_doc("Reservation", out["reservation"])
+	assert r.is_day_use == 1 and str(r.check_out_date) == d, r.check_out_date
+	assert str(r.planned_check_in_time).startswith("11:00"), r.planned_check_in_time
+	assert str(r.planned_check_out_time).startswith("16:30"), r.planned_check_out_time
+	assert abs(float(r.amount_after_tax) - q["amount_after_tax"]) < 0.01, \
+		(r.amount_after_tax, q["amount_after_tax"])
+	for a, b in (("16:00", "11:00"), ("25:00", "26:00")):
+		try:
+			api.create_booking(P, RT, d, d, "Eval Day Use 2",
+			                   check_in_time=a, check_out_time=b)
+			raise AssertionError(f"slot {a}-{b} accepted")
+		except frappe.ValidationError:
+			pass
+
+
+@check("day use: hourly tape places the slot, the room board flags the same-day turn")
+def t178():
+	from kamra import api
+	room = _dep_room("E178")
+	g = _guest("Eval Day Use HK", "+91 70000 00178")
+	out = api.create_booking(P, RT, nowdate(), nowdate(), "Eval Day Use HK",
+	                         guest=g, room=room, assign_room=0,
+	                         check_in_time="09:00", check_out_time="13:00")
+	tape = api.tape_chart_hourly(P, nowdate())
+	row = next(x for x in tape["rooms"] if x.name == room)
+	b = next(x for x in row["bookings"] if x.name == out["reservation"])
+	assert b.from_hour == "09:00" and b.to_hour == "13:00" and b.overnight == 0, b
+	res = frappe.get_doc("Reservation", out["reservation"])
+	res.status = "Checked In"
+	res.save(ignore_permissions=True)
+	board = api.room_board(P)
+	tile = next(x for x in board["rooms"] if x.name == room)
+	assert tile["day_use"] and tile["due_out"] and tile["etd"] == "13:00", tile
+
+
+@check("QR sheet: table and in-room dining links match the guest QR menu routes")
+def t179():
+	from kamra import pos
+	o1 = frappe.get_doc({"doctype": "POS Outlet", "property": P,
+	                     "outlet_name": "Eval QR Cafe", "outlet_type": "Restaurant",
+	                     "tables": "[Terrace]\nT1:4\nT2"}).insert(ignore_permissions=True)
+	o2 = frappe.get_doc({"doctype": "POS Outlet", "property": P,
+	                     "outlet_name": "Eval QR IRD", "outlet_type": "Room Service",
+	                     }).insert(ignore_permissions=True)
+	room = _dep_room("E179")
+	out = pos.qr_targets(P)
+	cafe = next(o for o in out["outlets"] if o["outlet"] == o1.name)
+	assert [t["table"] for t in cafe["tables"]] == ["T1", "T2"], cafe
+	assert cafe["tables"][0]["area"] == "Terrace" and cafe["tables"][0]["seats"] == 4
+	from urllib.parse import quote as q
+	assert cafe["tables"][0]["url"].endswith(
+		f"/kamra/menu/{q(o1.name, safe='')}?table=T1"), cafe
+	assert out["room_service"] and out["room_service"]["outlet"] == o2.name, out["room_service"]
+	r = next(x for x in out["rooms"] if x["room"] == room)
+	assert r["url"].endswith(f"/kamra/menu/{q(o2.name, safe='')}?room={q(room, safe='')}"), r
+	assert all(o["outlet"] != o2.name for o in out["outlets"])  # IRD isn't a table outlet
+	frappe.set_user("hk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	try:
+		pos.qr_targets(P)
+		raise AssertionError("housekeeping read the QR sheet")
+	except frappe.PermissionError:
+		pass
+	finally:
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	from kamra.mcp_tools import BY_NAME
+	for n in ("security_deposit_status", "collect_security_deposit",
+	          "waive_security_deposit"):
+		assert n in BY_NAME, n
+	assert "withhold_security_deposit" not in BY_NAME  # humans, with the PIN
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4906,7 +5209,8 @@ def execute():
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
 		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92, t93, t94, t95,
-		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115):
+		           t96, t97, t98, t100, t101, t102, t103, t104, t110, t111, t112, t113, t114, t115,
+		           t170, t171, t172, t173, t174, t176, t177, t178, t179):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

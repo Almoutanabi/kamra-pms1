@@ -22,6 +22,7 @@ const PublicCheckin = lazy(() => import("./screens/PublicCheckin"))
 const FolioView = lazy(() => import("./screens/FolioView"))
 const GuestJourney = lazy(() => import("./screens/GuestJourney"))
 const HkApp = lazy(() => import("./screens/HkApp"))
+const QrCodes = lazy(() => import("./screens/QrCodes"))
 const Guests = lazy(() => import("./screens/Guests"))
 const RegistrationCard = lazy(() => import("./screens/RegistrationCard"))
 const CancellationLetter = lazy(() => import("./screens/CancellationLetter"))
@@ -340,6 +341,7 @@ export default function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="crs" element={<CRS />} />
           <Route path="pos" element={<POS />} />
+          <Route path="qr-codes" element={<QrCodes />} />
           <Route path="pos-dashboard" element={<PosDashboard />} />
           <Route path="kitchen" element={<Kitchen />} />
           <Route path="inventory" element={<Inventory />} />

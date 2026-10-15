@@ -31,6 +31,7 @@ import { Button } from "../components/ui/button"
 import CancelPanel from "../components/CancelPanel"
 import LinkedRecords from "../components/LinkedRecords"
 import DepositPanel from "../components/DepositPanel"
+import SecurityDepositPanel from "../components/SecurityDepositPanel"
 import RoomChangeDialog from "../components/RoomChangeDialog"
 import { cur, moneyLocale } from "../lib/money"
 
@@ -341,6 +342,18 @@ export default function ReservationDetail({
         />
       )}
 
+      {d.security_deposit && (
+        <SecurityDepositPanel
+          reservation={d.name}
+          deposit={d.security_deposit}
+          canStart={["Confirmed", "Checked In"].includes(d.status)}
+          onChanged={() => {
+            refresh()
+            reload()
+          }}
+        />
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2">
         {/* stay + dates (editable) */}
         <Card icon={<CalendarDays className="size-4" />} title="Stay">
@@ -574,6 +587,11 @@ export default function ReservationDetail({
           <Button disabled={busy} onClick={() => act(() => checkIn(name))}>
             <LogIn className="size-4" /> Check in
           </Button>
+        )}
+        {d.actions.can_check_out && d.security_deposit?.blocks_checkout && (
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
+            <ShieldCheck className="size-3.5" /> Security deposit still held - withhold or refund it
+          </span>
         )}
         {d.actions.can_check_out && (
           <Button disabled={busy} onClick={() => act(() => checkOut(name))}>

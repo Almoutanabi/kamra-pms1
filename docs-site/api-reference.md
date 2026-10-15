@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **274 endpoints**, generated from the source
+the UI and the AI use. **276 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -211,20 +211,40 @@ paid - for demos and training, never on a live gateway.
 | --- | --- | --- |
 | `reservation` | yes |  |
 
+### `kamra.api.security_deposit`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`, `Kamra Agent`
+
+The stay's refundable security (damage) deposit: policy amount, what
+is held, withheld and refunded, its history and which actions are open.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+
 ### `kamra.api.collect_security_deposit`
 
-**GET/POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+
+Take a refundable security deposit (villas: the damage deposit). Lands
+on the guest folio as a Security Deposit payment and in the Deposit
+ledger - a liability held for the guest, never revenue. Cashier PIN and
+open till as for any payment.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `reservation` | yes |  |
 | `amount` | yes |  |
-| `mode` | no | `'UPI'` |
+| `mode` | no | `'Cash'` |
 | `reference` | no | `None` |
+| `pin` | no | `None` |
 
 ### `kamra.api.waive_security_deposit`
 
-**GET/POST** · roles: `Front Desk`, `Hotel Admin`, `Kamra Agent`
+**POST** · roles: `Front Desk`, `Hotel Admin`, `Kamra Agent`
+
+Waive the property's security deposit for this stay (reason required).
+Refused once money has been taken - refund it instead.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -233,7 +253,11 @@ paid - for demos and training, never on a live gateway.
 
 ### `kamra.api.withhold_security_deposit`
 
-**GET/POST** · roles: `Front Desk`, `Hotel Admin`, `Finance`
+**POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`
+
+Keep all or part of the held deposit against damage (reason required).
+The withheld part posts as a damage charge on the guest folio and moves
+from the Deposit ledger to the Guest ledger to pay it.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -241,16 +265,22 @@ paid - for demos and training, never on a live gateway.
 | `amount` | yes |  |
 | `reason` | yes |  |
 | `evidence` | no | `None` |
+| `pin` | no | `None` |
 
 ### `kamra.api.refund_security_deposit`
 
-**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`
+**POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`
+
+Refund what is still held (all of it by default) through the folio
+refund path - till, folio and a Deposit-ledger debit. Cashier PIN.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `reservation` | yes |  |
 | `amount` | no | `None` |
-| `reference` | no | `None` |
+| `mode` | no | `None` |
+| `note` | no | `None` |
+| `pin` | no | `None` |
 
 ### `kamra.api.release_access_instructions`
 
@@ -1002,6 +1032,8 @@ booking, not a walk-in.
 | `payment_reference` | no | `None` |
 | `pin` | no | `None` |
 | `idempotency_key` | no | `None` |
+| `check_in_time` | no | `None` |
+| `check_out_time` | no | `None` |
 
 ### `kamra.api.upload_occupant_id`
 
@@ -1345,6 +1377,12 @@ that are sold out or restricted; promote it later when a room frees.
 status / idempotency_key / hold_expires_on support Instant public booking
 (ADR-006 / ADR-007). Desk callers leave them unset → Confirmed.
 
+Day use: check_out_date == check_in_date books a same-day stay, priced
+by the quote engine (one billable date). check_in_time / check_out_time
+(HH:MM) are its slot - they place it on the hourly tape and tell
+housekeeping when the room turns; on an overnight stay they are the
+ETA / ETD.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -1381,6 +1419,8 @@ status / idempotency_key / hold_expires_on support Instant public booking
 | `over_capacity_reason` | no | `None` |
 | `over_capacity_guests` | no | `0` |
 | `over_capacity_charge` | no | `0` |
+| `check_in_time` | no | `None` |
+| `check_out_time` | no | `None` |
 
 ### `kamra.api.waitlist`
 
@@ -1785,6 +1825,19 @@ now, so a captain can juggle several at once.
 | Param | Required | Default |
 | --- | --- | --- |
 | `outlet` | yes |  |
+
+### `kamra.pos.qr_targets`
+
+**GET/POST** · roles: `Front Desk`, `Finance`, `Hotel Admin`, `Kamra Agent`
+
+Everything a printable QR sheet needs: each restaurant outlet's tables
+with their QR-ordering link, and each room with the in-room dining link
+(the Room Service outlet's menu, tagged with the room). The codes are
+drawn in the browser - no QR web service sees these links.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
 
 ### `kamra.pos.table_map`
 
