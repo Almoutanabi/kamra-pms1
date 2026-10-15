@@ -39,16 +39,18 @@ export default function Agents() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-5 text-brand-600" aria-hidden />
-          <h1 className="text-xl font-semibold tracking-tight">Kamra Agent</h1>
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Sparkles className="size-5 text-brand-600" aria-hidden />
+            <h1 className="text-xl font-semibold tracking-tight">Kamra Agent</h1>
+          </div>
+          <p className="mt-0.5 text-sm text-zinc-500">
+            Chat here, or connect Claude. Either way it acts as you, within
+            your role.
+          </p>
         </div>
-        <p className="text-sm text-zinc-500">
-          Chat in the console, or connect Claude — it acts as you, with your
-          role limits, on the same governed tools.
-        </p>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {panel !== "none" && (
             <button
               onClick={() => setPanel("none")}

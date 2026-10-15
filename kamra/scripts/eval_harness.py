@@ -2598,6 +2598,17 @@ def t47d():
 	from kamra.folio import open_folio
 	from kamra.localization.india import cashfree
 
+	# Kamra Verify is unreleased: hidden and refused unless the site opts in
+	frappe.conf.kamra_verify_enabled = 0
+	hidden = loc.integrations(loc.pack_for(P))
+	assert not hidden["verify_tax_id"] and not hidden["verify_guest_id"], hidden
+	try:
+		loc.verify_tax_id(loc.pack_for(P), P, "29ABCDE1234F1Z5")
+		raise AssertionError("unreleased Kamra Verify ran")
+	except frappe.ValidationError:
+		pass
+	frappe.conf.kamra_verify_enabled = 1
+
 	# India (EVAL Hotel has no country, so it runs on the India pack)
 	assert loc.integrations(loc.pack_for(P)) == {
 		"payment_gateways": ["Razorpay", "Cashfree"], "tax_return": True,
@@ -2696,6 +2707,7 @@ def t47d():
 	assert out["legal_name"] == "Eval Pvt Ltd" and calls == [("verify_gstin", "eval-connect-key")], (out, calls)
 	# ID reading needs the guest to have been told
 	assert refused(lambda: loc.verify_guest_id(loc.pack_for(P), P, "x", "Aadhaar", 0))
+	frappe.conf.kamra_verify_enabled = 0
 
 
 @check("WhatsApp: native Meta send, booking flow, inbound -> ticket")
@@ -4059,6 +4071,70 @@ def t86():
 	assert frappe.db.exists("City Ledger Entry", {"folio": folio2}), "credit stay never reached AR"
 
 
+@check("settings: module pages validate, save and drive the code that reads them")
+def t90():
+	import json
+	from kamra import settings as st
+	from kamra.kamra.doctype.housekeeping_task.housekeeping_task import sla_minutes
+
+	assert st.get_setting(P, "hk_sla_urgent") == 20, "default changed"
+	st.save_settings(P, "housekeeping", json.dumps({"hk_sla_urgent": 25}))
+	assert sla_minutes(P, "Urgent") == 25, "HK deadline ignores the setting"
+	for module, bad in (("housekeeping", {"hk_sla_urgent": 0}),           # below min
+	                    ("housekeeping", {"overbooking_pct": 5}),         # other page
+	                    ("policies", {"checkin_time": "25:00"}),
+	                    ("policies", {"cancellation_fee": "Bogus"})):
+		try:
+			st.save_settings(P, module, json.dumps(bad))
+		except frappe.ValidationError:
+			continue
+		raise AssertionError(f"accepted {bad}")
+	log = frappe.get_all("Agent Action Log", {"property": P, "action_type": "settings_changed"},
+	                     pluck="name")
+	assert log, "a settings change wasn't logged"
+	st.save_settings(P, "housekeeping", json.dumps({"hk_sla_urgent": 20}))
+	st.clear_cache(P)
+
+
+@check("settings: a role edits only its own pages; staff access stays inside the admin's reach")
+def t91():
+	import json
+	from kamra import settings as st, staff
+
+	u = "eval.revenue.settings@kamra.local"
+	staff.save_staff(P, u, "Eval Revenue", json.dumps(["Revenue Manager"]), json.dumps([P]))
+	row = next(r for r in staff.list_staff(P) if r["user"] == u)
+	assert row["roles"] == ["Revenue Manager"] and row["properties"] == [P], row
+	frappe.set_user(u)  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	try:
+		pages = {m["id"] for m in st.settings_schema(P)["modules"]}
+		assert "revenue" in pages and "finance" not in pages, pages
+		st.save_settings(P, "revenue", json.dumps({"overbooking_pct": 2}))
+		for fn, kw in ((st.save_settings, {"property": P, "module": "finance",
+		                                   "changes": json.dumps({"pin_max_attempts": 4})}),
+		               (staff.save_staff, {"property": P, "email": "x.eval@kamra.local",
+		                                   "full_name": "X", "roles": json.dumps(["Front Desk"])})):
+			try:
+				fn(**kw)
+			except frappe.PermissionError:
+				continue
+			raise AssertionError(f"{fn.__name__} let a revenue manager through")
+	finally:
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	# a Hotel Admin can't hand out IT's role
+	gm = "eval.gm.settings@kamra.local"
+	staff.save_staff(P, gm, "Eval GM", json.dumps(["Hotel Admin"]), "all")
+	frappe.set_user(gm)  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	try:
+		staff.save_staff(P, u, "Eval Revenue", json.dumps(["System Manager"]), json.dumps([P]))
+		raise AssertionError("a Hotel Admin granted System Manager")
+	except frappe.PermissionError:
+		pass
+	finally:
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- controlled user context switch for an RBAC check
+	st.save_settings(P, "revenue", json.dumps({"overbooking_pct": 0}))
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4076,7 +4152,7 @@ def execute():
 		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t90, t91):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

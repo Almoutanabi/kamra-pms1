@@ -578,8 +578,10 @@ def laundry_info(token: str):
 		fields=["item_name", "service_type", "rate", "express_rate"],
 		order_by="item_name asc, service_type asc",
 	)
+	from kamra.laundry import express_multiplier
 	for r in rates:
-		r["express_rate"] = r["express_rate"] or round((r["rate"] or 0) * 1.5, 0)
+		r["express_rate"] = r["express_rate"] or round(
+			(r["rate"] or 0) * express_multiplier(res.property), 0)
 	# is there already an open pickup for this room? (so the page can say so)
 	pending = frappe.db.exists(
 		"Laundry Order",
