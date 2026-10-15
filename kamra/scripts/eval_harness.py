@@ -4074,6 +4074,53 @@ def t86():
 	assert frappe.db.exists("City Ledger Entry", {"folio": folio2}), "credit stay never reached AR"
 
 
+@check("city ledger transfer posts balanced legs: guest ledger credited, AR debited")
+def t92():
+	from kamra import api
+	from kamra.ledger import ledger_balances, transfer_to_city_ledger
+	comp = frappe.get_doc({"doctype": "Corporate Account", "company_name": "EVAL CL Balance Corp",
+	                       "credit_allowed": 1}).insert(ignore_permissions=True)
+	g = _guest("Eval City Ledger", "+91 70000 00092")
+	res = _res(g, "2036-03-01", "2036-03-02", ROOM)
+	res.booking_type = "Corporate"
+	res.company = comp.name
+	res.status = "Checked In"
+	res.save(ignore_permissions=True)
+	folio = frappe.db.get_value("Folio", {"reservation": res.name, "folio_type": "Guest"})
+	api.add_folio_charge(folio, "Misc", "eval city ledger charge", 2500)
+
+	def side(f=None):
+		rows = frappe.get_all("Folio Ledger Entry",
+		                      filters={"property": P, **({"folio": f} if f else {})},
+		                      fields=["ledger", "debit", "credit"])
+		out = {}
+		for r in rows:
+			d, c = out.get(r.ledger, (0.0, 0.0))
+			out[r.ledger] = (d + float(r.debit or 0), c + float(r.credit or 0))
+		return out
+
+	tb0 = ledger_balances(P)
+	before = side(folio)
+	amount = transfer_to_city_ledger(folio, comp.name)["amount"]
+	tb1 = ledger_balances(P)
+	after = side(folio)
+
+	moved_dr = (tb1["total_debit"] - tb0["total_debit"])
+	moved_cr = (tb1["total_credit"] - tb0["total_credit"])
+	assert abs(moved_dr - moved_cr) < 0.01, \
+		f"transfer unbalanced the trial balance: Dr {moved_dr} vs Cr {moved_cr}"
+	assert abs(moved_dr - amount) < 0.01, f"AR debit {moved_dr} != transferred {amount}"
+	guest_cr = after.get("Guest", (0, 0))[1] - before.get("Guest", (0, 0))[1]
+	assert abs(guest_cr - amount) < 0.01, f"guest ledger not credited ({guest_cr} of {amount})"
+	ar_dr = after.get("AR", (0, 0))[0] - before.get("AR", (0, 0))[0]
+	assert abs(ar_dr - amount) < 0.01, f"AR not debited ({ar_dr} of {amount})"
+	assert abs(float(frappe.db.get_value("Folio", folio, "balance") or 0)) < 0.01
+	# the folio's own entries: what was charged and moved nets to zero across ledgers
+	fd = sum(v[0] for v in after.values()) - sum(v[0] for v in before.values())
+	fc = sum(v[1] for v in after.values()) - sum(v[1] for v in before.values())
+	assert abs(fd - fc) < 0.01, f"folio postings Dr {fd} vs Cr {fc}"
+
+
 @check("night audit refuses a future or non-current date; a no-show's due comes from its folio")
 def t87():
 	from kamra import api
@@ -4195,7 +4242,7 @@ def execute():
 		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t92, t87, t90, t91):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
