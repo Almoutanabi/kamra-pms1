@@ -4,6 +4,11 @@ import { serverError } from "../lib/resource"
 import { Button } from "../components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { moneyLocale } from "../lib/money"
+import { useAuth } from "../lib/auth"
+import CityLedgerPayment from "./CityLedgerPayment"
+
+// recording a company's payment is a Finance action (the server gates it too)
+const CAN_SETTLE = ["Finance", "Hotel Admin", "System Manager", "Administrator"]
 
 const inr = (n: unknown) =>
   Number(n ?? 0).toLocaleString(moneyLocale(), {
@@ -27,6 +32,9 @@ export default function Ledgers() {
   >([])
   const [aging, setAging] = useState<Record<string, unknown>[]>([])
   const [err, setErr] = useState<string | null>(null)
+  const [paying, setPaying] = useState<string | null>(null)
+  const { roles } = useAuth()
+  const canSettle = roles.some((r) => CAN_SETTLE.includes(r))
 
   const load = useCallback(async () => {
     try {
@@ -171,7 +179,9 @@ export default function Ledgers() {
                 <th className="py-2 pr-3">0–30</th>
                 <th className="py-2 pr-3">31–60</th>
                 <th className="py-2 pr-3">61–90</th>
-                <th className="py-2">90+</th>
+                <th className="py-2 pr-3">90+</th>
+                <th className="py-2 pr-3">Credit</th>
+                {canSettle ? <th className="py-2" /> : null}
               </tr>
             </thead>
             <tbody>
@@ -182,14 +192,24 @@ export default function Ledgers() {
                   <td className="py-2 pr-3 tabular-nums">{inr(a.current)}</td>
                   <td className="py-2 pr-3 tabular-nums">{inr(a.b30)}</td>
                   <td className="py-2 pr-3 tabular-nums">{inr(a.b60)}</td>
-                  <td className="py-2 tabular-nums">
+                  <td className="py-2 pr-3 tabular-nums">
                     {inr(Number(a.b90 || 0) + Number(a.b90p || 0))}
                   </td>
+                  <td className="py-2 pr-3 tabular-nums">
+                    {Number(a.unapplied_credit || 0) ? inr(a.unapplied_credit) : "—"}
+                  </td>
+                  {canSettle ? (
+                    <td className="py-2 text-right">
+                      <Button variant="outline" onClick={() => setPaying(String(a.name))}>
+                        Record payment
+                      </Button>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
               {!aging.length ? (
                 <tr>
-                  <td colSpan={6} className="py-6 text-center text-zinc-400">
+                  <td colSpan={canSettle ? 8 : 7} className="py-6 text-center text-zinc-400">
                     No city ledger accounts yet.
                   </td>
                 </tr>
@@ -198,6 +218,13 @@ export default function Ledgers() {
           </table>
         </CardContent>
       </Card>
+      {paying ? (
+        <CityLedgerPayment
+          account={paying}
+          onClose={() => setPaying(null)}
+          onPosted={() => void load()}
+        />
+      ) : null}
     </div>
   )
 }

@@ -5761,6 +5761,370 @@ def t167():
 		scheduler_events["cron"]["*/15 * * * *"]
 
 
+def _fle(folios, ledgers=None):
+	"""(debit, credit) on these folios' ledger entries."""
+	folios = [folios] if isinstance(folios, str) else list(folios)
+	sql = ("SELECT COALESCE(SUM(debit), 0), COALESCE(SUM(credit), 0) "
+	       "FROM `tabFolio Ledger Entry` WHERE folio IN %(f)s")
+	if ledgers:
+		sql += " AND ledger IN %(l)s"
+	dr, cr = frappe.db.sql(sql, {"f": tuple(folios), "l": tuple(ledgers or ())})[0]
+	return float(dr), float(cr)
+
+def _assert_folio_on_ledger(folio):
+	"""What the Guest + Deposit ledgers say the folio owes == its balance."""
+	bal = float(frappe.db.get_value("Folio", folio, "balance") or 0)
+	dr, cr = _fle(folio, ("Guest", "Deposit"))
+	assert abs((dr - cr) - bal) < 0.01, \
+		f"{folio}: ledger says {dr - cr:.2f}, folio says {bal:.2f}"
+
+def _assert_level(folios):
+	"""Settled books: debits == credits across every ledger of these folios."""
+	dr, cr = _fle(folios)
+	assert abs(dr - cr) < 0.01, f"trial balance Dr {dr:.2f} vs Cr {cr:.2f}"
+
+def _assert_company_ar(account):
+	"""Per-company AR (the AR ledger on its folios) == the sum of its open
+	folios; the account balance is that less any unapplied credit; the
+	aging buckets add up to the balance."""
+	from kamra.ledger import city_ledger_aging, city_ledger_open_folios
+	items = city_ledger_open_folios(account)
+	folios = [r["folio"] for r in items]
+	dr, cr = _fle(folios, ("AR",)) if folios else (0.0, 0.0)
+	open_sum = sum(r["outstanding"] for r in items)
+	assert abs((dr - cr) - open_sum) < 0.01, \
+		f"AR ledger {dr - cr:.2f} vs open folios {open_sum:.2f}"
+	prop = frappe.db.get_value("City Ledger Account", account, "property")
+	row = next(a for a in city_ledger_aging(prop)["accounts"] if a["name"] == account)
+	assert abs(float(row["balance"]) - (row["open_balance"] - row["unapplied_credit"])) < 0.01, row
+	buckets = sum(row[k] for k in ("current", "b30", "b60", "b90", "b90p"))
+	assert abs(buckets - max(float(row["balance"]), 0)) < 0.01, row
+	return row
+
+def _ledger_room(code):
+	name = frappe.db.get_value("Room", {"property": P, "room_number": code})
+	return name or frappe.get_doc({"doctype": "Room", "property": P, "room_number": code,
+	                               "room_type": RT}).insert(ignore_permissions=True).name
+
+def _in_house(name, phone, ci, co, room=None, company=None):
+	res = _res(_guest(name, phone), ci, co, room)
+	if company:
+		res.booking_type = "Corporate"
+		res.company = company
+	res.status = "Checked In"
+	res.save(ignore_permissions=True)
+	folio = frappe.db.get_value("Folio", {"reservation": res.name, "folio_type": "Guest"})
+	return res, folio
+
+def _credit_corp(name):
+	return frappe.get_doc({"doctype": "Corporate Account", "company_name": name,
+	                       "credit_allowed": 1}).insert(ignore_permissions=True).name
+
+@check("ledger: charge, void, advance, payment and refund keep each folio equal to its ledger; settled = level")
+def t130():
+	from kamra import api
+	res, folio = _in_house("Eval Ledger Money", "+91 70000 00130", "2036-05-01",
+	                       "2036-05-02", _ledger_room("L130"))
+	api.add_folio_charge(folio, "Laundry", "eval ledger laundry", 500, gst_rate=18)
+	_assert_folio_on_ledger(folio)
+	wrong = api.add_folio_charge(folio, "Misc", "eval wrong line", 200)["charges"][-1]["name"]
+	api.void_folio_charge(folio, wrong, reason="eval posted in error")
+	_assert_folio_on_ledger(folio)
+	api.add_folio_payment(folio, "Cash", 1000, kind="Advance")
+	owed = float(frappe.db.get_value("Folio", folio, "balance"))
+	assert owed < 0, owed
+	api.refund_folio_payment(folio, -owed, "Cash", "eval over-collected")
+	_assert_folio_on_ledger(folio)
+	assert abs(float(frappe.db.get_value("Folio", folio, "balance"))) < 0.01
+	_assert_level(folio)
+
+@check("ledger: room night + meal plan + levy (audit/checkout path) reach the Guest ledger once")
+def t131():
+	from kamra.folio import post_remaining_nights, post_room_night
+	saved = frappe.db.get_value("Property", P, ["room_levy_percent"], as_dict=True)
+	frappe.db.set_value("Property", P, "room_levy_percent", 2)
+	frappe.clear_document_cache("Property", P)
+	try:
+		mp = frappe.db.get_value("Meal Plan", {"property": P, "code": "CP"}) or \
+			frappe.get_doc({"doctype": "Meal Plan", "property": P, "code": "CP",
+			                "label": "Eval Ledger Breakfast", "price_per_adult": 300,
+			                }).insert(ignore_permissions=True).name
+		res, folio = _in_house("Eval Ledger Night", "+91 70000 00131", "2036-05-03",
+		                       "2036-05-06", _ledger_room("L131"))
+		res.meal_plan = mp
+		res.save(ignore_permissions=True)
+		assert post_room_night(res, "2036-05-03") is True
+		assert post_room_night(res, "2036-05-03") is False, "double posted"
+		post_remaining_nights(frappe.get_doc("Reservation", res.name))
+		fd = frappe.get_doc("Folio", folio)
+		kinds = {c.charge_type for c in fd.charges}
+		assert {"Room", "Meal Plan", "Room Levy"} <= kinds, kinds
+		assert len([c for c in fd.charges if c.charge_type == "Room"]) == 3
+		for c in fd.charges:
+			n = frappe.db.count("Folio Ledger Entry", {
+				"source_doctype": "Folio Charge", "source_name": c.name})
+			assert n == 1, f"{c.charge_type} {c.posting_date} has {n} ledger entries"
+		_assert_folio_on_ledger(folio)
+		api_pay = float(fd.balance)
+		from kamra import api
+		api.add_folio_payment(folio, "Card", api_pay)
+		_assert_level(folio)
+	finally:
+		frappe.db.set_value("Property", P, "room_levy_percent", saved.room_levy_percent)
+		frappe.clear_document_cache("Property", P)
+
+@check("ledger: night audit room nights and the no-show fee land on the ledger")
+def t132():
+	from kamra.folio import run_night_audit
+	today = nowdate()
+	saved = frappe.db.get_value("Property", P, ["business_date", "no_show_charge"],
+	                            as_dict=True)
+	frappe.db.set_value("Property", P, {"business_date": today,
+	                                    "no_show_charge": "First Night"})
+	try:
+		frappe.db.delete("Night Audit Run", {"property": P, "business_date": today})
+		res, folio = _in_house("Eval Ledger Audit", "+91 70000 00132", today,
+		                       add_days(today, 2), _ledger_room("L132"))
+		ns = _res(_guest("Eval Ledger NoShow", "+91 70000 00133"),
+		          add_days(today, -1), add_days(today, 1), allow_past=1)
+		run_night_audit(P)
+		room = frappe.get_all("Folio Charge", filters={
+			"parent": folio, "charge_type": "Room", "posting_date": today}, pluck="name")
+		assert room, "audit posted no room night"
+		assert frappe.db.exists("Folio Ledger Entry", {
+			"source_doctype": "Folio Charge", "source_name": room[0],
+			"business_date": today}), "room night missing from the ledger"
+		_assert_folio_on_ledger(folio)
+		ns_folio = frappe.db.get_value("Folio", {"reservation": ns.name, "folio_type": "Guest"})
+		assert ns_folio and float(frappe.db.get_value("Folio", ns_folio, "balance")) > 0, \
+			"no-show fee not posted"
+		_assert_folio_on_ledger(ns_folio)
+	finally:
+		frappe.db.set_value("Property", P, {
+			"business_date": saved.business_date,
+			"no_show_charge": saved.no_show_charge})
+
+@check("ledger: cancellation fee, cleaning fee, add-ons and allowance reach the ledger")
+def t133():
+	from kamra import api
+	saved = frappe.db.get_value(
+		"Property", P, ["free_cancel_days", "cancellation_fee", "cleaning_fee"],
+		as_dict=True)
+	frappe.db.set_value("Property", P, {"free_cancel_days": 2,
+	                                    "cancellation_fee": "First Night",
+	                                    "cleaning_fee": 750})
+	try:
+		late = _res(_guest("Eval Ledger Cancel", "+91 70000 00134"),
+		            add_days(nowdate(), 1), add_days(nowdate(), 2))
+		assert api.cancel_reservation(late.name)["fee"] > 0
+		cf = frappe.db.get_value("Folio", {"reservation": late.name, "folio_type": "Guest"})
+		_assert_folio_on_ledger(cf)
+
+		exp = frappe.get_doc({
+			"doctype": "Experience", "property": P,
+			"experience_name": "EVAL Ledger Spa", "category": "Activity",
+			"price": 1200, "gst_rate": 18}).insert(ignore_permissions=True)
+		out = api.create_booking(
+			property=P, room_type=RT, check_in_date="2036-05-10",
+			check_out_date="2036-05-11", guest_name="Eval Ledger Addon",
+			phone="+91 70000 00135", addons=[{"experience": exp.name, "qty": 1}])
+		api.check_in(out["reservation"])
+		folio = frappe.db.get_value(
+			"Folio", {"reservation": out["reservation"], "folio_type": "Guest"})
+		kinds = {c.charge_type for c in frappe.get_doc("Folio", folio).charges}
+		assert {"Cleaning Fee", "Misc"} <= kinds, kinds
+		_assert_folio_on_ledger(folio)
+		api.post_allowance(folio, 100, "eval service recovery")
+		_assert_folio_on_ledger(folio)
+	finally:
+		frappe.db.set_value("Property", P, saved)
+
+@check("ledger: transfer and split move a line's ledger with it; value conserved")
+def t134():
+	from kamra.folio import post_room_night, split_charge, split_folio, transfer_charge
+	res, main = _in_house("Eval Ledger Split", "+91 70000 00136", "2036-05-12",
+	                      "2036-05-14", _ledger_room("L134"))
+	post_room_night(res, "2036-05-12")
+	post_room_night(res, "2036-05-13")
+	other = split_folio(res.name, "Extra")
+	before = _fle([main, other])
+	rows = [c.name for c in frappe.get_doc("Folio", main).charges if c.charge_type == "Room"]
+	transfer_charge(main, rows[0], other)
+	split_charge(main, rows[1], other, percent=30)
+	for f in (main, other):
+		_assert_folio_on_ledger(f)
+	after = _fle([main, other])
+	assert abs((after[0] - after[1]) - (before[0] - before[1])) < 0.01, (before, after)
+
+@check("city ledger: settlement credits AR oldest first; company AR == its open folios; books level")
+def t135():
+	from kamra import api
+	from kamra.ledger import city_ledger_settle, transfer_to_city_ledger
+	corp = _credit_corp("EVAL Ledger Settle Corp")
+	folios = []
+	for i, phone in enumerate(("+91 70000 00137", "+91 70000 00138")):
+		_, f = _in_house(f"Eval Ledger AR {i}", phone, f"2036-06-0{i + 1}",
+		                 f"2036-06-0{i + 2}", _ledger_room(f"L135{i}"), company=corp)
+		api.add_folio_charge(f, "Misc", "eval AR charge", 1000 * (i + 1))
+		folios.append(f)
+	acct = None
+	for f in folios:
+		acct = transfer_to_city_ledger(f, corp)["account"]
+	# the first bill is the older one
+	frappe.db.sql("""UPDATE `tabCity Ledger Entry` SET posting_date = '2020-01-01'
+	                 WHERE folio = %s AND kind = 'Invoice'""", folios[0])
+	_assert_company_ar(acct)
+	owed = [float(frappe.db.get_value("City Ledger Entry",
+	                                  {"folio": f, "kind": "Invoice"}, "debit")) for f in folios]
+	out = city_ledger_settle(acct, owed[0] + 100, "Bank Transfer", "EVAL-UTR-1")
+	assert out["applied"] == [{"folio": folios[0], "amount": owed[0]},
+	                          {"folio": folios[1], "amount": 100.0}], out
+	assert out["unapplied"] == 0, out
+	_assert_company_ar(acct)
+	city_ledger_settle(acct, owed[1] - 100, "Bank Transfer", "EVAL-UTR-2")
+	row = _assert_company_ar(acct)
+	assert abs(float(row["balance"])) < 0.01 and row["open_balance"] == 0, row
+	for f in folios:
+		_assert_folio_on_ledger(f)
+	_assert_level(folios)
+
+@check("city ledger: explicit allocation, excess kept as unapplied credit, next bill uses it")
+def t136():
+	from kamra import api
+	from kamra.ledger import city_ledger_account, city_ledger_settle, transfer_to_city_ledger
+	corp = _credit_corp("EVAL Ledger Alloc Corp")
+	folios = []
+	for i, phone in enumerate(("+91 70000 00139", "+91 70000 00140", "+91 70000 00141")):
+		_, f = _in_house(f"Eval Ledger Alloc {i}", phone, f"2036-07-0{i + 1}",
+		                 f"2036-07-0{i + 2}", _ledger_room(f"L136{i}"), company=corp)
+		api.add_folio_charge(f, "Misc", "eval alloc charge", 1000)
+		folios.append(f)
+	acct = transfer_to_city_ledger(folios[0], corp)["account"]
+	transfer_to_city_ledger(folios[1], corp)
+	# explicitly pay the newer bill only, with 500 over
+	owed = float(frappe.db.get_value("Folio", folios[0], "grand_total"))
+	out = city_ledger_settle(acct, owed + 500, "Cheque", "EVAL-CHQ-9",
+	                         allocations=[{"folio": folios[1], "amount": owed}])
+	assert out["applied"] == [{"folio": folios[1], "amount": owed}], out
+	assert abs(out["unapplied"] - 500) < 0.01, out
+	row = _assert_company_ar(acct)
+	assert abs(row["unapplied_credit"] - 500) < 0.01, row
+	view = city_ledger_account(acct)
+	assert [r["folio"] for r in view["open_items"]] == [folios[0]], view["open_items"]
+	# overpay everything: excess stays, nothing refused
+	out = city_ledger_settle(acct, owed + 1000, "Bank Transfer", "EVAL-UTR-3")
+	assert abs(out["unapplied"] - 1000) < 0.01, out
+	row = _assert_company_ar(acct)
+	assert abs(row["unapplied_credit"] - 1500) < 0.01 and row["open_balance"] == 0, row
+	assert abs(float(row["balance"]) + 1500) < 0.01, row
+	# the next bill is settled from the credit at once
+	moved = transfer_to_city_ledger(folios[2], corp)
+	assert abs(moved["applied_from_credit"] - owed) < 0.01, moved
+	row = _assert_company_ar(acct)
+	assert abs(row["unapplied_credit"] - (1500 - owed)) < 0.01, row
+	_assert_level(folios)
+
+@check("city ledger: bad allocations refused; Front Desk can't record a company payment")
+def t137():
+	from kamra import api
+	from kamra.ledger import city_ledger_settle, transfer_to_city_ledger
+	corp = _credit_corp("EVAL Ledger Guard Corp")
+	_, f = _in_house("Eval Ledger Guard", "+91 70000 00142", "2036-08-01",
+	                 "2036-08-02", _ledger_room("L137"), company=corp)
+	api.add_folio_charge(f, "Misc", "eval guard charge", 1000)
+	_, stranger = _in_house("Eval Ledger Stranger", "+91 70000 00143", "2036-08-03",
+	                        "2036-08-04", _ledger_room("L137"))
+	acct = transfer_to_city_ledger(f, corp)["account"]
+	owed = float(frappe.db.get_value("City Ledger Entry", {"folio": f}, "debit"))
+	for amount, alloc, why in (
+		(0, None, "positive"),
+		(owed, [{"folio": stranger, "amount": 10}], "nothing open"),
+		(owed + 10, [{"folio": f, "amount": owed + 10}], "can't apply"),
+		(10, [{"folio": f, "amount": 20}], "more than the payment"),
+	):
+		try:
+			city_ledger_settle(acct, amount, allocations=alloc)
+			raise AssertionError(f"settle accepted: {why}")
+		except frappe.ValidationError as e:
+			assert why in str(e), e
+	assert not frappe.db.exists("City Ledger Entry", {"account": acct, "kind": "Payment"})
+	me = frappe.session.user
+	frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+	try:
+		city_ledger_settle(acct, owed)
+		raise AssertionError("Front Desk recorded a company payment")
+	except frappe.PermissionError:
+		pass
+	finally:
+		frappe.set_user(me)  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+	_assert_company_ar(acct)
+
+@check("ledger backfill: unledgered charges and payments, moved and split lines brought in step, dated; idempotent")
+def t138():
+	from kamra.folio import _recalculate
+	from kamra.patches.v40 import backfill_charge_ledger
+	res, folio = _in_house("Eval Ledger Backfill", "+91 70000 00144", "2036-09-01",
+	                       "2036-09-02", _ledger_room("L138"))
+	# lines written the old way: straight onto the folio, no ledger
+	doc = frappe.get_doc("Folio", folio)
+	for amt in (800, 1200):
+		doc.append("charges", {"posting_date": "2036-09-01", "charge_type": "Room",
+		                       "description": "eval legacy night", "qty": 1,
+		                       "rate": amt, "amount": amt, "gst_rate": 5})
+	doc.append("payments", {"posting_date": "2036-09-01", "payment_kind": "Payment",
+	                        "mode": "Cash", "amount": 500})
+	_recalculate(doc)
+	doc.save(ignore_permissions=True)
+	legacy = [c.name for c in doc.charges if c.description == "eval legacy night"]
+	assert not frappe.db.exists("Folio Ledger Entry", {"source_name": ["in", legacy]})
+	# a ledgered line whose row has gone, and one trimmed by an old split
+	from kamra import api
+	gone = api.add_folio_charge(folio, "Misc", "eval vanished", 300)["charges"][-1]["name"]
+	trim = api.add_folio_charge(folio, "Misc", "eval trimmed", 1000)["charges"][-1]["name"]
+	frappe.db.delete("Folio Charge", {"name": gone})
+	frappe.db.set_value("Folio Charge", trim, {"amount": 700, "rate": 700, "total": 700},
+	                    update_modified=False)
+	doc = frappe.get_doc("Folio", folio)
+	_recalculate(doc)
+	doc.db_update()
+	backfill_charge_ledger.execute()
+	dates = frappe.get_all("Folio Ledger Entry", filters={
+		"source_doctype": "Folio Charge", "source_name": ["in", legacy]},
+		pluck="business_date")
+	assert sorted(str(d) for d in dates) == ["2036-09-01", "2036-09-01"], dates
+	_assert_folio_on_ledger(folio)
+	n = frappe.db.count("Folio Ledger Entry")
+	backfill_charge_ledger.execute()
+	assert frappe.db.count("Folio Ledger Entry") == n, "backfill not idempotent"
+
+@check("AR backfill: an old folio-less company payment is applied oldest first; idempotent")
+def t139():
+	from kamra import api
+	from kamra.ledger import transfer_to_city_ledger
+	from kamra.patches.v40 import apply_city_ledger_payments
+	corp = _credit_corp("EVAL Ledger Old Pay Corp")
+	_, f = _in_house("Eval Ledger Old Pay", "+91 70000 00145", "2036-10-01",
+	                 "2036-10-02", _ledger_room("L139"), company=corp)
+	api.add_folio_charge(f, "Misc", "eval old pay charge", 1000)
+	acct = transfer_to_city_ledger(f, corp)["account"]
+	owed = float(frappe.db.get_value("City Ledger Entry", {"folio": f}, "debit"))
+	# what the old city_ledger_settle wrote: account entry only, no AR credit
+	frappe.get_doc({"doctype": "City Ledger Entry", "account": acct, "property": P,
+	                "posting_date": "2036-10-20", "kind": "Payment", "debit": 0,
+	                "credit": owed, "reference": "EVAL-OLD"}).insert(ignore_permissions=True)
+	frappe.db.set_value("City Ledger Account", acct, "balance", 0)
+	apply_city_ledger_payments.execute()
+	assert frappe.db.get_value("Folio Ledger Entry", {
+		"folio": f, "ledger": "AR", "source_doctype": "City Ledger Entry"},
+		"business_date") is not None
+	row = _assert_company_ar(acct)
+	assert row["open_balance"] == 0 and row["unapplied_credit"] == 0, row
+	n = frappe.db.count("Folio Ledger Entry")
+	apply_city_ledger_payments.execute()
+	assert frappe.db.count("Folio Ledger Entry") == n, "AR backfill not idempotent"
+	_assert_level(f)
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -5783,7 +6147,8 @@ def execute():
 		           t90, t91, t92, t93, t94, t95, t96, t97, t98, t100, t101, t102,
 		           t103, t104, t110, t111, t112, t113, t114, t115, t120, t121, t140, t141,
 		           t142, t143, t150, t151, t152, t153, t170, t171, t172, t173, t174, t176,
-		           t177, t178, t179, t160, t161, t162, t163, t164, t165, t166, t167):
+		           t177, t178, t179, t160, t161, t162, t163, t164, t165, t166, t167, t130,
+		           t131, t132, t133, t134, t135, t136, t137, t138, t139):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

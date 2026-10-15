@@ -63,7 +63,8 @@ def open_folio(reservation) -> str:
 			"auto_posted": 1,
 		})
 	_recalculate(folio)
-	folio.insert(ignore_permissions=True)
+	from kamra.ledger import save_folio
+	save_folio(folio)
 	_post_addons(reservation, folio.name)
 	_post_cleaning_fee(reservation, folio.name)
 	return folio.name
@@ -117,7 +118,8 @@ def _post_cleaning_fee(reservation, folio_name: str):
 		},
 	)
 	_recalculate(doc)
-	doc.save(ignore_permissions=True)
+	from kamra.ledger import save_folio
+	save_folio(doc)
 
 
 def _post_addons(reservation, folio_name: str):
@@ -145,7 +147,8 @@ def _post_addons(reservation, folio_name: str):
 		                    update_modified=False)
 		a.posted = 1
 	_recalculate(doc)
-	doc.save(ignore_permissions=True)
+	from kamra.ledger import save_folio
+	save_folio(doc)
 
 
 def open_group_folio(group_booking: str) -> str:
@@ -416,9 +419,11 @@ def _post_room_levy(folios, reservation, date, night_rate):
 
 
 def save_folios(folios: dict):
+	"""Save each touched folio and post its new lines to the ledger."""
+	from kamra.ledger import save_folio
 	for doc in folios.values():
 		_recalculate(doc)
-		doc.save(ignore_permissions=True)
+		save_folio(doc)
 
 
 def post_remaining_nights(reservation) -> int:
@@ -496,6 +501,8 @@ def transfer_charges(from_folio: str, charge_rows: list, to_folio: str):
 	_assert_same_stay(src, dst)
 	if "Closed" in (src.status, dst.status):
 		frappe.throw("Both folios must be open to transfer charges.")
+	from kamra.ledger import ledger_charges, reverse_ledger_for_charge
+	moved = []
 	for charge_row in charge_rows:
 		row = next((c for c in src.charges if c.name == charge_row), None)
 		if not row:
@@ -514,11 +521,16 @@ def transfer_charges(from_folio: str, charge_rows: list, to_folio: str):
 			"auto_posted": row.auto_posted,
 			"is_alcohol": row.get("is_alcohol"),
 		})
+		moved.append(dst.charges[-1])
 		src.charges.remove(row)
+		# the line leaves this folio's ledger and joins the target's
+		reverse_ledger_for_charge(src.property, src.name, row.name,
+		                          f"to {dst.name}", prefix="TRANSFER")
 	_recalculate(src)
 	_recalculate(dst)
 	src.save(ignore_permissions=True)
 	dst.save(ignore_permissions=True)
+	ledger_charges(dst, moved)
 
 
 def split_charge(from_folio: str, charge_row: str, to_folio: str,
@@ -568,10 +580,18 @@ def split_charge(from_folio: str, charge_row: str, to_folio: str,
 		"auto_posted": row.auto_posted,
 		"is_alcohol": row.get("is_alcohol"),
 	})
+	part_row = dst.charges[-1]
 	_recalculate(src)
 	_recalculate(dst)
 	src.save(ignore_permissions=True)
 	dst.save(ignore_permissions=True)
+	# the split-off part (with its tax) leaves the source line's ledger and
+	# is posted on the target's
+	from kamra.ledger import ledger_charges, reverse_ledger_for_charge
+	reverse_ledger_for_charge(src.property, src.name, row.name,
+	                          f"to {dst.name}", amount=float(part_row.total or 0),
+	                          prefix="SPLIT")
+	ledger_charges(dst, [part_row])
 	return {"kept": float(remainder), "moved": float(part)}
 
 
@@ -629,7 +649,8 @@ def post_policy_fee(reservation, basis: str, label: str,
 		"auto_posted": 1,
 	})
 	_recalculate(folio)
-	folio.save(ignore_permissions=True)
+	from kamra.ledger import save_folio
+	save_folio(folio)
 	return amount
 
 
@@ -680,7 +701,8 @@ def post_allowance(folio_name: str, amount: float, reason: str,
 		"gst_rate": float(gst_rate or 0),
 	})
 	_recalculate(folio)
-	folio.save(ignore_permissions=True)
+	from kamra.ledger import save_folio
+	save_folio(folio)
 	from kamra.savings import log_action
 	log_action("post_allowance", "Folio", folio.name, folio.property,
 	           rationale=f"Allowance ₹{amount:.0f} - {reason.strip()}")
@@ -703,6 +725,13 @@ def void_charge(folio_name: str, charge_row: str, reason: str = "") -> dict:
 		frappe.throw("That charge line is not on this folio.")
 	removed = {"charge_type": row.charge_type, "description": row.description,
 	           "amount": row.amount}
+	# no-op when the caller (api.void_folio_charge) already reversed it
+	from kamra.ledger import reverse_ledger_for_charge
+	try:
+		reverse_ledger_for_charge(folio.property, folio.name, row.name,
+		                          reason or "")
+	except Exception:
+		frappe.log_error(title="ledger void reversal failed")
 	folio.remove(row)
 	_recalculate(folio)
 	folio.save(ignore_permissions=True)
