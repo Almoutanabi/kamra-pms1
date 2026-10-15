@@ -223,12 +223,36 @@ after_migrate = ["kamra.install.after_migrate"]
 # Guest has no property link, so Property User Permissions can't limit it;
 # these apply Kamra's stay-history rule to Frappe's own REST, Desk and
 # private file downloads too (see kamra.authz.guest_query_conditions).
+# Every Kamra DocType linking a Property fails closed under the opt-in
+# kamra_strict_property_scope site setting; with it off these add nothing.
+_PROPERTY_SCOPED = (
+	"Agent Action Log", "AI Assistant Settings", "Banquet Checklist Template",
+	"Banquet Dish", "Banquet Function Task", "Banquet Menu",
+	"Banquet Service Item", "Cancelled Invoice", "Cashier", "Cashier Session",
+	"Cashier Transaction", "Channel Manager Connection",
+	"Channel Provider Connection", "City Ledger Account", "City Ledger Entry",
+	"Copilot Conversation", "Credit Note", "Discount Voucher", "Exchange Rate",
+	"Exchange Transaction", "Experience", "Folio", "Folio Ledger Entry",
+	"Folio Reprint", "Group Booking", "Housekeeping Task", "Hurdle Rate",
+	"Ingredient", "Ingredient Ledger Entry", "Ingredient Stock",
+	"Laundry Order", "Laundry Rate", "Lost And Found Item", "MCP OAuth Grant",
+	"Meal Plan", "Menu Item", "Night Audit Run", "Payment Gateway Settings",
+	"Petty Cash Voucher", "POS Order", "POS Outlet", "POS Table Reservation",
+	"Proforma Folio", "Rate Guardrail", "Rate Plan", "Reservation",
+	"Revenue Budget", "Room", "Room Block", "Room Type", "Season",
+	"Security Deposit", "Sellable Unit", "Service Ticket", "Shift Handover",
+	"Transaction Code", "Turnover Profile", "Venue", "Venue Booking",
+	"WhatsApp Message", "ZATCA Invoice", "ZATCA Settings",
+)
+
 permission_query_conditions = {
 	"Guest": "kamra.authz.guest_query_conditions",
+	**{dt: "kamra.authz.property_query_conditions" for dt in _PROPERTY_SCOPED},
 }
 
 has_permission = {
 	"Guest": "kamra.authz.guest_has_permission",
+	**{dt: "kamra.authz.property_has_permission" for dt in _PROPERTY_SCOPED},
 }
 
 # Document Events

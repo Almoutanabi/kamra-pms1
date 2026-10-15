@@ -7,6 +7,10 @@ from frappe.model.document import Document
 from frappe.utils import cint, date_diff, formatdate, now_datetime, today
 
 
+class InventoryRefused(frappe.ValidationError):
+	"""No room left to sell: category sold out, room or villa already taken."""
+
+
 class Reservation(Document):
 	def after_insert(self):
 		# every booking gets a pre-arrival check-in link
@@ -53,6 +57,8 @@ class Reservation(Document):
 		# also skip classic non-inventory statuses not in LIVE
 		if self.status in ("Cancelled", "No Show", "Checked Out", "Waitlist"):
 			return
+		# Serialize bookings of a category, even before a room is assigned.
+		frappe.db.get_value("Room Type", self.room_type, "name", for_update=True)
 		total = frappe.db.count("Room", {"room_type": self.room_type})
 		if not total:
 			return  # setup-time bookings before rooms exist
@@ -82,7 +88,7 @@ class Reservation(Document):
 					_("{0} is sold out for {1}: {2} of {3} rooms sold and "
 					  "the overbooking allowance ({4}%) is used up.").format(
 						self.room_type, d, cnt, total, pct),
-					title=_("Overbooking limit"))
+					title=_("Overbooking limit"), exc=InventoryRefused)
 
 	def validate(self):
 		self.validate_dates()
@@ -113,6 +119,21 @@ class Reservation(Document):
 			frappe.throw(
 				_("This property requires a stay of at least {0} nights.").format(
 					min_n),
+				title=_("Minimum stay"),
+			)
+
+		# Peak dates can ask for longer than the property's own floor - a
+		# two-night minimum over New Year, say - and the rule lives on the
+		# Season that already prices those nights.
+		from kamra.pricing import stay_season_rules
+
+		rules = stay_season_rules(self.property, self.check_in_date,
+		                          self.check_out_date, self.room_type)
+		if rules["minimum_nights"] > nights:
+			frappe.throw(
+				_("{0} needs a stay of at least {1} nights.").format(
+					rules["season"] or _("These dates"),
+					rules["minimum_nights"]),
 				title=_("Minimum stay"),
 			)
 
@@ -152,16 +173,33 @@ class Reservation(Document):
 				title=_("Room capacity"))
 		cap = frappe.db.get_value(
 			"Room Type", self.room_type,
-			["adults_capacity", "children_capacity", "room_type_name"],
+			["adults_capacity", "children_capacity", "room_type_name",
+			 "max_extra_beds"],
 			as_dict=True,
 		) or frappe._dict()
+
+		# A room can take a few more than it sleeps comfortably, by
+		# arrangement - a family with one more child, a group happy to share.
+		# That is a decision someone makes and signs their name to, so it
+		# needs a reason and stops at the extra beds the room type allows.
+		beds = cint(cap.max_extra_beds)
+		stated = (self.get("over_capacity_reason") or "").strip()
+		allowance = beds if stated else 0
+		if beds and adults > cint(cap.adults_capacity) and not stated:
+			frappe.throw(_(
+				"{0} sleeps {1}. Up to {2} more can be booked by arrangement "
+				"- give a reason on the booking to record who agreed it."
+			).format(cap.room_type_name or self.room_type,
+			         cint(cap.adults_capacity), beds),
+				title=_("Over room capacity"))
+
 		over = []
-		if cint(cap.adults_capacity) and adults > cint(cap.adults_capacity):
+		if cint(cap.adults_capacity) and adults > cint(cap.adults_capacity) + allowance:
 			over.append(_("{0} adults (max {1})").format(
-				adults, cint(cap.adults_capacity)))
-		if cint(cap.children_capacity) and children > cint(cap.children_capacity):
+				adults, cint(cap.adults_capacity) + allowance))
+		if cint(cap.children_capacity) and children > cint(cap.children_capacity) + allowance:
 			over.append(_("{0} children (max {1})").format(
-				children, cint(cap.children_capacity)))
+				children, cint(cap.children_capacity) + allowance))
 		if over:
 			frappe.throw(_(
 				"{0} can't sleep {1}. Reduce the party, pick a bigger room "
@@ -354,6 +392,7 @@ class Reservation(Document):
 					self.room, conflict[0][0]
 				),
 				title=_("Double booking blocked"),
+				exc=InventoryRefused,
 			)
 
 	def validate_villa_lockout(self):
@@ -393,6 +432,7 @@ class Reservation(Document):
 						self.property, overlap[0][0]
 					),
 					title=_("Double Booking Blocked"),
+					exc=InventoryRefused,
 				)
 		else:
 			# An individual room is being booked. Check if the Entire Property (Villa) is booked.
@@ -421,6 +461,7 @@ class Reservation(Document):
 						self.property, overlap[0][0]
 					),
 					title=_("Double Booking Blocked"),
+					exc=InventoryRefused,
 				)
 
 	def on_update(self):

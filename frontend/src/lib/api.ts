@@ -287,6 +287,7 @@ export interface BookingOptions {
     base_price: number
     adults_capacity: number
     children_capacity: number
+    max_extra_beds?: number
   }[]
   meal_plans: {
     name: string
@@ -382,6 +383,7 @@ export interface QuoteParams {
   children: number
   meal_plan?: string
   voucher_code?: string
+  over_capacity_charge?: number
 }
 
 export const getQuote = (params: QuoteParams) =>
@@ -414,6 +416,9 @@ export const createBooking = (
     booker_relation?: string
     contact_preference?: string
     waitlist?: number
+    over_capacity_reason?: string
+    over_capacity_guests?: number
+    over_capacity_charge?: number
     addons?: { experience: string; qty: number }[]
     guest_category?: string
     stay_details?: Record<string, unknown>
