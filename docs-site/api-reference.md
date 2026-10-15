@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **307 endpoints**, generated from the source
+the UI and the AI use. **308 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -615,6 +615,19 @@ Replace a company's billing rules. rules = [{charge_type, pay_by}].
 | Param | Required | Default |
 | --- | --- | --- |
 | `company` | yes |  |
+
+### `kamra.api.company_billing_default`
+
+**GET/POST** · roles: `Finance`, `Front Desk`, `Kamra Agent`
+
+What this company pays when it has no billing rules: the property's
+`default_company_billing` for a credit company, nothing otherwise.
+`charge_types` is None when every charge type (except liquor) is covered.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `company` | yes |  |
+| `property` | no | `None` |
 
 ### `kamra.api.update_occupants`
 
