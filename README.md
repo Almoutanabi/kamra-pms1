@@ -54,13 +54,14 @@
 
 ## What's new
 
-Latest release: **[v2.6.12](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
+Latest release: **[v2.6.13](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
 (`develop` ships nightly).
 
-- **Next (on `develop`)** — night audit can't run ahead of the calendar,
-  no-show balances read from the folio, whole-villa check-in, `/hk` app keeps
-  staff signed in, balanced city-ledger transfers, and the Kamra Agent books by
-  room and meal-plan name without double-booking on retries
+- **2.6.13** — settings hub, tiered cancellation and peak-date rules, POS
+  auto-KOT; night audit can't run ahead of the calendar, no-show balances read
+  from the folio, whole-villa check-in, `/hk` app keeps staff signed in,
+  balanced city-ledger transfers, and the Kamra Agent books by room and
+  meal-plan name without double-booking on retries
 - **2.6.12** — per-head pricing for small parties in whole-place lets,
   weekend / weekday rate guardrails, the bill screen's Void button asks for a
   reason, and admins see a banner when a newer Kamra release is out
@@ -106,7 +107,7 @@ Kamra is the alternative we wanted:
 - **Deterministic money.** Rates, tax slabs, availability, and no-overbooking guards come from code — never from a language model.
 - **Full audit trail.** Every human or AI action: who, what, why.
 - **Privacy by design.** DPDP / GDPR-friendly defaults: ID verify-and-discard, erasure and access export, retention for guests and messages, children's data kept to name and age, and guest contact details kept out of AI prompts.
-- **Country packs.** Tax, invoices, ID types, payment gateways and statutory reports per country — India's Razorpay, Cashfree, GSTR-1 and Kamra Verify never reach a Saudi hotel, which gets ZATCA instead.
+- **Country packs.** Tax, invoices, ID types, payment gateways and statutory reports per country — India's Razorpay, Cashfree and GSTR-1 never reach a Saudi hotel, which gets ZATCA instead.
 - **Built on Frappe.** RBAC, multi-tenancy, Desk escape hatch, ERPNext-adjacent ecosystem (Company and stock work alongside Kamra).
 
 ---
@@ -163,7 +164,7 @@ Live example: [demo.kamrapms.com/book](https://demo.kamrapms.com/book).
 | **Billing** | Folios, corporate routing, group masters, charge splits, deposits, night audit, tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
 | **F&B** | POS table map, full-screen till and kitchen pass, split bills, thermal KOT, kitchen display, inventory & recipes, QR ordering, room posting |
 | **Operations** | Tickets + SLA, housekeeping `/hk`, guest laundry end-to-end, lost & found, banquet / events (send quote, guest response, dept checklists) |
-| **Guests** | Online pre-check-in, GRC + occupant register, **editable nationality**, ID retention modes, Kamra Verify (India: GSTIN and guest ID checks) |
+| **Guests** | Online pre-check-in, GRC + occupant register, **editable nationality**, ID retention modes, Kamra Verify (India: GSTIN and guest ID checks — coming soon) |
 | **Privacy** | Erasure, access export, guest and message retention, children's data minimised, AI-prompt redaction, privacy notice in English, Arabic and seven Indian languages |
 | **Messaging** | WhatsApp (Meta Cloud API) — confirmations, check-in links, inbox, desk tickets |
 | **Localization** | Six country packs plus a flat-tax fallback (see [Countries](#countries)); English / العربية UI |
@@ -180,7 +181,7 @@ integrations are never offered in another.
 
 | Country | Tax on rooms and F&B | Invoices and filings | Front desk and integrations |
 |---|---|---|---|
-| 🇮🇳 India | GST slab by nightly tariff (5% / 18% around ₹7,500) or fixed; F&B 5% | CGST + SGST or IGST from the GSTIN, SAC per line, amount in lakh / crore, GSTR-1 export | Aadhaar, PAN, Voter ID; UPI; Razorpay and Cashfree payment links; Kamra Verify; Form C for foreign guests; notice in 7 Indian languages |
+| 🇮🇳 India | GST slab by nightly tariff (5% / 18% around ₹7,500) or fixed; F&B 5% | CGST + SGST or IGST from the GSTIN, SAC per line, amount in lakh / crore, GSTR-1 export | Aadhaar, PAN, Voter ID; UPI; Razorpay and Cashfree payment links; Kamra Verify (coming soon); Form C for foreign guests; notice in 7 Indian languages |
 | 🇸🇦 Saudi Arabia | VAT 15%; municipality fee as a room levy | ZATCA Phase 1: UUID, hash chain, UBL 2.1 XML and QR on every invoice and POS bill; Phase 2 groundwork | National ID, Iqama, GCC ID; Shomoos register (children's IDs kept too); Arabic UI |
 | 🇦🇪 UAE | VAT 5%; municipality fee as a room levy | TRN on "Tax Invoice" | Emirates ID, GCC ID |
 | 🇲🇾 Malaysia | SST 8% on rooms, 6% on F&B | Tourism Tax note for foreign guests | MyKad |
