@@ -66,6 +66,35 @@ upgrade-breaking changes (removed doctypes / API contracts).
 * **performance:** the first page load downloads about a third less
   JavaScript; React and the router are cached across releases ([#208](https://github.com/Kamra-PMS/kamra-pms/pull/208))
 
+## [2.6.14](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.13...v2.6.14) (2026-10-15)
+
+
+### Features
+
+* **front-desk:** per-property no-show policy and rate lock at booking ([0cfe237](https://github.com/Kamra-PMS/kamra-pms/commit/0cfe237de004b49d4821361372cdda2768177af6))
+* **front-desk:** per-property no-show policy and rate lock at booking ([ae09fde](https://github.com/Kamra-PMS/kamra-pms/commit/ae09fde58bb41f691dacc0806270759a3ba32c21))
+* request-to-book inbox, symmetric villa/room availability, group-block holds with auto-release ([fae5573](https://github.com/Kamra-PMS/kamra-pms/commit/fae55730eb15cafbfd076f4b95fc83b58cae66c8))
+* request-to-book inbox, symmetric villa/room availability, group-block holds with auto-release ([09aa3cc](https://github.com/Kamra-PMS/kamra-pms/commit/09aa3cc8c0be50ab67ff6198c210e00cbc243895))
+* security deposits (collect/waive/withhold/refund), day-use from the booking screen, printable QR codes ([379aa35](https://github.com/Kamra-PMS/kamra-pms/commit/379aa35d119ffbea1f9cb4a1f47846fed22f9428))
+* security deposits (collect/waive/withhold/refund), day-use from the booking screen, printable QR codes ([35c2ce4](https://github.com/Kamra-PMS/kamra-pms/commit/35c2ce4b5a28f37c46d945804241b519d3fc7ff7))
+
+
+### Bug Fixes
+
+* **demo:** seed defaults, wizard room floors, rental presets, past-dated seed bookings ([7c5ac57](https://github.com/Kamra-PMS/kamra-pms/commit/7c5ac57cf1da4e2dfdc3d0c1451b6432f21d3a7e))
+* **demo:** seed defaults, wizard room floors, rental presets, past-dated seed bookings ([2d1f684](https://github.com/Kamra-PMS/kamra-pms/commit/2d1f6844e1d9f1210744ee491e45778ff9391e56))
+* **ledger:** post every folio charge to the ledger, clear AR on company payment, city-ledger payment screen ([584ef67](https://github.com/Kamra-PMS/kamra-pms/commit/584ef67e60b09bd4ceb190b259d406da33f59c2b))
+* **ledger:** post every folio charge to the ledger, clear AR on company payment, city-ledger payment screen ([e132ef6](https://github.com/Kamra-PMS/kamra-pms/commit/e132ef64ef50f90237e8b5e9ca7f1d7b5a2acdd7))
+* night-audit rate plans, no-show dating and hold expiry, with unit tests for every audit ([c5420c8](https://github.com/Kamra-PMS/kamra-pms/commit/c5420c81e53d6847f1995c46bdb342a774f4eafc))
+* **ui:** advance-due on booking page, blacklist warning and control, panel refresh, GRC link, meal plan name, AI provider, app list ([853eb38](https://github.com/Kamra-PMS/kamra-pms/commit/853eb38388f7978adbbf377f1600ae0b3d256b4d))
+* **ui:** advance-due on booking page, blacklist warning and control, panel refresh, GRC link, meal plan name, AI provider, app list ([d6de5ac](https://github.com/Kamra-PMS/kamra-pms/commit/d6de5ac092dc966baa9ae0e1752ba80d78f8d1a3))
+
+
+### Performance Improvements
+
+* **frontend:** tree-shake the entry bundle and split vendor code ([9b04c23](https://github.com/Kamra-PMS/kamra-pms/commit/9b04c238a8cee6f9ebff5ffaa8b7a54ccf4cbb31))
+* **frontend:** tree-shake the entry bundle and split vendor code ([b083002](https://github.com/Kamra-PMS/kamra-pms/commit/b0830025fc6afa817f1ea81b739655637553163a))
+
 ## [2.6.13](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.12...v2.6.13) (2026-10-15)
 
 
