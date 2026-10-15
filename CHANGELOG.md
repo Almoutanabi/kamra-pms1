@@ -26,6 +26,41 @@ upgrade-breaking changes (removed doctypes / API contracts).
   quotation, desk-led guest response, department checklists + notify on
   Confirm (Sales/Finance/HK/F&B), and quote no-response chase reminders
 
+### Bug Fixes
+
+* **night audit:** the audit only closes the property's current business
+  date and refuses a date ahead of the calendar ([#184](https://github.com/Kamra-PMS/kamra-pms/pull/184), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197)).
+  Repeated clicks had pushed a property's business date days into the future,
+  posting a no-show charge for a day that hadn't happened; the 03:00 scheduled
+  run no longer closes a day that has only just started
+* **front desk:** a no-show or cancelled booking shows what its folio says is
+  owed (the policy fee), not the original booking total; Today and the
+  reservation panel now agree on the amount due, and a refund owed on a
+  cancelled advance is shown ([#184](https://github.com/Kamra-PMS/kamra-pms/pull/184), [#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
+* **housekeeping:** staff stay signed in on the `/hk` phone app after posting
+  a charge or delivering laundry ([#189](https://github.com/Kamra-PMS/kamra-pms/pull/189));
+  guest links (ID upload, laundry, `/book`, QR order) no longer disturb a
+  signed-in staff session
+* **ledger:** transferring a balance to the city ledger credits the guest
+  ledger as well as debiting AR, so the trial balance stays even ([#190](https://github.com/Kamra-PMS/kamra-pms/pull/190));
+  a patch backfills earlier transfers
+* **rentals:** a whole-villa (entire place) booking checks in as one unit and
+  marks the villa's rooms occupied, then dirty with clean tasks at checkout ([#191](https://github.com/Kamra-PMS/kamra-pms/pull/191))
+* **kamra agent:** booking tools accept room type, meal plan and rate plan
+  names or codes ("Deluxe", "Breakfast") and refuse unknown ones with the valid
+  options; retried agent bookings return the first booking instead of booking
+  twice; Chat and MCP actions reach the AI activity log ([#193](https://github.com/Kamra-PMS/kamra-pms/pull/193))
+* **mcp:** the 401 sent to an unauthenticated MCP client now points at the
+  protected-resource metadata path the server actually serves ([#198](https://github.com/Kamra-PMS/kamra-pms/pull/198))
+* **kamra agent:** a second room picked up from a group block is no longer
+  treated as a duplicate; a retry with a different meal plan or party size
+  books normally; a reused idempotency key for a different booking is refused;
+  copilot bookings are recorded as AI Agent with the Chat channel ([#196](https://github.com/Kamra-PMS/kamra-pms/pull/196))
+* **rentals:** a villa type with its own units checks in to one unit; Out of
+  Order rooms keep their status at check-out ([#197](https://github.com/Kamra-PMS/kamra-pms/pull/197))
+* **demo:** a demo reset keeps the agent service user, so website bookings
+  keep working afterwards ([#188](https://github.com/Kamra-PMS/kamra-pms/pull/188))
+
 ## [2.6.12](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.11...v2.6.12) (2026-10-12)
 
 

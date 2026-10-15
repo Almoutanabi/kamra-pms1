@@ -12,6 +12,7 @@ from frappe import _
 from frappe.utils import add_days, get_datetime, getdate, now_datetime, nowdate
 
 from kamra.authz import act_as, require_it_admin, require_roles
+from kamra.install import AGENT_EMAIL
 
 # The apps a property actually runs. The launcher and the sidebar read
 # this so a serviced-apartment operator never sees an empty restaurant.
@@ -1202,7 +1203,7 @@ def hk_post_consumable(room: str, charge_type: str, description: str,
 	# post through the governed agent user (same pattern as public bookings):
 	# the housekeeper is authorized above and scoped to two charge types, and
 	# GST is still resolved server-side. Attribution is stamped below.
-	with act_as("agent@kamra.local"):
+	with act_as(AGENT_EMAIL):
 		out = post_stay_charge(res.name, charge_type, description, float(amount))
 	from kamra.savings import log_action
 	log_action("hk_charge", "Folio", out.get("folio"), res.property,
@@ -1236,7 +1237,11 @@ def create_ticket(property: str, subject: str, category: str,
 		log_action("create_ticket", "Service Ticket", doc.name, property,
 		           minutes_saved=4,
 		           rationale=f"Captured request without staff: {subject}",
-		           agent_name="Concierge", channel=source)
+		           agent_name="Concierge",
+		           # the ticket source names who raised it; the log channel
+		           # names how it reached Kamra (a QR menu or an AI agent is API)
+		           channel=({"AI Agent": agent_channel() or "API", "QR": "API"}
+		                    .get(source, source)))
 	return {"ticket": doc.name, "due_by": str(doc.due_by)}
 
 
@@ -2295,8 +2300,77 @@ def my_properties():
 	)
 
 
+def _stay_balances(names: list) -> dict:
+	"""What each stay costs, has paid and still owes - one rule set shared
+	by the Today board and the reservation drawer so they never disagree.
+
+	Only the Guest folio counts (summed, so a part-settled stay with a fresh
+	folio still adds up). The group master is the company's bill and Extra /
+	Company folios are routed elsewhere, so neither is this guest's balance.
+
+	- Checked In / Checked Out / No Show / Cancelled with a Guest folio: the
+	  folio is the bill.
+	- No Show / Cancelled with no folio: nothing is owed; any advance taken
+	  is a refund due.
+	- Confirmed with an early deposit folio: the booking total is the bill,
+	  the folio holds what was paid.
+	- Confirmed with no folio: the booking-time advance is all we know."""
+	names = list({n for n in names if n})
+	if not names:
+		return {}
+	resv = {r.name: r for r in frappe.get_all(
+		"Reservation", filters={"name": ("in", names)},
+		fields=["name", "status", "amount_after_tax", "advance_paid"])}
+	folios = {}
+	for row in frappe.db.sql(
+		"""
+		SELECT reservation,
+		       COALESCE(SUM(grand_total), 0) AS total,
+		       COALESCE(SUM(payments_total), 0) AS paid,
+		       COALESCE(SUM(balance), 0) AS due
+		FROM `tabFolio`
+		WHERE reservation IN %(names)s AND folio_type = 'Guest'
+		GROUP BY reservation
+		""",
+		{"names": names}, as_dict=True,
+	):
+		folios[row.reservation] = row
+	out = {}
+	for name, res in resv.items():
+		folio = folios.get(name)
+		total_booked = float(res.amount_after_tax or 0)
+		adv = float(res.advance_paid or 0)
+		ended = res.status in ("No Show", "Cancelled")
+		if folio and (ended or res.status in ("Checked In", "Checked Out")):
+			m = {"total": float(folio.total), "paid": float(folio.paid),
+			     "due": float(folio.due), "has_folio": True, "source": "folio"}
+		elif ended:
+			m = {"total": 0.0, "paid": adv, "due": 0.0, "has_folio": False,
+			     "source": "none"}
+			if adv > 0:
+				m["refund_due"] = adv
+		elif folio:
+			paid = float(folio.paid)
+			m = {"total": total_booked, "paid": paid,
+			     "due": max(0.0, round(total_booked - paid, 2)),
+			     "has_folio": True, "source": "booking"}
+		else:
+			m = {"total": total_booked, "paid": adv,
+			     "due": max(0.0, round(total_booked - adv, 2)),
+			     "has_folio": False, "source": "booking"}
+		out[name] = m
+	return out
+
+
+def _stay_balance(reservation: str) -> dict:
+	"""_stay_balances for one booking."""
+	return _stay_balances([reservation]).get(reservation) or {
+		"total": 0.0, "paid": 0.0, "due": 0.0, "has_folio": False,
+		"source": "none"}
+
+
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Kamra Agent", "Finance", "Revenue Manager")
 def front_desk_snapshot(property: str | None = None, date: str | None = None):
 	"""Everything the front desk needs for one day, in one call."""
 	date = date or nowdate()
@@ -2331,39 +2405,13 @@ def front_desk_snapshot(property: str | None = None, date: str | None = None):
 		order_by="room asc",
 	)
 
-	# payment state per stay, straight off the folios (the group master is
-	# the company's bill, not this guest's - excluded from the chip)
+	# payment state per stay - the same rules as the reservation drawer
 	all_rows = arrivals + departures + in_house
-	names = list({r.name for r in all_rows})
-	paid_map = {}
-	if names:
-		for row in frappe.db.sql(
-			"""
-			SELECT reservation,
-			       COALESCE(SUM(payments_total), 0) AS paid,
-			       COALESCE(SUM(balance), 0) AS due
-			FROM `tabFolio`
-			WHERE reservation IN %(names)s AND folio_type != 'Group'
-			GROUP BY reservation
-			""",
-			{"names": names}, as_dict=True,
-		):
-			paid_map[row.reservation] = row
-	amounts = {r.name: r for r in frappe.get_all(
-		"Reservation", filters={"name": ("in", names or [""])},
-		fields=["name", "amount_after_tax", "advance_paid"])}
+	money = _stay_balances([r.name for r in all_rows])
 	for r in all_rows:
-		hit = paid_map.get(r.name)
-		amt = amounts.get(r.name)
-		if hit:
-			r["paid_total"] = float(hit.paid)
-			r["balance_due"] = float(hit.due)
-		else:
-			# no folio yet - the booking-time advance is all we know
-			adv = float(amt.advance_paid or 0) if amt else 0
-			total = float(amt.amount_after_tax or 0) if amt else 0
-			r["paid_total"] = adv
-			r["balance_due"] = max(0.0, total - adv)
+		m = money.get(r.name) or {}
+		r["paid_total"] = m.get("paid", 0.0)
+		r["balance_due"] = m.get("due", 0.0)
 	rooms = frappe.get_all(
 		"Room",
 		filters=room_filters,
@@ -2449,7 +2497,7 @@ def find_invoices(property: str, query: str | None = None, limit: int = 8):
 def reservation_detail(reservation: str):
 	"""Everything about one booking in a single call - stay, money, guest,
 	booker and the actions currently available. Powers the reservation drawer."""
-	from kamra.kamra.doctype.reservation.reservation import is_entire_place
+	from kamra.kamra.doctype.reservation.reservation import uses_member_rooms
 	res = frappe.get_doc("Reservation", reservation)
 
 	# guest identity + stay history
@@ -2469,45 +2517,12 @@ def reservation_detail(reservation: str):
 				"check_out_date", order_by="check_out_date desc")
 			guest = g
 
-	# money - the guest folio for this stay (the group master is the company's
-	# bill, not this guest's, so it is never the source here)
+	money = _stay_balance(res.name)
+	# the drawer's "Open folio" link - the newest guest folio (a
+	# part-settled stay has several; the fresh one is the open one)
 	folio = frappe.db.get_value(
 		"Folio", {"reservation": reservation, "folio_type": "Guest"},
-		["name", "status", "grand_total", "payments_total", "balance"],
-		as_dict=True,
-	)
-	# once the guest has arrived, or the booking has ended without a stay
-	# (no-show / cancelled), the folio IS the bill: a no-show owes only the
-	# policy fee posted there, never the original booking total
-	settled_on_folio = res.status in (
-		"Checked In", "Checked Out", "No Show", "Cancelled")
-	if folio and settled_on_folio:
-		money = {
-			"total": float(folio.grand_total or 0),
-			"paid": float(folio.payments_total or 0),
-			"due": float(folio.balance or 0),
-			"has_folio": True,
-			"source": "folio",
-		}
-	elif settled_on_folio:
-		# ended without a fee or a payment - nothing is owed
-		money = {"total": 0.0, "paid": float(res.advance_paid or 0),
-		         "due": 0.0, "has_folio": False, "source": "folio"}
-	elif folio:
-		# opened early for a deposit: room nights post from check-in, so
-		# the booking total is the bill; the folio holds what was paid
-		total = float(res.amount_after_tax or 0)
-		paid = float(folio.payments_total or 0)
-		money = {"total": total, "paid": paid,
-		         "due": max(0.0, round(total - paid, 2)), "has_folio": True,
-		         "source": "booking"}
-	else:
-		# no folio yet (still Confirmed) - the booking-time advance is all we know
-		adv = float(res.advance_paid or 0)
-		total = float(res.amount_after_tax or 0)
-		money = {"total": total, "paid": adv,
-		         "due": max(0.0, total - adv), "has_folio": False,
-		         "source": "booking"}
+		["name"], as_dict=True, order_by="creation desc")
 
 	booker = None
 	if res.booked_by_name:
@@ -2571,7 +2586,7 @@ def reservation_detail(reservation: str):
 		"cancellation": cancellation,
 		"actions": {
 			"can_check_in": res.status == "Confirmed" and (
-				bool(res.room) or is_entire_place(res.room_type)),
+				bool(res.room) or uses_member_rooms(res.property, res.room_type)),
 			"can_check_out": res.status == "Checked In",
 			"can_cancel": res.status in ("Confirmed", "Checked In"),
 			"can_amend": res.status in ("Confirmed", "Checked In"),
@@ -2682,15 +2697,16 @@ def checkin_context(reservation: str):
 			"Room", res.room,
 			["name", "room_number", "housekeeping_status"], as_dict=True)
 
-	# a whole-villa stay has no single room to pick - it takes every room
-	# of the villa at check-in, so the desk checks it in as one unit
+	# a whole villa with no Room of its own takes the property's member
+	# rooms at check-in, so the desk checks it in as one unit. A villa type
+	# with its own rooms gets the normal picker (one unit per stay).
 	from kamra.kamra.doctype.reservation.reservation import (
-		entire_place_rooms, is_entire_place)
+		entire_place_rooms, uses_member_rooms)
 	entire_place = None
-	if not res.room and is_entire_place(res.room_type):
-		entire_place = {"rooms": sorted(
-			frappe.db.get_value("Room", r, "room_number") or r
-			for r in entire_place_rooms(res.property, res.room_type))}
+	if not res.room and uses_member_rooms(res.property, res.room_type):
+		entire_place = {"rooms": [
+			r.room_number or r.name
+			for r in entire_place_rooms(res.property, res.room_type)]}
 
 	suggestion = None
 	rooms = []
@@ -2751,9 +2767,12 @@ def check_in(reservation: str, room: str | None = None):
 	doc.status = "Checked In"
 	doc.save()
 	from kamra.savings import log_action
+	if doc.room:
+		where = frappe.db.get_value("Room", doc.room, "room_number") or doc.room
+	else:
+		where = "the whole villa"
 	log_action("check_in", "Reservation", doc.name, doc.property,
-	           rationale=f"{doc.guest_name} into "
-	                     f"{(doc.room or '').split('-')[-1] or 'unassigned'}")
+	           rationale=f"{doc.guest_name} into {where}")
 	return {"ok": True, "reservation": doc.name, "room": doc.room}
 
 
@@ -3942,7 +3961,7 @@ def booking_options(property: str):
 	return {
 		"room_types": frappe.get_all(
 			"Room Type", filters={"property": property, "disabled": 0},
-			fields=["name", "room_type_name", "base_price",
+			fields=["name", "room_type_code", "room_type_name", "base_price",
 			        "adults_capacity", "children_capacity", "room_category",
 			        "max_extra_beds"],
 			order_by="base_price asc",
@@ -4037,12 +4056,23 @@ def _find_or_create_guest(guest_name: str, phone: str | None,
 
 
 # How long an identical agent booking counts as a retry of the first one.
-AGENT_DUPLICATE_WINDOW_MINUTES = 10
+from kamra.reservation_state import AGENT_DUPLICATE_WINDOW_MINUTES  # noqa: E402
 
 
-def _booking_replay(reservation: str) -> dict:
-	"""create_booking's response for a booking that already exists."""
-	doc = frappe.get_doc("Reservation", reservation)
+def agent_channel() -> str | None:
+	"""The channel of the agent tool call running now ("MCP" from the MCP
+	registry, "Chat" from the in-app copilot), or None for a human caller.
+
+	frappe.flags.kamra_agent_call holds the channel name; a bare True (an
+	older caller) still counts as an agent call, logged as "API"."""
+	flag = getattr(frappe.flags, "kamra_agent_call", None)
+	if not flag:
+		return None
+	return flag if isinstance(flag, str) else "API"
+
+
+def _booking_result(doc) -> dict:
+	"""create_booking's response for a reservation document."""
 	return {
 		"reservation": doc.name,
 		"room": doc.room,
@@ -4050,40 +4080,101 @@ def _booking_replay(reservation: str) -> dict:
 		"amount_after_tax": doc.amount_after_tax,
 		"discount": doc.discount_amount,
 		"status": doc.status,
-		"idempotent_replay": 1,
 	}
+
+
+def _booking_replay(reservation: str) -> dict:
+	"""create_booking's response for a booking that already exists."""
+	out = _booking_result(frappe.get_doc("Reservation", reservation))
+	out["idempotent_replay"] = 1
+	return out
+
+
+def _collapse(value) -> str:
+	"""Trimmed, inner whitespace collapsed - how two spellings of one name
+	are compared."""
+	return " ".join(str(value or "").split())
+
+
+def _assert_key_matches(reservation: str, key: str, room_type: str,
+                        check_in_date: str, check_out_date: str, *,
+                        guest: str | None, guest_name: str | None,
+                        phone: str | None) -> None:
+	"""An idempotency_key replays only the booking it was first used for.
+	The same key on a different stay or guest is a caller bug: refuse it
+	rather than hand back someone else's reservation as a success."""
+	r = frappe.db.get_value(
+		"Reservation", reservation,
+		["room_type", "check_in_date", "check_out_date", "guest", "guest_name"],
+		as_dict=True)
+	same_stay = (r.room_type == room_type
+	             and getdate(r.check_in_date) == getdate(check_in_date)
+	             and getdate(r.check_out_date) == getdate(check_out_date))
+	if guest:
+		same_guest = r.guest == guest
+	else:
+		# the stored name comes from the guest profile; a phone match covers
+		# a profile found by phone under a different spelling
+		same_guest = (
+			_collapse(r.guest_name).casefold() == _collapse(guest_name).casefold()
+			or bool(phone and str(phone).strip() and _collapse(
+				frappe.db.get_value("Guest", r.guest, "phone")) == _collapse(phone)))
+	if not (same_stay and same_guest):
+		frappe.throw(
+			_("This idempotency_key ({0}) was already used for a different "
+			  "booking ({1}: {2}, {3} to {4}, {5}). Use a new key for a new "
+			  "booking.").format(key, reservation, r.room_type,
+			                     r.check_in_date, r.check_out_date,
+			                     r.guest_name or r.guest),
+			title=_("Idempotency key already used"))
 
 
 def _recent_agent_duplicate(property: str, room_type: str, check_in_date: str,
                             check_out_date: str, *, guest: str | None,
                             guest_name: str | None, phone: str | None,
+                            meal_plan: str | None, rate_plan: str | None,
+                            adults: int, children: int,
                             waitlist: int = 0) -> str | None:
-	"""A live reservation identical to this one (same guest, property, room
-	type and dates), created within the duplicate window - or None.
+	"""A reservation identical to this one (same guest, property, room type,
+	dates, meal plan, rate plan and party size) created within the duplicate
+	window - or None. Only live stays count (a waitlist call matches only
+	Waitlist stays): an Inquiry or a cancelled booking is not a retry.
 
 	The guest is matched by profile when given, else by phone, else by the
-	exact name (case-insensitive): without a phone every call creates a new
-	guest profile, so the profile alone can't catch a retry."""
-	from frappe.utils import add_to_date, getdate, now_datetime
+	name (trimmed, whitespace collapsed; the column collation ignores case):
+	without a phone every call creates a new guest profile, so the profile
+	alone can't catch a retry."""
+	from frappe.utils import add_to_date
+
+	from kamra.reservation_state import LIVE_STATUSES
 
 	since = add_to_date(now_datetime(), minutes=-AGENT_DUPLICATE_WINDOW_MINUTES)
 	conds = ["r.property = %(property)s", "r.room_type = %(room_type)s",
 	         "r.check_in_date = %(ci)s", "r.check_out_date = %(co)s",
 	         "r.creation >= %(since)s",
-	         "r.status NOT IN ('Cancelled', 'No Show', 'Checked Out')"]
-	conds.append("r.status = 'Waitlist'" if waitlist else "r.status != 'Waitlist'")
+	         "IFNULL(r.meal_plan, '') = %(meal_plan)s",
+	         "IFNULL(r.rate_plan, '') = %(rate_plan)s",
+	         "r.adults = %(adults)s", "r.children = %(children)s"]
 	values = {"property": property, "room_type": room_type,
 	          "ci": getdate(check_in_date), "co": getdate(check_out_date),
-	          "since": since}
+	          "since": since, "meal_plan": meal_plan or "",
+	          "rate_plan": rate_plan or "", "adults": int(adults or 0),
+	          "children": int(children or 0)}
+	if waitlist:
+		conds.append("r.status = 'Waitlist'")
+	else:
+		conds.append("r.status IN %(live)s")
+		values["live"] = LIVE_STATUSES
 	if guest:
 		conds.append("r.guest = %(guest)s")
 		values["guest"] = guest
 	elif phone and str(phone).strip():
 		conds.append("g.phone = %(phone)s")
 		values["phone"] = str(phone).strip()
-	elif guest_name and guest_name.strip():
-		conds.append("LOWER(TRIM(r.guest_name)) = %(gname)s")
-		values["gname"] = " ".join(guest_name.split()).lower()
+	elif _collapse(guest_name):
+		conds.append(
+			"REGEXP_REPLACE(TRIM(r.guest_name), '[[:space:]]+', ' ') = %(gname)s")
+		values["gname"] = _collapse(guest_name)
 	else:
 		return None
 	rows = frappe.db.sql(
@@ -4139,12 +4230,6 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 	from kamra.reservation_state import find_by_idempotency, lock_sius_for_booking
 	assert_property_access(property)
 
-	key = (idempotency_key or "").strip() or None
-	if key:
-		existing = find_by_idempotency(property, key)
-		if existing:
-			return _booking_replay(existing)
-
 	# names ("Deluxe", "Breakfast") or codes resolve to this property's IDs;
 	# unknown / ambiguous values are refused with the valid options
 	from kamra.booking_refs import (resolve_meal_plan, resolve_rate_plan,
@@ -4153,15 +4238,33 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 	meal_plan = resolve_meal_plan(property, meal_plan)
 	rate_plan = resolve_rate_plan(property, rate_plan)
 
+	# "MCP" / "Chat" while an agent tool call runs; its bookings are AI Agent
+	# bookings whichever agent surface made them
+	channel = agent_channel()
+	if channel and source == "Manual":
+		source = "AI Agent"
+
+	key = (idempotency_key or "").strip() or None
+	if key:
+		existing = find_by_idempotency(property, key)
+		if existing:
+			_assert_key_matches(existing, key, room_type, check_in_date,
+			                    check_out_date, guest=guest,
+			                    guest_name=guest_name, phone=phone)
+			return _booking_replay(existing)
+
 	# An agent that retries a tool call (timeout, lost response, a model
 	# that repeats itself) must not book the guest twice. Without a key,
 	# an identical agent booking made moments ago is returned instead of a
-	# second one. Desk bookings (several identical rooms for one party)
-	# are never subject to this guard.
-	if not key and (frappe.flags.kamra_agent_call or source == "AI Agent"):
+	# second one. Desk bookings (several identical rooms for one party) are
+	# never subject to this guard, nor are group pickups: several identical
+	# rooms for one party is what a block is, and the block bounds it.
+	if not key and not group_booking and (channel or source == "AI Agent"):
 		recent = _recent_agent_duplicate(
 			property, room_type, check_in_date, check_out_date,
 			guest=guest, guest_name=guest_name, phone=phone,
+			meal_plan=meal_plan, rate_plan=rate_plan,
+			adults=int(adults or 0), children=int(children or 0),
 			waitlist=int(waitlist or 0))
 		if recent:
 			from kamra.savings import log_action
@@ -4172,7 +4275,7 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 				           f"{check_in_date}→{check_out_date}) was already made "
 				           f"in the last {AGENT_DUPLICATE_WINDOW_MINUTES} minutes; "
 				           f"returned {recent} instead of booking again"),
-				channel="API")
+				channel=channel or "API")
 			out = _booking_replay(recent)
 			out["duplicate_of_recent"] = 1
 			out["note"] = (
@@ -4326,16 +4429,9 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 		property=property,
 		minutes_saved=8 if source == "AI Agent" else 0,
 		rationale=f"Booked {room_type} {check_in_date}→{check_out_date} for {guest_name}",
-		channel="API" if source == "AI Agent" else "Desk",
+		channel=channel or ("API" if source == "AI Agent" else "Desk"),
 	)
-	return {
-		"reservation": doc.name,
-		"room": doc.room,
-		"guest": guest,
-		"amount_after_tax": doc.amount_after_tax,
-		"discount": doc.discount_amount,
-		"status": doc.status,
-	}
+	return _booking_result(doc)
 
 
 @frappe.whitelist()
@@ -4782,9 +4878,11 @@ def save_group_blocks(group_booking: str, blocks, cutoff_date: str | None = None
 @require_roles("Front Desk", "Kamra Agent")
 def pickup_group_room(group_booking: str, room_type: str, guest_name: str,
                       phone: str | None = None, adults: int = 2,
-                      children: int = 0):
+                      children: int = 0, idempotency_key: str | None = None):
 	"""Name a guest into the block: creates a reservation on the group's
-	dates against its held inventory."""
+	dates against its held inventory. Every call books a room (a block is
+	several identical rooms for one party); pass idempotency_key to make a
+	retry safe."""
 	gb = frappe.get_doc("Group Booking", group_booking)
 	out = create_booking(
 		property=gb.property, room_type=room_type,
@@ -4793,11 +4891,14 @@ def pickup_group_room(group_booking: str, room_type: str, guest_name: str,
 		guest_name=guest_name, phone=phone,
 		adults=int(adults), children=int(children),
 		booking_type="Group", company=gb.company,
-		group_booking=gb.name, source="Manual")
-	from kamra.savings import log_action
-	log_action("group_pickup", "Group Booking", gb.name, gb.property,
-	           rationale=f"{guest_name} picked up a {room_type.split('-')[-1]}"
-	                     f" from block {gb.group_name}")
+		group_booking=gb.name, source="Manual",
+		idempotency_key=idempotency_key)
+	if not out.get("idempotent_replay"):
+		from kamra.savings import log_action
+		log_action("group_pickup", "Group Booking", gb.name, gb.property,
+		           rationale=f"{guest_name} picked up a {room_type.split('-')[-1]}"
+		                     f" from block {gb.group_name}",
+		           channel=agent_channel() or "Desk")
 	return out
 
 
@@ -4829,9 +4930,11 @@ def create_group_block(property: str, group_name: str, check_in_date: str,
 		"status": "Open",
 		"notes": notes,
 	})
+	from kamra.booking_refs import resolve_room_type
 	for b in blocks or []:
 		gb.append("blocks", {
-			"room_type": b["room_type"],
+			# agents name room types the way staff do ("Deluxe", "DLX")
+			"room_type": resolve_room_type(property, b.get("room_type")),
 			"rooms_blocked": int(b.get("rooms_blocked") or 0),
 			"block_rate": float(b.get("block_rate") or 0),
 		})

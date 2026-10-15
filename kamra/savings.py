@@ -76,8 +76,8 @@ def log_action(
 	# with only the fields that can't fail validation.
 	_report_failure(action_type, row, first)
 	fallback = {k: row[k] for k in (
-		"doctype", "actor", "action_type", "approval_status", "property",
-		"minutes_saved", "executed_at")}
+		"doctype", "actor", "action_type", "approval_status", "action_channel",
+		"property", "minutes_saved", "executed_at")}
 	fallback["agent_name"] = agent_name
 	fallback["rationale"] = (
 		f"{row['rationale']}\n\n[log fallback: full row failed — "
@@ -91,13 +91,10 @@ def log_action(
 		return None
 
 
-# Callers name a channel the way they think of it; the Select only takes
-# these. Anything else lands on the closest one instead of failing the row.
-_CHANNEL_ALIASES = {
-	"ai agent": "API", "qr": "API", "email": "API", "web": "API",
-	"website": "API", "ota": "API", "phone": "Voice", "call": "Voice",
-	"copilot": "Chat", "kamra agent": "Chat",
-}
+# The Select only takes Desk / Voice / WhatsApp / API / Chat / MCP. The one
+# off-list name a caller passes today is a channel provider's "SMS"; any
+# other unknown name also lands on API rather than failing the row.
+_CHANNEL_ALIASES = {"sms": "API"}
 
 
 def _normalise_channel(channel: str | None) -> tuple[str | None, str]:
@@ -105,11 +102,8 @@ def _normalise_channel(channel: str | None) -> tuple[str | None, str]:
 	"API", and the original name is kept in the rationale."""
 	if not channel:
 		return None, ""
-	try:
-		field = frappe.get_meta("Agent Action Log").get_field("action_channel")
-		allowed = [o for o in (field.options or "").split("\n") if o]
-	except Exception:
-		return channel, ""
+	field = frappe.get_meta("Agent Action Log").get_field("action_channel")
+	allowed = [o for o in (field.options or "").split("\n") if o]
 	if channel in allowed:
 		return channel, ""
 	by_lower = {o.lower(): o for o in allowed}
@@ -125,14 +119,17 @@ def _insert(row: dict) -> str:
 	sp = "aal_" + frappe.generate_hash(length=8)
 	frappe.db.savepoint(sp)
 	try:
-		return frappe.get_doc(dict(row)).insert(ignore_permissions=True).name
+		name = frappe.get_doc(dict(row)).insert(ignore_permissions=True).name
 	except Exception:
 		frappe.db.rollback(save_point=sp)
 		raise
+	frappe.db.release_savepoint(sp)
+	return name
 
 
 def _report_failure(action_type, row, exc, *, fallback=False) -> None:
-	"""Make a failed log write visible: server log + Error Log row."""
+	"""Make a failed log write visible: server log + Error Log row. Never
+	raises - the business action it describes must still succeed."""
 	what = "fallback write" if fallback else "write"
 	title = f"Agent Action Log {what} failed: {action_type}"[:140]
 	detail = {k: v for k, v in row.items()
@@ -140,9 +137,6 @@ def _report_failure(action_type, row, exc, *, fallback=False) -> None:
 	try:
 		frappe.logger("kamra.savings").error(
 			f"{title}: {type(exc).__name__}: {exc} | {detail}")
-	except Exception:
-		pass
-	try:
 		frappe.log_error(
 			title=title,
 			message="".join(traceback.format_exception(exc))
@@ -151,7 +145,7 @@ def _report_failure(action_type, row, exc, *, fallback=False) -> None:
 			reference_name=row.get("reference_name") or None,
 		)
 	except Exception:
-		print(f"{title}: {exc}")
+		pass
 
 
 def mark_approved(log_name: str, approver: str) -> None:

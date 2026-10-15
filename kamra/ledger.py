@@ -308,7 +308,7 @@ def transfer_to_city_ledger(folio: str, company: str | None = None) -> dict:
 	account = _ar_account(doc.property, company)
 	bd = get_business_date(doc.property)
 	# Zero the guest folio with a Company Credit payment
-	doc.append("payments", {
+	row = doc.append("payments", {
 		"posting_date": bd,
 		"payment_kind": "Payment",
 		"mode": "Company Credit",
@@ -322,7 +322,7 @@ def transfer_to_city_ledger(folio: str, company: str | None = None) -> dict:
 	# Two legs, like any transfer: the Company Credit payment credits the
 	# guest ledger (the folio is settled) and the same amount debits AR.
 	# Without the guest credit the debt sat in both ledgers at once.
-	record_payment_ledger(doc, doc.payments[-1].as_dict())
+	record_payment_ledger(doc, row.as_dict())
 	write_ledger_entry(
 		property=doc.property,
 		folio=doc.name,

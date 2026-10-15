@@ -845,7 +845,7 @@ User Permissions, so a property-restricted user sees only theirs.
 
 ### `kamra.api.front_desk_snapshot`
 
-**GET/POST** · roles: `Front Desk`, `Kamra Agent`
+**GET/POST** · roles: `Front Desk`, `Kamra Agent`, `Finance`, `Revenue Manager`
 
 Everything the front desk needs for one day, in one call.
 
@@ -1578,7 +1578,9 @@ and optionally the cutoff/status. Confirmed blocks hold inventory.
 **POST** · roles: `Front Desk`, `Kamra Agent`
 
 Name a guest into the block: creates a reservation on the group's
-dates against its held inventory.
+dates against its held inventory. Every call books a room (a block is
+several identical rooms for one party); pass idempotency_key to make a
+retry safe.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1588,6 +1590,7 @@ dates against its held inventory.
 | `phone` | no | `None` |
 | `adults` | no | `2` |
 | `children` | no | `0` |
+| `idempotency_key` | no | `None` |
 
 ### `kamra.api.create_group_block`
 

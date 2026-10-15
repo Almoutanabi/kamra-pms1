@@ -4392,7 +4392,7 @@
         "kamra.api.pickup_group_room"
        ]
       },
-      "description": "Name a guest into the block: creates a reservation on the group's\ndates against its held inventory.",
+      "description": "Name a guest into the block: creates a reservation on the group's\ndates against its held inventory. Every call books a room (a block is\nseveral identical rooms for one party); pass idempotency_key to make a\nretry safe.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"group_booking\": \"<group_booking>\",\n  \"room_type\": \"Your Property-DLX\",\n  \"guest_name\": \"A. Guest\",\n  \"phone\": \"+91 90000 00000\",\n  \"adults\": 2,\n  \"children\": 0\n}",

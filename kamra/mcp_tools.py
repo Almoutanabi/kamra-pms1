@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from kamra.reservation_state import AGENT_DUPLICATE_WINDOW_MINUTES
+
 # Tool group → Property.enabled_modules slug. None = always offered when
 # role-allowed (briefings / onboarding stay available).
 GROUP_MODULE: dict[str, str | None] = {
@@ -52,28 +54,30 @@ def _p(typ: str, **extra: Any) -> dict[str, Any]:
 # Booking references: the PMS resolves these to this property's IDs
 # (kamra/booking_refs.py) and refuses unknown or ambiguous values with the
 # list of valid options - it never guesses.
-_ROOM_TYPE = _p(
+ROOM_TYPE_PARAM = _p(
 	"string",
 	description="Room type: its id (e.g. 'Kamra Demo Palace-DLX'), its code "
 	"('DLX') or its exact name ('Deluxe'). See booking_options.",
 )
-_MEAL_PLAN = _p(
+MEAL_PLAN_PARAM = _p(
 	"string",
 	description="Optional meal plan: id, code ('CP') or exact label "
 	"('Breakfast Included'). See booking_options.",
 )
-_RATE_PLAN = _p(
+RATE_PLAN_PARAM = _p(
 	"string",
 	description="Optional rate plan: id, code ('BAR') or exact name. "
 	"See booking_options.",
 )
-_IDEMPOTENCY_KEY = _p(
+IDEMPOTENCY_KEY_PARAM = _p(
 	"string",
 	description="Optional unique key for this booking (e.g. a UUID). Retrying "
 	"with the same key returns the first booking instead of a duplicate. "
-	"Without a key, an identical booking (same guest, room type and dates) "
-	"made in the last 10 minutes is returned instead of booking twice; pass "
-	"a new key to book a second identical room on purpose.",
+	"Reusing a key for a different booking is refused. Without a key, an "
+	"identical booking (same guest, room type, dates, meal plan, rate plan "
+	f"and party size) made in the last {AGENT_DUPLICATE_WINDOW_MINUTES} "
+	"minutes is returned instead of booking twice; pass a new key to book a "
+	"second identical room on purpose.",
 )
 
 
@@ -133,13 +137,13 @@ TOOLS: tuple[ToolSpec, ...] = (
 		plan accept the id, code or exact name; an unknown or ambiguous value
 		is refused with the valid options.""",
 		{
-			"room_type": _ROOM_TYPE,
+			"room_type": ROOM_TYPE_PARAM,
 			"check_in_date": _p("string"),
 			"check_out_date": _p("string"),
 			"adults": _p("integer"),
 			"children": _p("integer"),
-			"meal_plan": _MEAL_PLAN,
-			"rate_plan": _RATE_PLAN,
+			"meal_plan": MEAL_PLAN_PARAM,
+			"rate_plan": RATE_PLAN_PARAM,
 			"voucher_code": _p("string"),
 		},
 		required=("room_type", "check_in_date", "check_out_date"),
@@ -163,16 +167,16 @@ TOOLS: tuple[ToolSpec, ...] = (
 		idempotency_key) — check idempotent_replay in the result.""",
 		{
 			"guest_name": _p("string"),
-			"room_type": _ROOM_TYPE,
+			"room_type": ROOM_TYPE_PARAM,
 			"check_in_date": _p("string"),
 			"check_out_date": _p("string"),
 			"phone": _p("string"),
 			"adults": _p("integer"),
 			"children": _p("integer"),
-			"meal_plan": _MEAL_PLAN,
-			"rate_plan": _RATE_PLAN,
+			"meal_plan": MEAL_PLAN_PARAM,
+			"rate_plan": RATE_PLAN_PARAM,
 			"voucher_code": _p("string"),
-			"idempotency_key": _IDEMPOTENCY_KEY,
+			"idempotency_key": IDEMPOTENCY_KEY_PARAM,
 		},
 		required=("guest_name", "room_type", "check_in_date", "check_out_date"),
 		property=True,
@@ -186,13 +190,13 @@ TOOLS: tuple[ToolSpec, ...] = (
 		restricted. Promote it later with promote_waitlist when a room frees.""",
 		{
 			"guest_name": _p("string"),
-			"room_type": _ROOM_TYPE,
+			"room_type": ROOM_TYPE_PARAM,
 			"check_in_date": _p("string"),
 			"check_out_date": _p("string"),
 			"phone": _p("string"),
 			"adults": _p("integer"),
 			"children": _p("integer"),
-			"idempotency_key": _IDEMPOTENCY_KEY,
+			"idempotency_key": IDEMPOTENCY_KEY_PARAM,
 		},
 		required=("guest_name", "room_type", "check_in_date", "check_out_date"),
 		property=True,
@@ -604,7 +608,7 @@ TOOLS: tuple[ToolSpec, ...] = (
 		the owner's rate guardrails — the PMS rejects rates outside the
 		floor/ceiling. Always give a reason (it goes in the audit trail).""",
 		{
-			"room_type": _ROOM_TYPE,
+			"room_type": ROOM_TYPE_PARAM,
 			"start_date": _p("string"),
 			"end_date": _p("string"),
 			"rate": _p("number"),
@@ -695,9 +699,12 @@ TOOLS: tuple[ToolSpec, ...] = (
 	_t(
 		"run_night_audit",
 		"api.run_night_audit",
-		"""Run the end-of-day: post the night's room charges for in-house
-		guests and flag no-shows. Idempotent per date.""",
-		{"business_date": _p("string")},
+		"""Run the end-of-day for the property's current business date: post
+		the night's room charges for in-house guests, flag no-shows, then roll
+		the business date forward. business_date is optional; if given it must
+		equal the current business date. A day that already closed returns
+		already_ran instead of posting again.""",
+		{"business_date": _p("string", description="Optional. Must equal the current business date.")},
 		property=True,
 		mutating=True,
 		group="Night audit",
@@ -744,9 +751,17 @@ TOOLS: tuple[ToolSpec, ...] = (
 		the group's dates against the held inventory.""",
 		{
 			"group_booking": _p("string"),
-			"room_type": _ROOM_TYPE,
+			"room_type": ROOM_TYPE_PARAM,
 			"guest_name": _p("string"),
 			"phone": _p("string"),
+			"adults": _p("integer"),
+			"children": _p("integer"),
+			"idempotency_key": _p(
+				"string",
+				description="Optional unique key for this pickup (e.g. a "
+				"UUID). Retrying with the same key returns the first "
+				"reservation; every call without a key books another room.",
+			),
 		},
 		required=("group_booking", "room_type", "guest_name"),
 		mutating=True,
@@ -1302,6 +1317,14 @@ def allowed_tools(
 	]
 
 
+def is_replay(result: Any) -> bool:
+	"""True when a write returned an existing record instead of making one
+	(idempotency-key replay or a caught duplicate): nothing was executed, so
+	no "Executed" audit row is written for it."""
+	return isinstance(result, dict) and bool(
+		result.get("idempotent_replay") or result.get("duplicate_of_recent"))
+
+
 def call_tool(spec: ToolSpec, arguments: dict[str, Any], property: str) -> Any:
 	"""Run a tool as the current Frappe user. Mutating calls are logged."""
 	import frappe
@@ -1317,12 +1340,14 @@ def call_tool(spec: ToolSpec, arguments: dict[str, Any], property: str) -> Any:
 		)
 	fn = resolve_endpoint(spec.dotted)
 	kwargs = prepare_arguments(spec, arguments or {}, property)
-	frappe.flags.kamra_agent_call = True
+	# the channel doubles as the "agent call" flag the cashier PIN and the
+	# booking duplicate guard read
+	prev, frappe.flags.kamra_agent_call = frappe.flags.kamra_agent_call, "MCP"
 	try:
 		result = fn(**kwargs)
 	finally:
-		frappe.flags.kamra_agent_call = False
-	if spec.mutating:
+		frappe.flags.kamra_agent_call = prev
+	if spec.mutating and not is_replay(result):
 		log_action(
 			"mcp_" + spec.name,
 			"Property",
