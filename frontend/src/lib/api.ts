@@ -80,11 +80,6 @@ export async function logout() {
   await doFetch("/api/method/logout", { method: "POST" })
 }
 
-export function isAuthError(err: unknown): boolean {
-  const status = (err as { status?: number }).status
-  return status === 401 || status === 403
-}
-
 /** Upload an image to Frappe's public files; resolves to its served URL.
  *  Pass doctype/docname/fieldname so Attach Image fields keep a real File
  *  link — otherwise the URL shows in the form but is easy to lose on save. */
@@ -209,11 +204,6 @@ export const whoami = () => call<WhoAmI>("kamra.api.whoami")
 export const enabledModules = () =>
   call<string[]>("kamra.api.enabled_modules", {
     property: getCurrentProperty(),
-  })
-export const setEnabledModules = (modules: string[]) =>
-  call<{ ok: boolean; modules: string[] }>("kamra.api.set_enabled_modules", {
-    property: getCurrentProperty(),
-    modules,
   })
 
 export interface ReservationRow {
@@ -478,38 +468,6 @@ export const promoteWaitlist = (reservation: string) =>
     "kamra.api.promote_waitlist",
     { reservation },
   )
-
-export interface VenueBookingCell {
-  name: string
-  venue: string
-  event_type: string
-  status: string
-  event_date: string
-  start_time: string
-  end_time: string
-  customer_name: string
-  attendees: number
-  quoted_amount: number
-  advance_received: number
-}
-export interface VenueCalendarData {
-  start: string
-  days: number
-  dates: string[]
-  venues: {
-    name: string
-    venue_name: string
-    capacity: number
-    base_price: number
-    bookings: VenueBookingCell[]
-  }[]
-}
-export const venueCalendar = (days = 14, startDate?: string) =>
-  call<VenueCalendarData>("kamra.api.venue_calendar", {
-    property: getCurrentProperty(),
-    days,
-    start_date: startDate ?? null,
-  })
 
 // --- Banquets: the function business, enquiry → event order → bill ---
 
@@ -1548,8 +1506,6 @@ export const saveConversation = (
   })
 export const deleteConversation = (name: string) =>
   call<{ ok: boolean }>("kamra.assistant.delete_conversation", { name })
-export const renameConversation = (name: string, title: string) =>
-  call<{ ok: boolean }>("kamra.assistant.rename_conversation", { name, title })
 
 export const checkIn = (reservation: string) =>
   call("kamra.api.check_in", { reservation })
