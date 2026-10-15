@@ -44,6 +44,7 @@ from frappe.utils import (
 )
 
 from kamra.authz import require_roles
+from kamra.settings import get_setting
 
 # who sells and runs functions
 BANQUET_ROLES = ("Front Desk", "Revenue Manager", "Kamra Agent")
@@ -234,7 +235,7 @@ def create_enquiry(property: str, venue: str, event_date: str,
                    company: str | None = None, end_date: str | None = None,
                    start_time: str | None = None, end_time: str | None = None,
                    source: str = "Phone", requirements: str | None = None,
-                   follow_up_days: int = 2, with_venue_line: int = 1,
+                   follow_up_days: int | None = None, with_venue_line: int = 1,
                    sales_owner: str | None = None):
 	"""Open a function sheet from an enquiry. The hall's rack rental goes on
 	as the first line (that's the number the conversation starts from), and
@@ -247,7 +248,9 @@ def create_enquiry(property: str, venue: str, event_date: str,
 		"event_type": event_type or "Other",
 		"status": "Enquiry",
 		"enquiry_date": nowdate(),
-		"follow_up_date": add_days(nowdate(), int(follow_up_days or 2)),
+		"follow_up_date": add_days(nowdate(), int(
+			follow_up_days if follow_up_days not in (None, "")
+			else get_setting(property, "banquet_follow_up_days"))),
 		"source": source or "Phone",
 		"sales_owner": sales_owner or frappe.session.user,
 		"event_date": event_date, "end_date": end_date or None,
@@ -642,22 +645,27 @@ def set_payment_terms(function: str, terms, note: str | None = None):
 
 @frappe.whitelist(methods=["POST"])
 @require_roles(*BANQUET_ROLES, "Finance")
-def default_payment_terms(function: str, advance_percent: float = 25,
-                          interim_percent: float = 50,
-                          interim_days_before: int = 15):
+def default_payment_terms(function: str, advance_percent: float | None = None,
+                          interim_percent: float | None = None,
+                          interim_days_before: int | None = None):
 	"""The usual three-milestone schedule, dated off this function: an
 	advance to hold the hall, a second call before the date, the rest on
-	completion. Editable afterwards like any other term."""
+	completion. Editable afterwards like any other term. Unset arguments
+	come from Settings -> Banquets & Groups."""
 	doc = _fn(function)
-	adv = float(advance_percent or 0)
-	mid = float(interim_percent or 0)
+
+	def pick(val, key):
+		return get_setting(doc.property, key) if val in (None, "") else val
+	adv = float(pick(advance_percent, "banquet_advance_pct") or 0)
+	mid = float(pick(interim_percent, "banquet_interim_pct") or 0)
+	interim_days_before = int(pick(interim_days_before, "banquet_interim_days") or 0)
 	if adv + mid > 100:
 		frappe.throw(_("The advance and interim add up to more than the bill."))
 	terms = [
 		{"milestone": _("Booking advance"), "percent": adv,
 		 "due_date": nowdate()},
 		{"milestone": _("Before the function"), "percent": mid,
-		 "due_date": add_days(doc.event_date, -int(interim_days_before or 15))},
+		 "due_date": add_days(doc.event_date, -interim_days_before)},
 		{"milestone": _("On completion"), "percent": round(100 - adv - mid, 2),
 		 "due_date": doc.end_date or doc.event_date},
 	]
@@ -2465,9 +2473,16 @@ def customer_profile(property: str, guest: str | None = None,
 # ══ before you send the price ════════════════════════════════════════════
 
 # What a banquet is expected to hold. Below the floor a function is worth
-# arguing about; below break-even it is worth refusing.
+# arguing about; below break-even it is worth refusing. Defaults - each
+# property sets its own in Settings -> Banquets & Groups.
 TARGET_MARGIN = 40.0
 FLOOR_MARGIN = 25.0
+
+
+def _margins(property: str | None) -> tuple[float, float]:
+	"""(target, floor) margin percent for a property."""
+	return (float(get_setting(property, "banquet_target_margin", TARGET_MARGIN)),
+	        float(get_setting(property, "banquet_floor_margin", FLOOR_MARGIN)))
 
 
 @frappe.whitelist()
@@ -2511,7 +2526,9 @@ def quote_advisor(function: str, at_discount: float | None = None):
 		 for r in doc.items if float(r.cost_amount or 0)),
 		key=lambda x: -x["cost"])[:5]
 
-	verdict, advice = _verdict(pct, bool(uncosted), cost)
+	target_margin, floor_margin = _margins(doc.property)
+	verdict, advice = _verdict(pct, bool(uncosted), cost,
+	                           target_margin, floor_margin)
 	return {
 		"function": doc.name, "pax": doc.billable_pax,
 		"subtotal": float(subtotal), "discount": float(discount),
@@ -2528,10 +2545,10 @@ def quote_advisor(function: str, at_discount: float | None = None):
 		"break_even_price": float(cost),
 		"max_discount": {
 			"to_break_even": headroom(0),
-			"to_floor": headroom(FLOOR_MARGIN),
-			"to_target": headroom(TARGET_MARGIN),
+			"to_floor": headroom(floor_margin),
+			"to_target": headroom(target_margin),
 		},
-		"target_margin": TARGET_MARGIN, "floor_margin": FLOOR_MARGIN,
+		"target_margin": target_margin, "floor_margin": floor_margin,
 		"verdict": verdict, "advice": advice,
 		"cost_drivers": drivers,
 		"uncosted_lines": uncosted,
@@ -2546,7 +2563,9 @@ def quote_advisor(function: str, at_discount: float | None = None):
 	}
 
 
-def _verdict(pct: float, uncosted: bool, cost) -> tuple:
+def _verdict(pct: float, uncosted: bool, cost,
+             target_margin: float = TARGET_MARGIN,
+             floor_margin: float = FLOOR_MARGIN) -> tuple:
 	if not cost:
 		return "unknown", _(
 			"Nothing on this quote carries a cost yet, so any margin shown "
@@ -2561,14 +2580,14 @@ def _verdict(pct: float, uncosted: bool, cost) -> tuple:
 		return "partial", _(
 			"Some lines still cost nothing, so the real margin is lower "
 			"than this. Treat it as a ceiling, not an answer.")
-	if pct < FLOOR_MARGIN:
+	if pct < floor_margin:
 		return "thin", _(
 			"Below the {0}% floor. Worth taking only for the rooms it "
 			"brings, or a date that would otherwise sit empty.").format(
-				FLOOR_MARGIN)
-	if pct < TARGET_MARGIN:
+				floor_margin)
+	if pct < target_margin:
 		return "ok", _("Workable, though under the {0}% a banquet "
-		              "normally holds.").format(TARGET_MARGIN)
+		              "normally holds.").format(target_margin)
 	return "good", _("Comfortably profitable at this price.")
 
 

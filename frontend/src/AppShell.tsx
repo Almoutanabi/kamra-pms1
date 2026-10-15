@@ -236,9 +236,14 @@ export default function AppShell() {
   // answers, so nothing flashes in and then disappears
   const [modules, setModules] = useState<string[] | undefined>(undefined)
   useEffect(() => {
-    enabledModules()
-      .then(setModules)
-      .catch(() => setModules(undefined))
+    const load = () =>
+      enabledModules()
+        .then(setModules)
+        .catch(() => setModules(undefined))
+    load()
+    // Settings → Modules switches one on or off without a reload
+    window.addEventListener("kamra:modules-changed", load)
+    return () => window.removeEventListener("kamra:modules-changed", load)
   }, [property])
 
   const apps = visibleApps(roles, modules)
@@ -261,8 +266,8 @@ export default function AppShell() {
         rel="noreferrer"
         className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100"
       >
-        <item.icon className="size-4" aria-hidden />
-        {t(item.label)}
+        <item.icon className="size-4 shrink-0" aria-hidden />
+        <span className="truncate" title={t(item.label)}>{t(item.label)}</span>
       </a>
     ) : (
       <NavLink
@@ -278,8 +283,8 @@ export default function AppShell() {
           )
         }
       >
-        <item.icon className="size-4" aria-hidden />
-        {t(item.label)}
+        <item.icon className="size-4 shrink-0" aria-hidden />
+        <span className="truncate" title={t(item.label)}>{t(item.label)}</span>
       </NavLink>
     )
 
@@ -302,7 +307,7 @@ export default function AppShell() {
       {!kiosk && !demoMode && <UpdateNag />}
       <div className="flex min-h-0 flex-1">
       {!kiosk && (
-      <aside className="hidden w-52 shrink-0 border-r border-zinc-200 bg-white px-3 py-5 sm:sticky sm:top-0 sm:block sm:h-screen sm:overflow-y-auto">
+      <aside className="hidden w-56 shrink-0 border-r border-zinc-200 bg-white px-3 py-5 sm:sticky sm:top-0 sm:block sm:h-screen sm:overflow-y-auto">
         <div className="mb-5 flex items-center gap-2 px-1">
           <img src={asset("kamra-mark.svg")} alt="" className="size-7" aria-hidden />
           <span className="text-lg font-semibold tracking-tight">

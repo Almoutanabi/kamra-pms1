@@ -5,8 +5,15 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import add_to_date, get_datetime, now_datetime
 
-# priority -> minutes allowed before the clean is overdue
+# priority -> minutes allowed before the clean is overdue. Defaults - each
+# property sets its own in Settings -> Housekeeping (hk_sla_<priority>).
 HK_SLA_MINUTES = {"Urgent": 20, "High": 45, "Medium": 90, "Low": 180}
+
+
+def sla_minutes(property: str | None, priority: str | None) -> int:
+	from kamra.settings import get_setting
+	p = priority if priority in HK_SLA_MINUTES else "Medium"
+	return int(get_setting(property, f"hk_sla_{p.lower()}", HK_SLA_MINUTES[p]))
 
 
 class HousekeepingTask(Document):
@@ -14,7 +21,7 @@ class HousekeepingTask(Document):
 		if not self.due_by:
 			self.due_by = add_to_date(
 				now_datetime(),
-				minutes=HK_SLA_MINUTES.get(self.priority, 90),
+				minutes=sla_minutes(self.property, self.priority),
 			)
 
 	def on_update(self):

@@ -16,8 +16,16 @@ ADMIN = ("System Manager", "Administrator", "Hotel Admin")
 # For user management, developer settings and API keys.
 IT_ADMIN = ("System Manager", "Administrator")
 
+# defaults - each property can change them in Settings -> Finance
 PIN_MAX_ATTEMPTS = 5
 PIN_LOCK_MINUTES = 15
+
+
+def _pin_policy(property: str | None) -> tuple[int, int]:
+	"""(max wrong attempts, lock / unlock-window minutes) for a property."""
+	from kamra.settings import get_setting
+	return (int(get_setting(property, "pin_max_attempts", PIN_MAX_ATTEMPTS)),
+	        int(get_setting(property, "pin_lock_minutes", PIN_LOCK_MINUTES)))
 
 
 def require_it_admin(fn):
@@ -252,7 +260,8 @@ def require_roles(*roles, scope: dict | None = None):
 		def guarded(*args, **kwargs):
 			if not allowed & set(frappe.get_roles()):
 				frappe.throw(
-					f"Not permitted - needs one of: {', '.join(sorted(roles))}.",
+					f"Not permitted - needs one of: {', '.join(sorted(roles))}."
+					if roles else "Not permitted - needs Hotel Admin.",
 					frappe.PermissionError)
 			_enforce_property_scope(fn, args, kwargs, scope)
 			return fn(*args, **kwargs)
@@ -290,12 +299,13 @@ def require_cashier_pin(property: str, pin=None):
 	user = frappe.session.user
 	if user == "Administrator":
 		return
+	max_attempts, lock_minutes = _pin_policy(property)
 
 	# Sliding unlock window (set after a successful PinPad entry)
 	cache_key = f"kamra_cashier_unlock:{user}"
 	if frappe.cache.get_value(cache_key):
 		# refresh sliding window
-		frappe.cache.set_value(cache_key, 1, expires_in_sec=PIN_LOCK_MINUTES * 60)
+		frappe.cache.set_value(cache_key, 1, expires_in_sec=lock_minutes * 60)
 		return
 
 	if not frappe.db.exists("Cashier PIN", user):
@@ -315,13 +325,13 @@ def require_cashier_pin(property: str, pin=None):
 	if not stored or str(pin).strip() != str(stored):
 		attempts = int(doc.pin_attempts or 0) + 1
 		doc.pin_attempts = attempts
-		if attempts >= PIN_MAX_ATTEMPTS:
+		if attempts >= max_attempts:
 			doc.locked_until = add_to_date(now_datetime(),
-			                               minutes=PIN_LOCK_MINUTES)
+			                               minutes=lock_minutes)
 			doc.pin_attempts = 0
 			doc.save(ignore_permissions=True)
 			frappe.throw("PIN_LOCKED: too many wrong attempts - locked for "
-			             f"{PIN_LOCK_MINUTES} minutes.")
+			             f"{lock_minutes} minutes.")
 		doc.save(ignore_permissions=True)
 		frappe.throw("Wrong cashier PIN.")
 	# success
@@ -329,7 +339,7 @@ def require_cashier_pin(property: str, pin=None):
 		doc.pin_attempts = 0
 		doc.locked_until = None
 		doc.save(ignore_permissions=True)
-	frappe.cache.set_value(cache_key, 1, expires_in_sec=PIN_LOCK_MINUTES * 60)
+	frappe.cache.set_value(cache_key, 1, expires_in_sec=lock_minutes * 60)
 
 
 def unlock_cashier_session(property: str, pin: str) -> dict:
@@ -337,7 +347,7 @@ def unlock_cashier_session(property: str, pin: str) -> dict:
 	# Clear any existing unlock so we always re-validate
 	frappe.cache.delete_value(f"kamra_cashier_unlock:{frappe.session.user}")
 	require_cashier_pin(property, pin)
-	return {"ok": True, "unlocked_minutes": PIN_LOCK_MINUTES}
+	return {"ok": True, "unlocked_minutes": _pin_policy(property)[1]}
 
 
 def cashier_unlock_status(property: str) -> dict:

@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Loader2, Plus, Send, Sparkles, Trash2, Wrench } from "lucide-react"
+import { Link } from "react-router-dom"
+import {
+  ArrowRight,
+  KeyRound,
+  Loader2,
+  MessageSquare,
+  Plus,
+  Send,
+  Sparkles,
+  Trash2,
+  Wrench,
+} from "lucide-react"
 
 import {
   call,
@@ -54,32 +65,47 @@ function ThinkingDots() {
   )
 }
 
+const SETUP_STEPS = [
+  "Create an API key with your AI provider (OpenAI works out of the box).",
+  "Open Settings → AI assistant, paste the key, pick a model and Test.",
+  "Switch it on, save, and come back here.",
+]
+
 function AiSetupNotice() {
   return (
-    <div className="mx-auto max-w-lg space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-      <p className="font-semibold">Kamra Agent needs an AI key to start working.</p>
-      <ol className="list-decimal space-y-1 pl-5">
-        <li>
-          Get an OpenAI API key at{" "}
-          <a
-            className="underline"
-            href="https://platform.openai.com/api-keys"
-            target="_blank"
-            rel="noreferrer"
+    <div className="mx-auto max-w-md text-center">
+      <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-brand-50 ring-1 ring-brand-100">
+        <KeyRound className="size-5 text-brand-600" aria-hidden />
+      </span>
+      <h2 className="mt-4 text-lg font-semibold tracking-tight text-zinc-900">
+        Add an AI key to start
+      </h2>
+      <p className="mt-1 text-sm text-zinc-500">
+        Kamra Agent runs on your own AI account. It takes about two minutes.
+      </p>
+      <ol className="mt-5 space-y-2.5 text-left">
+        {SETUP_STEPS.map((step, i) => (
+          <li
+            key={step}
+            className="flex gap-3 rounded-lg border border-zinc-100 bg-zinc-50/70 px-3 py-2.5 text-sm text-zinc-700"
           >
-            platform.openai.com/api-keys
-          </a>{" "}
-          (sign up, add billing, create a key).
-        </li>
-        <li>
-          In Kamra, open <b>Settings, AI assistant</b>: paste the key, pick a
-          model (gpt-4o-mini works well), switch it on, save.
-        </li>
-        <li>Come back here and ask a question.</li>
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-brand-600 text-[11px] font-semibold text-white">
+              {i + 1}
+            </span>
+            {step}
+          </li>
+        ))}
       </ol>
-      <p className="text-xs text-amber-700">
-        The key stays on your server and is stored masked. Usage is billed to
-        your own OpenAI account.
+      <Link
+        to="/settings/ai"
+        className="mt-5 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+      >
+        Open AI settings
+        <ArrowRight className="size-4" aria-hidden />
+      </Link>
+      <p className="mt-4 text-xs text-zinc-400">
+        The key stays on your server, stored masked. Usage is billed to your
+        own provider account.
       </p>
     </div>
   )
@@ -233,22 +259,27 @@ export default function Assistant() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-16rem)] min-h-[480px] gap-4">
+    // fills the viewport under the top bar + page header; only panes scroll
+    <div className="flex h-[calc(100dvh-11rem)] min-h-[440px] gap-4">
       {/* conversations */}
-      <div className="hidden w-64 shrink-0 flex-col rounded-xl border border-zinc-200 bg-white sm:flex">
-        <div className="p-2">
+      <div className="hidden w-60 shrink-0 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm md:flex">
+        <div className="border-b border-zinc-100 p-2">
           <button
             onClick={newChat}
-            className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            disabled={busy}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
           >
             <Plus className="size-4" /> New chat
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-2">
+        <div className="flex-1 space-y-0.5 overflow-y-auto p-2">
           {convos.length === 0 && (
-            <p className="px-2 py-4 text-xs text-zinc-400">
-              No conversations yet.
-            </p>
+            <div className="flex flex-col items-center gap-2 px-3 py-10 text-center">
+              <MessageSquare className="size-5 text-zinc-300" aria-hidden />
+              <p className="text-xs text-zinc-400">
+                Your chats will show up here.
+              </p>
+            </div>
           )}
           {convos.map((c) => (
             <div
@@ -275,19 +306,26 @@ export default function Assistant() {
       </div>
 
       {/* chat */}
-      <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-zinc-200 bg-white">
-        <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
-          <Sparkles className="size-4 text-brand-600" />
-          <span className="text-sm font-semibold">Kamra Agent</span>
-          <span className="text-[10px] uppercase tracking-wider text-zinc-400">
-            your AI, acting as you · on{" "}
-            {getCurrentProperty()?.split("-")[0] ?? "your hotel"}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+        <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-2.5 text-xs text-zinc-500">
+          <span
+            className={cn(
+              "size-2 rounded-full",
+              aiEnabled === false ? "bg-zinc-300" : "bg-brand-500",
+            )}
+            aria-hidden
+          />
+          <span className="truncate">
+            {aiEnabled === false ? "Not set up" : "Acting as you"} ·{" "}
+            <span className="font-medium text-zinc-700">
+              {getCurrentProperty()?.split("-")[0] ?? "your hotel"}
+            </span>
           </span>
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5">
           {msgs.length === 0 && aiEnabled === false && (
-            <div className="py-8">
+            <div className="flex min-h-full items-center justify-center py-6">
               <AiSetupNotice />
             </div>
           )}
@@ -385,16 +423,20 @@ export default function Assistant() {
         >
           <div className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-4 py-1.5 shadow-sm transition focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100">
             <input
-              className="flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-zinc-400"
-              placeholder="Ask anything about the hotel…"
+              className="flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed"
+              placeholder={
+                aiEnabled === false
+                  ? "Add an AI key in Settings to start chatting"
+                  : "Ask anything about the hotel…"
+              }
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              disabled={busy}
+              disabled={busy || aiEnabled === false}
             />
             <button
               type="submit"
               aria-label="Send"
-              disabled={busy || !input.trim()}
+              disabled={busy || aiEnabled === false || !input.trim()}
               className="flex size-9 items-center justify-center rounded-full bg-brand-600 text-white transition hover:bg-brand-700 disabled:opacity-40"
             >
               {busy ? (

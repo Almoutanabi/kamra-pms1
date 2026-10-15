@@ -178,3 +178,37 @@ from in-house guests also raise a ticket on **Guest Requests**.
   it takes is logged.
 - **MCP** — **Kamra Agent → Connect your AI → Connect Claude**. It acts
   as you. See [Connect your AI](/ai-and-mcp).
+
+## Settings & access
+
+Everything a property configures lives in **Settings** (Admin → Settings,
+or the *Settings* item at the bottom of each app's sidebar, which opens
+that app's own page). The left rail groups it:
+
+- **Property**: identity and locale, stay policies (check-in/out times,
+  cancellation, no-show, deposits), privacy and data retention.
+- **Modules**: one page per app. Front Desk (pre-check-in links, holds,
+  hourly view), Housekeeping (task deadlines by priority, room turnover,
+  laundry express pricing and the rate card), Operations (guest request
+  deadlines), F&B (table reservation window), Banquets & Groups (quote
+  margins, default payment milestones, follow-up), Revenue (overbooking,
+  demand pricing), Finance (room tax, levies and fees, cashier PIN
+  lockout, cash refund limit) and Booking Engine.
+- **Access**: *Staff & access* to add people, set their roles and which
+  properties they reach, deactivate them or reset a cashier PIN.
+  *Roles & permissions* shows what each role opens and which settings it
+  may change. *Modules* switches off the apps a property doesn't run.
+- **Integrations**: payments, the AI assistant key, Claude (MCP) and, for
+  Saudi properties, ZATCA.
+
+Press <kbd>/</kbd> to search every setting by name. Each page shows who may
+change it. A Revenue Manager edits stay policies, revenue, banquets and the
+booking engine; Finance edits finance and F&B; a Housekeeping Supervisor
+edits housekeeping; Hotel Admin edits everything. Others see their pages
+read-only. Changed values show a dot, unsaved changes collect in a save bar
+at the bottom, and any value can be put back to its default. Every save
+lands in the Activity log with the old and new values.
+
+A Hotel Admin manages business roles. Only IT (System Manager) can grant
+the IT administrator role, and an admin limited to some properties can
+only give access to those.
