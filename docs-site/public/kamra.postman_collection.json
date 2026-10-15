@@ -3766,7 +3766,7 @@
       "description": "",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"property\": \"Your Property\",\n  \"room_type\": \"Your Property-DLX\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\",\n  \"adults\": 2,\n  \"children\": 0\n}",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"room_type\": \"Your Property-DLX\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\",\n  \"adults\": 2,\n  \"children\": 0,\n  \"over_capacity_charge\": 0\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -3803,7 +3803,7 @@
       "description": "One-call booking: attach to an existing guest profile when given,\nelse dedup by phone / create one. Optional auto room assignment,\nvoucher applied, price computed by the engine.\n\nwaitlist=1 parks the stay with no room and status Waitlist - for dates\nthat are sold out or restricted; promote it later when a room frees.\n\nstatus / idempotency_key / hold_expires_on support Instant public booking\n(ADR-006 / ADR-007). Desk callers leave them unset \u2192 Confirmed.",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"property\": \"Your Property\",\n  \"room_type\": \"Your Property-DLX\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\",\n  \"guest_name\": \"A. Guest\",\n  \"phone\": \"+91 90000 00000\",\n  \"adults\": 2,\n  \"children\": 0,\n  \"booking_type\": \"Individual\",\n  \"source\": \"Manual\",\n  \"assign_room\": 1,\n  \"guest\": \"G-00001\",\n  \"waitlist\": 0,\n  \"room\": \"Your Property-101\"\n}",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"room_type\": \"Your Property-DLX\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\",\n  \"guest_name\": \"A. Guest\",\n  \"phone\": \"+91 90000 00000\",\n  \"adults\": 2,\n  \"children\": 0,\n  \"booking_type\": \"Individual\",\n  \"source\": \"Manual\",\n  \"assign_room\": 1,\n  \"guest\": \"G-00001\",\n  \"waitlist\": 0,\n  \"room\": \"Your Property-101\",\n  \"over_capacity_guests\": 0,\n  \"over_capacity_charge\": 0\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -5313,7 +5313,7 @@
         "kamra.pos.fire_kot"
        ]
       },
-      "description": "Send the order to the kitchen: new lines become Fired and show on the\nkitchen display. Stamps the KOT number (a daily sequence per outlet) and\nreturns just-fired lines so the till can print the thermal KOT ticket.\n\nPass a course to send only that course and hold the rest - the table\norders once, the kitchen cooks the mains when the starters are cleared.\nEach line is stamped with the moment it was fired: that, not when the\ncaptain opened the tab, is when the cook's clock starts.",
+      "description": "Send the order to the kitchen: new lines become Fired and show on the\nkitchen display. Stamps the KOT number (a daily sequence per outlet) and\nreturns just-fired lines so the till can print the thermal KOT ticket.\n\nPass a course to send only that course and hold the rest - the table\norders once, the kitchen cooks the mains when the starters are cleared.\nEach line is stamped with the moment it was fired: that, not when the\ncaptain opened the tab, is when the cook's clock starts.\n\nOutlets with auto KOT on also accept the ticket here, so the kitchen\ndoes not press Start, and the response tells the till to print.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"order\": \"ORD-2026-00001\"\n}",

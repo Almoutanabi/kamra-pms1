@@ -181,6 +181,8 @@ def set_room_rate(property: str, room_type: str, start_date: str,
 
 	Guardrails still clamp the rate; the change is recorded in the action log.
 	"""
+	from kamra.booking_refs import resolve_room_type
+	room_type = resolve_room_type(property, room_type)
 	rate = float(rate)
 
 	guardrails = frappe.get_all(
@@ -3985,8 +3987,15 @@ def get_quote(property: str, room_type: str, check_in_date: str,
               meal_plan: str | None = None, rate_plan: str | None = None,
               voucher_code: str | None = None,
               over_capacity_charge: float = 0):
+	from kamra.booking_refs import (resolve_meal_plan, resolve_rate_plan,
+	                                resolve_room_type)
 	from kamra.pricing import quote
 
+	# agents name things the way staff do ("Deluxe", "breakfast"); resolve
+	# to IDs at this property or refuse with the valid options
+	room_type = resolve_room_type(property, room_type)
+	meal_plan = resolve_meal_plan(property, meal_plan)
+	rate_plan = resolve_rate_plan(property, rate_plan)
 	return quote(property, room_type, check_in_date, check_out_date,
 	             int(adults), int(children), meal_plan or None,
 	             rate_plan or None, voucher_code or None,
@@ -4012,6 +4021,66 @@ def _find_or_create_guest(guest_name: str, phone: str | None,
 		"nationality": nationality or None,
 	}).insert(ignore_permissions=True)
 	return guest.name
+
+
+# How long an identical agent booking counts as a retry of the first one.
+AGENT_DUPLICATE_WINDOW_MINUTES = 10
+
+
+def _booking_replay(reservation: str) -> dict:
+	"""create_booking's response for a booking that already exists."""
+	doc = frappe.get_doc("Reservation", reservation)
+	return {
+		"reservation": doc.name,
+		"room": doc.room,
+		"guest": doc.guest,
+		"amount_after_tax": doc.amount_after_tax,
+		"discount": doc.discount_amount,
+		"status": doc.status,
+		"idempotent_replay": 1,
+	}
+
+
+def _recent_agent_duplicate(property: str, room_type: str, check_in_date: str,
+                            check_out_date: str, *, guest: str | None,
+                            guest_name: str | None, phone: str | None,
+                            waitlist: int = 0) -> str | None:
+	"""A live reservation identical to this one (same guest, property, room
+	type and dates), created within the duplicate window - or None.
+
+	The guest is matched by profile when given, else by phone, else by the
+	exact name (case-insensitive): without a phone every call creates a new
+	guest profile, so the profile alone can't catch a retry."""
+	from frappe.utils import add_to_date, getdate, now_datetime
+
+	since = add_to_date(now_datetime(), minutes=-AGENT_DUPLICATE_WINDOW_MINUTES)
+	conds = ["r.property = %(property)s", "r.room_type = %(room_type)s",
+	         "r.check_in_date = %(ci)s", "r.check_out_date = %(co)s",
+	         "r.creation >= %(since)s",
+	         "r.status NOT IN ('Cancelled', 'No Show', 'Checked Out')"]
+	conds.append("r.status = 'Waitlist'" if waitlist else "r.status != 'Waitlist'")
+	values = {"property": property, "room_type": room_type,
+	          "ci": getdate(check_in_date), "co": getdate(check_out_date),
+	          "since": since}
+	if guest:
+		conds.append("r.guest = %(guest)s")
+		values["guest"] = guest
+	elif phone and str(phone).strip():
+		conds.append("g.phone = %(phone)s")
+		values["phone"] = str(phone).strip()
+	elif guest_name and guest_name.strip():
+		conds.append("LOWER(TRIM(r.guest_name)) = %(gname)s")
+		values["gname"] = " ".join(guest_name.split()).lower()
+	else:
+		return None
+	rows = frappe.db.sql(
+		f"""SELECT r.name FROM `tabReservation` r
+		JOIN `tabGuest` g ON g.name = r.guest
+		WHERE {' AND '.join(conds)}
+		ORDER BY r.creation DESC LIMIT 1""",
+		values,
+	)
+	return rows[0][0] if rows else None
 
 
 @frappe.whitelist()
@@ -4061,16 +4130,44 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 	if key:
 		existing = find_by_idempotency(property, key)
 		if existing:
-			doc = frappe.get_doc("Reservation", existing)
-			return {
-				"reservation": doc.name,
-				"room": doc.room,
-				"guest": doc.guest,
-				"amount_after_tax": doc.amount_after_tax,
-				"discount": doc.discount_amount,
-				"status": doc.status,
-				"idempotent_replay": 1,
-			}
+			return _booking_replay(existing)
+
+	# names ("Deluxe", "Breakfast") or codes resolve to this property's IDs;
+	# unknown / ambiguous values are refused with the valid options
+	from kamra.booking_refs import (resolve_meal_plan, resolve_rate_plan,
+	                                resolve_room_type)
+	room_type = resolve_room_type(property, room_type)
+	meal_plan = resolve_meal_plan(property, meal_plan)
+	rate_plan = resolve_rate_plan(property, rate_plan)
+
+	# An agent that retries a tool call (timeout, lost response, a model
+	# that repeats itself) must not book the guest twice. Without a key,
+	# an identical agent booking made moments ago is returned instead of a
+	# second one. Desk bookings (several identical rooms for one party)
+	# are never subject to this guard.
+	if not key and (frappe.flags.kamra_agent_call or source == "AI Agent"):
+		recent = _recent_agent_duplicate(
+			property, room_type, check_in_date, check_out_date,
+			guest=guest, guest_name=guest_name, phone=phone,
+			waitlist=int(waitlist or 0))
+		if recent:
+			from kamra.savings import log_action
+			log_action(
+				"agent_duplicate_booking_blocked", "Reservation", recent,
+				property,
+				rationale=(f"Identical booking for {guest_name} ({room_type} "
+				           f"{check_in_date}→{check_out_date}) was already made "
+				           f"in the last {AGENT_DUPLICATE_WINDOW_MINUTES} minutes; "
+				           f"returned {recent} instead of booking again"),
+				channel="API")
+			out = _booking_replay(recent)
+			out["duplicate_of_recent"] = 1
+			out["note"] = (
+				f"An identical booking ({recent}) was made in the last "
+				f"{AGENT_DUPLICATE_WINDOW_MINUTES} minutes, so no new "
+				"reservation was created. To book another identical room on "
+				"purpose, call again with a new idempotency_key.")
+			return out
 
 	if guest:
 		if not frappe.db.exists("Guest", guest):
