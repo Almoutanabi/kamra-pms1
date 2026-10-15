@@ -4178,6 +4178,57 @@ def t91():
 	st.save_settings(P, "revenue", json.dumps({"overbooking_pct": 0}))
 
 
+@check("HK phone: posting a charge or delivering laundry keeps the staff session")
+def t92():
+	# hk_post_consumable / deliver_laundry post as agent@kamra.local. A bare
+	# frappe.set_user() swap wiped the caller's sid + session data (csrf token,
+	# expiry), Frappe cached that after the request and the housekeeper's
+	# next call came back 403 "User None" - logged out mid-shift.
+	from kamra import api, laundry
+	room = frappe.db.exists("Room", {"property": P, "room_number": "E109"})
+	if not room:
+		room = frappe.get_doc({
+			"doctype": "Room", "property": P, "room_number": "E109",
+			"room_type": RT,
+		}).insert(ignore_permissions=True).name
+	else:
+		frappe.db.set_value("Room", room, "room_type", RT)
+	# far-dated: today's EVAL inventory is already sold out by earlier checks,
+	# and both endpoints only look for a Checked In stay on the room
+	res = _res(_guest("Eval HK Session", "+91 70000 00092"),
+	           "2031-02-10", "2031-02-12", room)
+	res.status = "Checked In"
+	res.save(ignore_permissions=True)
+	laundry.save_laundry_rate(P, "Shirt", "Wash & Iron", 60)
+
+	real = frappe.local.session
+	frappe.local.session = frappe._dict(
+		user="Administrator", sid="eval-hk-sid",
+		data=frappe._dict(csrf_token="eval-csrf", session_expiry="06:00:00"))
+	try:
+		def intact(step):
+			s = frappe.local.session
+			assert (s.user, s.sid) == ("Administrator", "eval-hk-sid"), (step, s)
+			assert s.data.get("csrf_token") == "eval-csrf", (step, s.data)
+
+		api.hk_post_consumable(room, "Minibar", "eval 1 water", 40)
+		intact("hk_post_consumable")
+
+		r = laundry.request_pickup(P, room)
+		laundry.collect_laundry(P, room, [
+			{"item_name": "Shirt", "service_type": "Wash & Iron", "qty": 1}],
+			order=r["order"])
+		laundry.laundry_status(r["order"], "In Process")
+		laundry.laundry_status(r["order"], "Ready")
+		doc = frappe.get_doc("Laundry Order", r["order"])
+		laundry.return_items(r["order"], {doc.items[0].name: 1})
+		out = laundry.deliver_laundry(r["order"])
+		assert out["posted_to_folio"], out
+		intact("deliver_laundry")
+	finally:
+		frappe.local.session = real
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -4195,7 +4246,7 @@ def execute():
 		           t36, t37, t38, t39, t39b, t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48, t49, t50, t51, t53,
 		           t54, t55, t56, t57, t58, t59, t60, t61, t62, t63, t64,
 		           t65, t66, t67, t68, t69, t70,
-		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91):
+		           t71, t72, t73, t74, t75, t76, t81, t82, t82b, t82c, t83, t84, t85, t86, t87, t90, t91, t92):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
