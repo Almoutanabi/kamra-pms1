@@ -206,6 +206,55 @@ def record_payment_ledger(folio_doc, payment_row, session: str | None = None,
 	)
 
 
+ADVANCE_APPLIED = "Advance applied to the stay"
+
+
+def _advance_held(folio: str, payment_row: str) -> float:
+	"""What of one Advance payment still sits in the Deposit ledger."""
+	return round(float(frappe.db.sql(
+		"""SELECT COALESCE(SUM(credit - debit), 0) FROM `tabFolio Ledger Entry`
+		   WHERE ledger = 'Deposit' AND source_doctype = 'Folio Payment'
+		     AND source_name = %s AND folio = %s""",
+		(payment_row, folio))[0][0] or 0), 2)
+
+
+def transfer_advances_to_guest(reservation: str,
+                               business_date: str | None = None) -> float:
+	"""An advance is a liability (Deposit ledger) only until the guest is in
+	house. From check-in it pays the stay, so each Advance payment moves out
+	of the Deposit ledger and credits the Guest ledger - the same two legs
+	as a security deposit applied to the bill (deposit._transfer_to_guest).
+
+	Idempotent per payment: only what is still held for that payment row
+	moves, so calling it again (check-in, a later advance, check-out, the
+	backfill patch) never moves money twice. Returns the amount moved."""
+	code = PAYMENT_CODES["Advance"][0]
+	if not frappe.db.exists("Transaction Code", code):
+		ensure_default_transaction_codes()
+	if not frappe.db.exists("Transaction Code", code):
+		code = None
+	moved = 0.0
+	for folio in frappe.get_all("Folio", filters={"reservation": reservation},
+	                            fields=["name", "property"]):
+		for row in frappe.get_all(
+				"Folio Payment",
+				filters={"parent": folio.name, "parenttype": "Folio",
+				         "payment_kind": "Advance"},
+				pluck="name"):
+			held = _advance_held(folio.name, row)
+			if held <= 0.005:
+				continue
+			for ledger, debit, credit in (("Deposit", held, 0),
+			                              ("Guest", 0, held)):
+				write_ledger_entry(
+					property=folio.property, folio=folio.name, ledger=ledger,
+					debit=debit, credit=credit, description=ADVANCE_APPLIED,
+					transaction_code=code, source_doctype="Folio Payment",
+					source_name=row, business_date=business_date)
+			moved += held
+	return moved
+
+
 def _charge_ledger_net(folio: str, charge_row_name: str) -> float:
 	return float(frappe.db.sql(
 		"""SELECT COALESCE(SUM(debit - credit), 0) FROM `tabFolio Ledger Entry`
@@ -354,6 +403,25 @@ def _ar_account(property: str, company: str) -> str:
 	})
 	doc.insert(ignore_permissions=True)
 	return doc.name
+
+
+def company_payer_of(folio) -> str | None:
+	"""The company that pays this folio on credit, or None when the guest
+	pays it. Only a Company folio (the stay's company) or a group master
+	(the group's company) is the company's bill; Guest and Extra folios -
+	liquor, extras - are always the guest's."""
+	kind = folio.get("folio_type") or "Guest"
+	company = None
+	if kind == "Company" and folio.get("reservation"):
+		company = frappe.db.get_value(
+			"Reservation", folio.get("reservation"), "company")
+	elif kind == "Group" and folio.get("group_booking"):
+		company = frappe.db.get_value(
+			"Group Booking", folio.get("group_booking"), "company")
+	if company and frappe.db.get_value(
+			"Corporate Account", company, "credit_allowed"):
+		return company
+	return None
 
 
 def transfer_to_city_ledger(folio: str, company: str | None = None) -> dict:
@@ -1021,27 +1089,20 @@ def batch_print_folios(folios: str | list):
 @frappe.whitelist(methods=["POST"])
 @require_roles("Front Desk", "Kamra Agent")
 def quick_checkout(reservation: str, pin: str | None = None):
-	"""Settle + close folio + check out in one step when balance is zero
-	or fully covered by company credit."""
+	"""Check out and close the guest folio in one step. check_out settles the
+	stay the one way: the company's folio (Company, or the group master)
+	moves to the city ledger when the company has credit, and the guest's
+	own folio must already be paid - liquor and extras are never billed to
+	the company."""
 	from kamra.api import check_out, close_folio
 	folio_name = frappe.db.get_value(
 		"Folio", {"reservation": reservation, "folio_type": "Guest",
 		          "status": "Open"}, "name")
 	if not folio_name:
 		frappe.throw("No open guest folio.")
-	folio = frappe.get_doc("Folio", folio_name)
-	if float(folio.balance or 0) > 0.009:
-		company = frappe.db.get_value(
-			"Reservation", reservation, "company")
-		if company and frappe.db.get_value(
-				"Corporate Account", company, "credit_allowed"):
-			transfer_to_city_ledger(folio_name, company)
-		else:
-			frappe.throw(
-				f"Balance ₹{float(folio.balance):,.2f} remains - collect payment "
-				"or transfer to city ledger first.")
+	out = check_out(reservation)
 	close_folio(folio_name, pin=pin)
-	return check_out(reservation)
+	return out
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1050,7 +1111,7 @@ def group_checkout(group: str, pin: str | None = None):
 	"""Quick-checkout every Checked In reservation on a group."""
 	res_names = frappe.get_all(
 		"Reservation",
-		filters={"revenue_group": group, "status": "Checked In"},
+		filters={"group_booking": group, "status": "Checked In"},
 		pluck="name",
 	)
 	results = []

@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **305 endpoints**, generated from the source
+the UI and the AI use. **307 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -1905,13 +1905,39 @@ The digital menu for an outlet: available items grouped by category.
 | --- | --- | --- |
 | `outlet` | yes |  |
 
+### `kamra.pos.in_house_rooms`
+
+**GET/POST**
+
+Rooms with a checked-in guest, for the till's room picker: only these
+can take a room charge. "101 · Guest Name".
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.pos.charge_to_room`
+
+**POST**
+
+Point a running bill (a dine-in table, say) at an in-house guest's
+room, so Deliver posts it to their folio through the same controller
+path as room service - billing rules and the alcohol rule included.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `order` | yes |  |
+| `room` | yes |  |
+
 ### `kamra.pos.create_order`
 
 **POST**
 
-Captain takes an order. If a room is given but no reservation, the
-in-house stay is resolved so it can post to the folio later. Takeaway
-and delivery carry the customer's details instead of a table/room.
+Captain takes an order. A room (room service, or a dine-in guest
+charging to their room) must have a checked-in stay: it is resolved now
+so the bill posts to that folio on delivery. A room with nobody in house
+is refused - take it as a walk-in bill instead. Takeaway and delivery
+carry the customer's details instead of a table/room.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -3750,8 +3776,11 @@ Post the same charge to many folios (group / event).
 
 **POST** · roles: `Front Desk`, `Kamra Agent`
 
-Settle + close folio + check out in one step when balance is zero
-or fully covered by company credit.
+Check out and close the guest folio in one step. check_out settles the
+stay the one way: the company's folio (Company, or the group master)
+moves to the city ledger when the company has credit, and the guest's
+own folio must already be paid - liquor and extras are never billed to
+the company.
 
 | Param | Required | Default |
 | --- | --- | --- |

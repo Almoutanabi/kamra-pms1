@@ -5146,6 +5146,80 @@
      }
     },
     {
+     "name": "in_house_rooms",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.pos.in_house_rooms",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.pos.in_house_rooms"
+       ]
+      },
+      "description": "Rooms with a checked-in guest, for the till's room picker: only these\ncan take a room charge. \"101 \u00b7 Guest Name\".",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "charge_to_room",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.pos.charge_to_room",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.pos.charge_to_room"
+       ]
+      },
+      "description": "Point a running bill (a dine-in table, say) at an in-house guest's\nroom, so Deliver posts it to their folio through the same controller\npath as room service - billing rules and the alcohol rule included.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"order\": \"ORD-2026-00001\",\n  \"room\": \"Your Property-101\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
      "name": "create_order",
      "request": {
       "method": "POST",
@@ -5170,7 +5244,7 @@
         "kamra.pos.create_order"
        ]
       },
-      "description": "Captain takes an order. If a room is given but no reservation, the\nin-house stay is resolved so it can post to the folio later. Takeaway\nand delivery carry the customer's details instead of a table/room.",
+      "description": "Captain takes an order. A room (room service, or a dine-in guest\ncharging to their room) must have a checked-in stay: it is resolved now\nso the bill posts to that folio on delivery. A room with nobody in house\nis refused - take it as a walk-in bill instead. Takeaway and delivery\ncarry the customer's details instead of a table/room.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"outlet\": \"Your Property-Restaurant\",\n  \"items\": \"<items>\",\n  \"property\": \"Your Property\",\n  \"room\": \"Your Property-101\",\n  \"reservation\": \"RES-2026-00001\",\n  \"source\": \"Manual\",\n  \"customer_name\": \"A. Customer\"\n}",
@@ -10057,7 +10131,7 @@
         "kamra.ledger.quick_checkout"
        ]
       },
-      "description": "Settle + close folio + check out in one step when balance is zero\nor fully covered by company credit.",
+      "description": "Check out and close the guest folio in one step. check_out settles the\nstay the one way: the company's folio (Company, or the group master)\nmoves to the city ledger when the company has credit, and the guest's\nown folio must already be paid - liquor and extras are never billed to\nthe company.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"reservation\": \"RES-2026-00001\"\n}",

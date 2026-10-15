@@ -137,9 +137,12 @@ class LedgerAuditTestCase(AuditTestCase):
 		self.pay(1000, kind="Advance")
 		api.refund_folio_payment(self.folio, 410, "Cash", reason="UT over-collected")
 		out, by = self.balances()
+		# the stay is in house, so the advance pays it: it leaves the
+		# Deposit ledger and credits the Guest ledger straight away
 		self.assertAlmostEqual(by["Deposit"]["credit"], 1000, places=2)
-		self.assertAlmostEqual(by["Deposit"]["debit"], 0, places=2)
+		self.assertAlmostEqual(by["Deposit"]["debit"], 1000, places=2)
 		self.assertAlmostEqual(by["Guest"]["debit"], 590 + 410, places=2)
+		self.assertAlmostEqual(by["Guest"]["credit"], 1000, places=2)
 		self.assertTrue(out["in_balance"])
 		self.assert_ledger_matches_folio()
 

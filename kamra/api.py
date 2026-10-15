@@ -1462,6 +1462,11 @@ def add_folio_payment(folio: str, mode: str, amount: float,
 		record_payment_ledger(doc, pay.as_dict(), session=sess)
 	except Exception:
 		frappe.log_error(title="ledger payment write failed")
+	if kind == "Advance" and doc.reservation and frappe.db.get_value(
+			"Reservation", doc.reservation, "status") == "Checked In":
+		# an advance taken from a guest already in house pays the stay
+		from kamra.ledger import transfer_advances_to_guest
+		transfer_advances_to_guest(doc.reservation)
 	if kind == "Security Deposit" and doc.reservation and \
 	   (doc.folio_type or "Guest") == "Guest":
 		# keep the stay's Security Deposit record in step, whichever screen
@@ -3358,29 +3363,35 @@ def _assert_settled(doc):
 	"""A guest never departs owing money, or owed it (issue #132).
 
 	Every night is posted first, because night audit may not have run for the
-	last one. A balance on a corporate stay whose company has credit moves to
-	the city ledger, as quick_checkout does; anything else is collected or
-	refunded before departure. frappe.flags.allow_unsettled_checkout is for
-	seed and test scripts only - no endpoint sets it.
+	last one. Only what the company pays moves to the city ledger: the stay's
+	Company folio, or the group master when the group's company has credit.
+	The guest's own folios (Guest, Extra) - liquor, extras, anything the
+	billing rules left on the guest - are the guest's to settle, so a balance
+	there refuses the check-out. Closed folios count too: a bill closed with
+	money still on it is still owed. frappe.flags.allow_unsettled_checkout is
+	for seed and test scripts only - no endpoint sets it.
 	"""
 	if frappe.flags.allow_unsettled_checkout:
 		return
 	from kamra.folio import post_remaining_nights
+	from kamra.ledger import company_payer_of
 	from kamra.localization import pack_for
 
 	post_remaining_nights(doc)
 	symbol = pack_for(doc.property).locale(
 		frappe.get_cached_doc("Property", doc.property)).get("currency_symbol", "")
-	credit = bool(doc.company and frappe.db.get_value("Corporate Account", doc.company, "credit_allowed"))
 	owed = refund = 0.0
-	for f in frappe.get_all("Folio", filters={"reservation": doc.name, "status": "Open"},
-	                        fields=["name", "balance"]):
+	to_city_ledger = []
+	for f in frappe.get_all("Folio", filters={"reservation": doc.name},
+	                        fields=["name", "balance", "folio_type",
+	                                "group_booking", "reservation"]):
 		balance = float(f.balance or 0)
-		if balance > 0.009 and credit:
-			from kamra.ledger import transfer_to_city_ledger
-			transfer_to_city_ledger(f.name, doc.company)
-		elif balance > 0.009:
-			owed += balance
+		if balance > 0.009:
+			payer = company_payer_of(f)
+			if payer:
+				to_city_ledger.append((f.name, payer))
+			else:
+				owed += balance
 		elif balance < -0.009:
 			refund -= balance
 	if owed:
@@ -3389,6 +3400,10 @@ def _assert_settled(doc):
 	if refund:
 		frappe.throw(_("Cannot check out: the guest is owed {0}{1:,.2f}. Issue the "
 		               "refund before departure.").format(symbol, refund))
+	# nothing moves until the guest's side is settled
+	from kamra.ledger import transfer_to_city_ledger
+	for folio, company in to_city_ledger:
+		transfer_to_city_ledger(folio, company)
 
 
 @frappe.whitelist()

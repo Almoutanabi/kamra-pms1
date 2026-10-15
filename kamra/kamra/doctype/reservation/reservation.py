@@ -696,13 +696,20 @@ class Reservation(Document):
 		from kamra.folio import open_folio
 
 		open_folio(self)
+		# the advance stops being a deposit the moment the guest is in house:
+		# it pays the stay, so it moves to the Guest ledger
+		from kamra.ledger import transfer_advances_to_guest
+		transfer_advances_to_guest(self.name)
 		self.log_action("check_in", minutes_saved=10)
 
 	def handle_check_out(self):
 		self.db_set("actual_check_out", now_datetime(), update_modified=False)
 		from kamra.folio import post_remaining_nights
+		from kamra.ledger import transfer_advances_to_guest
 
 		post_remaining_nights(self)
+		# a no-op unless an advance reached the stay some other way
+		transfer_advances_to_guest(self.name)
 		for room in self._occupied_rooms(checking_in=False):
 			hk, occ = frappe.db.get_value(
 				"Room", room, ["housekeeping_status", "occupancy_status"]) or (None, None)

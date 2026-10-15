@@ -2,8 +2,8 @@
 # For license information, please see license.txt
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
-from frappe.utils import nowdate
 
 
 class POSOrder(Document):
@@ -18,6 +18,38 @@ class POSOrder(Document):
 		# NC (no charge): the items stand for the kitchen and the audit,
 		# but the bill is zero
 		self.order_total = 0.0 if self.nc else subtotal - discount
+		self.guard_room_posting()
+
+	def charges_to_room(self) -> bool:
+		"""The bill is meant for a guest's room: room service, or any order
+		(a dine-in one too) tied to a room or an in-house stay."""
+		return bool(self.room or self.reservation
+		            or self.order_type == "Room Service")
+
+	def guard_room_posting(self):
+		"""A room bill closes (Delivered) only two ways: it posts to a
+		checked-in stay's folio, or it was paid at the outlet. Anything else
+		was food served with nothing billed and nothing paid."""
+		if self.status != "Delivered" or self.paid or self.nc \
+		   or self.posted_to_folio or not self.charges_to_room():
+			return
+		previous = self.get_doc_before_save()
+		if previous and previous.status == "Delivered":
+			return
+		if self.room and not self.reservation:
+			# the guest may have checked in since the order was taken
+			self.reservation = frappe.db.get_value(
+				"Reservation", {"room": self.room, "status": "Checked In",
+				                "property": self.property}, "name")
+		status = self.reservation and frappe.db.get_value(
+			"Reservation", self.reservation, "status")
+		if status != "Checked In":
+			where = (_("Room {0}").format(frappe.db.get_value(
+				"Room", self.room, "room_number") or self.room)
+				if self.room else _("this bill"))
+			frappe.throw(_(
+				"{0} has no checked-in guest to post to. Take payment at the "
+				"outlet (Cash, Card or UPI) to close it.").format(where))
 
 	def on_update(self):
 		previous = self.get_doc_before_save()
@@ -47,10 +79,11 @@ class POSOrder(Document):
 		if folio.status == "Closed":
 			frappe.throw("Folio is closed — settle the order directly.")
 		gst = frappe.db.get_value("POS Outlet", self.outlet, "gst_rate") or 5
+		from kamra.business_date import get_business_date
 		detail = ", ".join(
 			f"{it.item_name} ×{int(it.qty)}" for it in self.items if not it.voided)
 		folio.append("charges", {
-			"posting_date": nowdate(),
+			"posting_date": get_business_date(self.property),
 			"charge_type": "Food & Beverage",
 			"reservation": self.reservation,
 			"description": f"{self.outlet.split('-')[-1]}: {detail} ({self.name})",

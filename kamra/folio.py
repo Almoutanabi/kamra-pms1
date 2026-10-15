@@ -685,10 +685,30 @@ def post_policy_fee(reservation, basis: str, label: str,
 
 
 def close_folio(folio_name: str) -> str:
-	"""Close the folio and assign the GST invoice number."""
+	"""Close the folio and assign the GST invoice number.
+
+	A folio closes only when it is settled: what the guest owes is paid, what
+	the company owes has moved to the city ledger (transfer_to_city_ledger
+	zeroes it with a Company Credit payment), and nothing is owed back.
+	Closing with money on it was how a guest left owing."""
 	folio = frappe.get_doc("Folio", folio_name)
 	if folio.status == "Closed":
 		return folio.invoice_number
+	_recalculate(folio)
+	balance = float(folio.balance or 0)
+	if abs(balance) > 0.01:
+		from kamra.localization import pack_for
+		symbol = pack_for(folio.property).locale(
+			frappe.get_cached_doc("Property", folio.property)).get(
+			"currency_symbol", "")
+		if balance > 0:
+			frappe.throw(frappe._(
+				"Cannot close the folio: {0}{1:,.2f} is still owed. Collect "
+				"payment, or move the company's share to the city ledger, "
+				"first.").format(symbol, balance))
+		frappe.throw(frappe._(
+			"Cannot close the folio: {0}{1:,.2f} is owed back to the guest. "
+			"Issue the refund first.").format(symbol, -balance))
 	from frappe.model.naming import make_autoname
 
 	folio.status = "Closed"

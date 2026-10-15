@@ -899,7 +899,7 @@ def t18b():
 		pass
 
 
-@check("closed folio is frozen: charges immutable, payments still settle")
+@check("closed folio is frozen: charges immutable, close needs a settled bill")
 def t19():
 	from kamra import api
 	from kamra.folio import close_folio, post_room_night
@@ -910,6 +910,13 @@ def t19():
 	post_room_night(res, "2031-02-01")
 	folio = frappe.db.get_value(
 		"Folio", {"reservation": res.name, "folio_type": "Guest"})
+	try:
+		close_folio(folio)
+		raise AssertionError("a folio with money owed was closed")
+	except frappe.ValidationError:
+		pass
+	api.add_folio_payment(folio, "UPI",
+	                      float(frappe.db.get_value("Folio", folio, "balance")))
 	inv = close_folio(folio)
 	assert inv.startswith("INV-"), inv
 	fd = frappe.get_doc("Folio", folio)
@@ -919,9 +926,6 @@ def t19():
 		raise AssertionError("closed folio accepted a charge edit")
 	except frappe.ValidationError:
 		pass
-	# settling the balance is still allowed
-	out = api.add_folio_payment(folio, "UPI", 4200)
-	assert out["balance"] == 0, out["balance"]
 
 
 @check("room capacity: over-occupancy booking refused, at-capacity allowed")
@@ -4060,8 +4064,12 @@ def t86():
 	api.check_out(res.name)
 	assert frappe.db.get_value("Reservation", res.name, "status") == "Checked Out"
 
+	# the company pays the room (its billing rule): that folio goes to AR at
+	# check-out; the guest's own folio is never moved there
 	comp = frappe.get_doc({"doctype": "Corporate Account", "company_name": "EVAL Credit Corp",
-	                       "credit_allowed": 1}).insert(ignore_permissions=True)
+	                       "credit_allowed": 1,
+	                       "billing_rules": [{"charge_type": "Room", "pay_by": "Company"}],
+	                       }).insert(ignore_permissions=True)
 	g2 = _guest("Eval Corporate Checkout", "+91 70000 00087")
 	res2 = _res(g2, "2036-02-05", "2036-02-06", ROOM)
 	res2.booking_type = "Corporate"
@@ -4069,9 +4077,12 @@ def t86():
 	res2.status = "Checked In"
 	res2.save(ignore_permissions=True)
 	api.check_out(res2.name)
-	folio2 = frappe.db.get_value("Folio", {"reservation": res2.name, "folio_type": "Guest"})
+	folio2 = frappe.db.get_value("Folio", {"reservation": res2.name, "folio_type": "Company"})
+	assert folio2, "the room never reached the company folio"
 	assert abs(float(frappe.db.get_value("Folio", folio2, "balance") or 0)) < 0.01
 	assert frappe.db.exists("City Ledger Entry", {"folio": folio2}), "credit stay never reached AR"
+	guest2 = frappe.db.get_value("Folio", {"reservation": res2.name, "folio_type": "Guest"})
+	assert not frappe.db.exists("City Ledger Entry", {"folio": guest2}), "guest folio billed to AR"
 
 
 @check("city ledger transfer posts balanced legs: guest ledger credited, AR debited")
@@ -6295,6 +6306,153 @@ def t186():
 	assert abs(gross[0] - 4500) < 0.05 and abs(gross[1] - 6000) < 0.05, gross
 
 
+def _leak_net(folio, ledger):
+	return round(float(frappe.db.sql(
+		"""SELECT COALESCE(SUM(debit - credit), 0) FROM `tabFolio Ledger Entry`
+		   WHERE folio = %s AND ledger = %s""", (folio, ledger))[0][0]), 2)
+
+
+def _leak_corp(name):
+	return frappe.get_doc({
+		"doctype": "Corporate Account", "company_name": name, "credit_allowed": 1,
+		"billing_rules": [{"charge_type": "Room", "pay_by": "Company"},
+		                  {"charge_type": "Food & Beverage", "pay_by": "Company"}],
+	}).insert(ignore_permissions=True).name
+
+
+@check("check-out moves only the company's folio to the city ledger; liquor stays on the guest")
+def t190():
+	from kamra import api
+	corp = _leak_corp("EVAL Leak Corp")
+	res, guest = _in_house("Eval Leak Liquor", "+91 70000 00190", "2037-01-10",
+	                       "2037-01-11", _ledger_room("L190"), company=corp)
+	api.add_folio_charge(guest, "Food & Beverage", "eval whisky", 800,
+	                     is_alcohol=1)
+	liquor = float(frappe.db.get_value("Folio", guest, "balance"))
+	try:
+		api.check_out(res.name)
+		raise AssertionError("checked out with the liquor unpaid")
+	except frappe.ValidationError as e:
+		assert "still owed" in str(e), e
+	assert not frappe.get_all("City Ledger Entry", filters={"folio": guest})
+	api.add_folio_payment(guest, "Cash", liquor)
+	api.check_out(res.name)
+	company = frappe.db.get_value(
+		"Folio", {"reservation": res.name, "folio_type": "Company"})
+	moved = frappe.get_all("City Ledger Entry",
+	                       filters={"folio": ["in", [guest, company]]},
+	                       pluck="folio")
+	assert moved == [company], moved
+	assert not [p for p in frappe.get_doc("Folio", guest).payments
+	            if p.mode == "Company Credit"]
+
+
+@check("POS: a room bill needs an in-house guest; it never closes unbilled")
+def t191():
+	from kamra import pos
+	outlet = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Eval Leak Diner",
+		"outlet_type": "Restaurant", "gst_rate": 5}).insert(ignore_permissions=True).name
+	dish = frappe.get_doc({
+		"doctype": "Menu Item", "property": P, "outlet": outlet,
+		"item_name": "Eval Leak Idli", "category": "Food", "price": 150,
+		"is_veg": 1, "available": 1, "prep_station": "Kitchen",
+	}).insert(ignore_permissions=True).name
+	empty = _ledger_room("L191")
+	try:
+		pos.create_order(outlet, [{"menu_item": dish, "qty": 1}], room=empty,
+		                 order_type="Room Service")
+		raise AssertionError("room service accepted for an empty room")
+	except frappe.ValidationError:
+		pass
+	assert empty not in [r["room"] for r in pos.in_house_rooms(P)]
+	res, _f = _in_house("Eval Leak RS", "+91 70000 00191", "2037-01-12",
+	                    "2037-01-13", _ledger_room("L192"))
+	listed = {r["room"]: r for r in pos.in_house_rooms(P)}
+	assert res.room in listed and "Eval Leak RS" in listed[res.room]["guest_name"], listed
+	o = pos.create_order(outlet, [{"menu_item": dish, "qty": 1}], room=res.room)
+	frappe.db.set_value("Reservation", res.name, "status", "Checked Out")
+	try:
+		pos.deliver_order(o["order"])
+		raise AssertionError("room bill delivered with no stay to post to")
+	except frappe.ValidationError:
+		pass
+	assert pos.pay_order(o["order"], "Cash")["paid"]
+
+
+@check("a folio closes only when settled; check-out counts closed folios with a balance")
+def t192():
+	from kamra import api
+	from kamra.folio import close_folio
+	res, folio = _in_house("Eval Leak Close", "+91 70000 00192", "2037-01-14",
+	                       "2037-01-15", _ledger_room("L193"))
+	api.add_folio_charge(folio, "Laundry", "eval laundry", 300)
+	from kamra.folio import post_remaining_nights
+	post_remaining_nights(res)
+	try:
+		close_folio(folio)
+		raise AssertionError("closed with a balance")
+	except frappe.ValidationError:
+		pass
+	frappe.db.set_value("Folio", folio, {"status": "Closed",
+	                                     "invoice_number": "INV-EVAL-LEGACY"})
+	try:
+		api.check_out(res.name)
+		raise AssertionError("checked out owing on a closed folio")
+	except frappe.ValidationError as e:
+		assert "still owed" in str(e), e
+
+
+@check("POS: a dine-in bill signed to the room posts there, alcohol to the guest")
+def t193():
+	from kamra import pos
+	outlet = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Eval Leak Bar",
+		"outlet_type": "Restaurant", "gst_rate": 5}).insert(ignore_permissions=True).name
+	gin = frappe.get_doc({
+		"doctype": "Menu Item", "property": P, "outlet": outlet,
+		"item_name": "Eval Leak Gin", "category": "Drinks", "price": 400,
+		"is_veg": 1, "available": 1, "prep_station": "Bar", "is_alcohol": 1,
+	}).insert(ignore_permissions=True).name
+	corp = _leak_corp("EVAL Leak Bar Corp")
+	res, guest = _in_house("Eval Leak Diner", "+91 70000 00193", "2037-01-16",
+	                       "2037-01-17", _ledger_room("L194"), company=corp)
+	o = pos.create_order(outlet, [{"menu_item": gin, "qty": 1}], table_no="B1",
+	                     order_type="Dine In")
+	pos.charge_to_room(o["order"], res.room)
+	assert pos.deliver_order(o["order"])["posted_to_folio"]
+	rows = frappe.get_all("Folio Charge", filters={
+		"description": ["like", f"%{o['order']}%"]}, fields=["parent", "is_alcohol"])
+	assert [(r.parent, r.is_alcohol) for r in rows] == [(guest, 1)], rows
+
+
+@check("an advance leaves the Deposit ledger at check-in; paid check-out nets both to zero")
+def t194():
+	from kamra import api
+	from kamra.folio import open_folio
+	from kamra.ledger import transfer_advances_to_guest
+	res = _res(_guest("Eval Leak Advance", "+91 70000 00194"), "2037-01-18",
+	           "2037-01-19", _ledger_room("L195"))
+	folio = open_folio(res)
+	api.add_folio_payment(folio, "UPI", 2000, kind="Advance")
+	assert _leak_net(folio, "Deposit") == -2000, _leak_net(folio, "Deposit")
+	res.reload()
+	res.status = "Checked In"
+	res.save(ignore_permissions=True)
+	assert _leak_net(folio, "Deposit") == 0, _leak_net(folio, "Deposit")
+	assert transfer_advances_to_guest(res.name) == 0
+	from kamra.folio import post_remaining_nights
+	post_remaining_nights(res)
+	owed = float(frappe.db.get_value("Folio", folio, "balance"))
+	if owed > 0.009:
+		api.add_folio_payment(folio, "Cash", owed)
+	elif owed < -0.009:
+		api.refund_folio_payment(folio, -owed, "Cash", "eval change")
+	api.check_out(res.name)
+	assert _leak_net(folio, "Deposit") == 0
+	assert _leak_net(folio, "Guest") == 0, _leak_net(folio, "Guest")
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -6319,7 +6477,7 @@ def execute():
 		           t142, t143, t150, t151, t152, t153, t170, t171, t172, t173, t174, t176,
 		           t177, t178, t179, t160, t161, t162, t163, t164, t165, t166, t167, t130,
 		           t131, t132, t133, t134, t135, t136, t137, t138, t139, t180, t181, t182,
-		           t183, t184, t185, t186):
+		           t183, t184, t185, t186, t190, t191, t192, t193, t194):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
