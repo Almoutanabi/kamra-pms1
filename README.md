@@ -164,7 +164,7 @@ Live example: [demo.kamrapms.com/book](https://demo.kamrapms.com/book).
 | **Short-term rentals** | Hotel vs STR property kind, sellable units, per-villa locations, whole-villa check-in as one unit, villa / room availability that blocks both ways, security deposits, Instant / Request-to-book |
 | **Booking** | Multi-room / group / corporate, returning guests, add-ons, vouchers, travel agents, day-use from the booking screen, rate lock at booking |
 | **Revenue** | Seasons, rate plans, guardrails, hurdle rates, overbooking allowance, cancellation & no-show policy in code |
-| **Billing** | Folios, corporate routing, group masters, charge splits, deposits, night audit, city-ledger payments (oldest bills first), tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
+| **Billing** | Folios, corporate routing, group masters, charge splits, deposits, End of Day (night audit checklist + saved report pack, Night Auditor role), city-ledger payments (oldest bills first), tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
 | **F&B** | POS table map, full-screen till and kitchen pass, split bills, thermal KOT, kitchen display, inventory & recipes, QR ordering with printable table and room QR codes, room posting |
 | **Operations** | Tickets + SLA, housekeeping `/hk`, guest laundry end-to-end, lost & found, banquet / events (send quote, guest response, dept checklists) |
 | **Guests** | Online pre-check-in, GRC + occupant register, **editable nationality**, ID retention modes, Kamra Verify (India: GSTIN and guest ID checks — coming soon) |
