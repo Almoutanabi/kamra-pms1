@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { clampGuests, maxCapacity } from "../lib/occupancy"
 import PrivacyNotice, { setPrivacyTerms } from "../components/PrivacyNotice"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import {
@@ -131,13 +132,6 @@ const inputCls =
   "w-full rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-base " +
   "focus:outline-2 focus:outline-offset-1 focus:outline-brand-600"
 
-function clampGuests(value: number, floor: number, cap: number) {
-	const n = Number.isFinite(value) ? value : floor
-	const atLeast = Math.max(floor, n)
-	return cap > 0 ? Math.min(atLeast, cap) : atLeast
-}
-
-
 function todayPlus(days: number) {
   const d = new Date()
   d.setDate(d.getDate() + days)
@@ -195,12 +189,8 @@ export default function PublicBooking() {
   // search. Without it the page quotes a party the booking then refuses -
   // the guest gets a price, fills in their details, and only finds out on
   // submit (Reservation.validate_occupancy is the real guard).
-  const capAcross = (field: "adults_capacity" | "children_capacity") => {
-    const caps = (data?.room_types || []).map((rt) => Number(rt[field]) || 0)
-    return caps.length && caps.every((c) => c > 0) ? Math.max(...caps) : 0
-  }
-  const maxAdults = capAcross("adults_capacity")
-  const maxChildren = capAcross("children_capacity")
+  const maxAdults = maxCapacity(data?.room_types, "adults_capacity")
+  const maxChildren = maxCapacity(data?.room_types, "children_capacity")
 
   // The party also arrives in the URL (/book/in/out/adults/children), so clamp
   // once the capacity is known - otherwise a shared or edited link walks
