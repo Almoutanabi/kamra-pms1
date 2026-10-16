@@ -54,9 +54,12 @@
 
 ## What's new
 
-Latest release: **[v2.6.14](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
+Latest release: **[v2.6.15](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
 (`develop` ships nightly).
 
+- **2.6.15** — End of Day night-audit checklist with a saved report pack and a
+  Night Auditor role; corporate guests settle their own extras; POS bills
+  can't close unpaid; advance deposits clear at check-in
 - **2.6.14** — Request-to-Book inbox, per-property no-show policy, rate lock
   at booking, security deposits, day use, printable QR codes, city-ledger
   payments, a complete ledger, and a lighter first page load

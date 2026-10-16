@@ -26,7 +26,10 @@ upgrade-breaking changes (removed doctypes / API contracts).
   quotation, desk-led guest response, department checklists + notify on
   Confirm (Sales/Finance/HK/F&B), and quote no-response chase reminders
 
-### Features (next release)
+## [2.6.15](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.14...v2.6.15) (2026-10-16)
+
+
+### Features
 
 * **night audit:** End of Day — an Opera-style step-by-step screen in the
   Finance menu (also linked from Front Desk; search "night audit", "end of
@@ -42,7 +45,7 @@ upgrade-breaking changes (removed doctypes / API contracts).
   has no billing rules — room and F&B by default, liquor and personal extras
   to the guest ([#216](https://github.com/Kamra-PMS/kamra-pms/pull/216))
 
-### Bug Fixes (next release)
+### Bug Fixes
 
 * **check-out:** a corporate guest's own charges (liquor, extras) are no
   longer moved to the company's account; only the company or group folio goes
@@ -55,23 +58,6 @@ upgrade-breaking changes (removed doctypes / API contracts).
 * **ledger:** advance deposits move to the guest ledger at check-in, so each
   stay balances to zero; a patch fixes existing stays ([#215](https://github.com/Kamra-PMS/kamra-pms/pull/215))
 
-## [2.6.15](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.14...v2.6.15) (2026-10-16)
-
-
-### Features
-
-* **night-audit:** End of Day wizard, Night Auditor role, final reports and docs ([f4de44f](https://github.com/Kamra-PMS/kamra-pms/commit/f4de44f038e46c0fc27654597953ddd37a12f65c))
-* **night-audit:** pre-check checklist, blocker acknowledgement and a saved audit pack ([c1b55ab](https://github.com/Kamra-PMS/kamra-pms/commit/c1b55ab20a305c40c5ae6520ce46afcd7f1b9699))
-* **night-audit:** pre-check checklist, blocker acknowledgement, End of Day wizard backend and saved audit pack ([69bd218](https://github.com/Kamra-PMS/kamra-pms/commit/69bd218cb0f55a39da223f8052ee4e394baa9d2e))
-
-
-### Bug Fixes
-
-* default company routing when no billing rules; no unpaid dine-in bill can close ([2c642ae](https://github.com/Kamra-PMS/kamra-pms/commit/2c642ae3362ec08dca96e1cb46e3323fde6f2d44))
-* default company routing when no billing rules; no unpaid dine-in bill can close ([1fad3f8](https://github.com/Kamra-PMS/kamra-pms/commit/1fad3f81d55afcde426d7a035e118c375f40d3bd))
-* **folio:** stop five money leaks in check-out, POS room posting, folio close and advance deposits ([35af41f](https://github.com/Kamra-PMS/kamra-pms/commit/35af41f31e142202b0f57da6242b73bc9ec559b9))
-* **folio:** stop five money leaks in check-out, POS room posting, folio close and advance deposits ([f18b62c](https://github.com/Kamra-PMS/kamra-pms/commit/f18b62c4f3f72ef3eaed2e7b341760c0af5e2656))
-* **night-audit:** hold alert by in-app notification and email, not WhatsApp ([fb4839b](https://github.com/Kamra-PMS/kamra-pms/commit/fb4839b863c5f8143ac5d9441401e54eeb6becca))
 
 ## [2.6.14](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.13...v2.6.14) (2026-10-15)
 
