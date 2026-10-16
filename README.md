@@ -54,9 +54,12 @@
 
 ## What's new
 
-Latest release: **[v2.6.13](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
+Latest release: **[v2.6.14](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
 (`develop` ships nightly).
 
+- **2.6.14** — Request-to-Book inbox, per-property no-show policy, rate lock
+  at booking, security deposits, day use, printable QR codes, city-ledger
+  payments, a complete ledger, and a lighter first page load
 - **2.6.13** — settings hub, tiered cancellation and peak-date rules, POS
   auto-KOT; night audit can't run ahead of the calendar, no-show balances read
   from the folio, whole-villa check-in, `/hk` app keeps staff signed in,
@@ -161,7 +164,7 @@ Live example: [demo.kamrapms.com/book](https://demo.kamrapms.com/book).
 | **Short-term rentals** | Hotel vs STR property kind, sellable units, per-villa locations, whole-villa check-in as one unit, villa / room availability that blocks both ways, security deposits, Instant / Request-to-book |
 | **Booking** | Multi-room / group / corporate, returning guests, add-ons, vouchers, travel agents, day-use from the booking screen, rate lock at booking |
 | **Revenue** | Seasons, rate plans, guardrails, hurdle rates, overbooking allowance, cancellation & no-show policy in code |
-| **Billing** | Folios, corporate routing, group masters, charge splits, deposits, night audit, city-ledger payments (oldest bills first), tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
+| **Billing** | Folios, corporate routing, group masters, charge splits, deposits, End of Day (night audit checklist + saved report pack, Night Auditor role), city-ledger payments (oldest bills first), tax invoices, cashier till (FO+POS cash, PIN pad), folio ledger; India: Razorpay / Cashfree payment links and GSTR-1 |
 | **F&B** | POS table map, full-screen till and kitchen pass, split bills, thermal KOT, kitchen display, inventory & recipes, QR ordering with printable table and room QR codes, room posting |
 | **Operations** | Tickets + SLA, housekeeping `/hk`, guest laundry end-to-end, lost & found, banquet / events (send quote, guest response, dept checklists) |
 | **Guests** | Online pre-check-in, GRC + occupant register, **editable nationality**, ID retention modes, Kamra Verify (India: GSTIN and guest ID checks — coming soon) |

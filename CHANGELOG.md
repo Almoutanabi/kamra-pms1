@@ -28,6 +28,38 @@ upgrade-breaking changes (removed doctypes / API contracts).
 
 ### Features (next release)
 
+* **night audit:** End of Day — an Opera-style step-by-step screen in the
+  Finance menu (also linked from Front Desk; search "night audit", "end of
+  day" or "EOD"). It checks open tills, unsettled restaurant bills, pending
+  departures and arrivals, rate variances, outlet bills posted to rooms, high
+  balances, credit limits and room status before the date rolls; blockers need
+  a fix or a reason; every audit saves a printable report pack (manager's
+  flash, journal by cashier and transaction code, trial balance, cashier
+  summary, guest and city ledgers, occupancy and revenue, rate variance)
+  ([#217](https://github.com/Kamra-PMS/kamra-pms/pull/217))
+* **roles:** a Night Auditor role for the overnight shift ([#217](https://github.com/Kamra-PMS/kamra-pms/pull/217))
+* **finance:** a per-property default for what a credit company pays when it
+  has no billing rules — room and F&B by default, liquor and personal extras
+  to the guest ([#216](https://github.com/Kamra-PMS/kamra-pms/pull/216))
+
+### Bug Fixes (next release)
+
+* **check-out:** a corporate guest's own charges (liquor, extras) are no
+  longer moved to the company's account; only the company or group folio goes
+  to the city ledger ([#215](https://github.com/Kamra-PMS/kamra-pms/pull/215))
+* **POS:** a bill can only close when it is paid, posted to a checked-in
+  guest's room, or approved as complimentary; the room picker lists only
+  occupied rooms with guest names; dine-in bills can be charged to a room
+  ([#215](https://github.com/Kamra-PMS/kamra-pms/pull/215), [#216](https://github.com/Kamra-PMS/kamra-pms/pull/216))
+* **folio:** a folio can't be closed while money is owed ([#215](https://github.com/Kamra-PMS/kamra-pms/pull/215))
+* **ledger:** advance deposits move to the guest ledger at check-in, so each
+  stay balances to zero; a patch fixes existing stays ([#215](https://github.com/Kamra-PMS/kamra-pms/pull/215))
+
+## [2.6.14](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.13...v2.6.14) (2026-10-15)
+
+
+### Features
+
 * **front desk:** Request to Book inbox on Today, with Accept (assigns a room,
   re-checks availability) and Decline (reason required, guest notified where
   messaging is set up) ([#207](https://github.com/Kamra-PMS/kamra-pms/pull/207))
@@ -48,7 +80,7 @@ upgrade-breaking changes (removed doctypes / API contracts).
   versa; unused group-block rooms are held until the cutoff, then released
   automatically ([#207](https://github.com/Kamra-PMS/kamra-pms/pull/207))
 
-### Bug Fixes (next release)
+### Bug Fixes
 
 * **ledger:** room nights, meal plans, levies, fees, add-ons and POS room
   charges now reach the ledger, and company payments clear AR; patches
@@ -65,6 +97,7 @@ upgrade-breaking changes (removed doctypes / API contracts).
   crash the reset ([#204](https://github.com/Kamra-PMS/kamra-pms/pull/204))
 * **performance:** the first page load downloads about a third less
   JavaScript; React and the router are cached across releases ([#208](https://github.com/Kamra-PMS/kamra-pms/pull/208))
+
 
 ## [2.6.13](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.12...v2.6.13) (2026-10-15)
 
