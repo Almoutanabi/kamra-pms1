@@ -174,6 +174,32 @@ MODULES: tuple[Module, ...] = (
 				       "are cancelled with no fee and the room goes back on sale. Late arrivals and "
 				       "bookings made after this time are kept."),
 			)),
+			Section("auditchecks", "Night audit checklist",
+			        "Checks run before the night audit closes the day (Finance → Billing → Night audit). "
+			        "A blocking check stops a manual run until it is resolved or a supervisor "
+			        "acknowledges it with a reason; a warning is listed in the audit pack only.", (
+				S("na_block_open_tills", "Open tills block the audit", "check", 1,
+				  hint="Cashier sessions not yet closed (cash counted) for the business date. "
+				       "Off: listed as a warning."),
+				S("na_block_open_pos", "Open restaurant bills block the audit", "check", 1,
+				  hint="POS bills still open, or served and neither paid nor posted to a room. "
+				       "Off: listed as a warning."),
+				S("na_block_departures", "Departures still in house block the audit", "check", 1,
+				  hint="Guests due out on the business date who are still Checked In: check them "
+				       "out or extend the stay. Off: listed as a warning."),
+				S("na_high_balance_threshold", "Flag in-house folios owing more than", "number", 50000,
+				  min=0, hint="0 turns the high-balance check off."),
+				S("na_rate_variance_tolerance", "Rate variance tolerance", "number", 1.0,
+				  min=0, max=100000,
+				  hint="A room night posted more than this away from the booked (locked) "
+				       "nightly rate is listed as a rate variance."),
+				S("na_auto_audit_with_blockers", "Scheduled 03:00 audit when checks block", "select",
+				  "Run and report exceptions",
+				  options=("Run and report exceptions", "Hold and alert"),
+				  hint="Run and report exceptions: the date always rolls; open items go in the "
+				       "audit pack as exceptions. Hold and alert: the business date is not "
+				       "rolled and Hotel Admin and Finance are alerted."),
+			)),
 			Section("dayview", "Hourly view", "The time window on the day-use / hourly tape.", (
 				S("hourly_view_start", "Day starts", "time", "06:00", P),
 				S("hourly_view_end", "Day ends", "time", "23:00", P),
@@ -281,6 +307,17 @@ MODULES: tuple[Module, ...] = (
 				S("room_levy_taxable", "Tax applies to the levy", "check", 1, P),
 				S("cleaning_fee", "Cleaning fee per stay", "number", 0, P, min=0),
 				S("cleaning_fee_taxable", "Cleaning fee is taxable", "check", 1, P),
+			)),
+			Section("corporate", "Corporate billing",
+			        "Who pays what on a credit company's stay when that company has no billing rules of its own. "
+			        "A company's own rules always win, and liquor never bills to a company.", (
+				S("default_company_billing", "When a credit company has no billing rules", "select",
+				  "Room and F&B (liquor to guest)", P,
+				  options=("Room and F&B (liquor to guest)", "Room only", "Everything except liquor",
+				           "Nothing (guest pays unless rules say so)"),
+				  hint="Room covers the room night, its meal plan, levies, early check-in / late checkout and the "
+				       "cleaning fee. Laundry, minibar, spa and misc extras stay with the guest unless "
+				       "'Everything except liquor' is chosen."),
 			)),
 			Section("cashier", "Cashier controls", "", (
 				S("require_cashier_pin", "Require cashier PIN on money actions", "check", 0, P,

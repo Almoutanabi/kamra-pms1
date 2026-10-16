@@ -97,6 +97,70 @@ def _allergy_hits(allergy_note: str | None, allergens: str | None) -> list:
 	return hits
 
 
+def _in_house_stay(property: str, room: str | None,
+                   reservation: str | None) -> tuple[str | None, str | None]:
+	"""(room, reservation) for a bill charged to a room, checked against a
+	stay that is in house now. Both None when the bill isn't for a room."""
+	if not (room or reservation):
+		return None, None
+	if reservation:
+		res = frappe.db.get_value(
+			"Reservation", reservation, ["status", "room", "property"],
+			as_dict=True)
+		if not res or res.status != "Checked In" or res.property != property:
+			frappe.throw(_("That stay is not checked in here - a bill can "
+			              "only be charged to an in-house guest."))
+		if room and res.room and room != res.room:
+			frappe.throw(_("That guest is not staying in this room."))
+		return room or res.room, reservation
+	reservation = frappe.db.get_value(
+		"Reservation", {"room": room, "status": "Checked In",
+		                "property": property}, "name")
+	if not reservation:
+		number = frappe.db.get_value("Room", room, "room_number") or room
+		frappe.throw(_("Room {0} has no checked-in guest. Room charges need "
+		              "an in-house stay - take this as a walk-in bill "
+		              "instead.").format(number))
+	return room, reservation
+
+
+@frappe.whitelist()
+@require_roles(*POS_ROLES)
+def in_house_rooms(property: str):
+	"""Rooms with a checked-in guest, for the till's room picker: only these
+	can take a room charge. "101 · Guest Name"."""
+	from kamra.crs import assert_property_access
+	assert_property_access(property)
+	rows = frappe.get_all(
+		"Reservation",
+		filters={"property": property, "status": "Checked In",
+		         "room": ["is", "set"]},
+		fields=["name as reservation", "room", "guest_name"])
+	numbers = dict(frappe.get_all(
+		"Room", filters={"name": ["in", [r.room for r in rows] or [""]]},
+		fields=["name", "room_number"], as_list=True))
+	for r in rows:
+		r["room_number"] = numbers.get(r.room) or r.room.split("-")[-1]
+	rows.sort(key=lambda r: (len(str(r.room_number)), str(r.room_number)))
+	return rows
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles(*POS_ROLES)
+def charge_to_room(order: str, room: str):
+	"""Point a running bill (a dine-in table, say) at an in-house guest's
+	room, so Deliver posts it to their folio through the same controller
+	path as room service - billing rules and the alcohol rule included."""
+	doc = frappe.get_doc("POS Order", order)
+	if doc.status in ("Delivered", "Cancelled"):
+		frappe.throw(_("This order is already closed."))
+	if doc.paid:
+		frappe.throw(_("Already paid."))
+	doc.room, doc.reservation = _in_house_stay(doc.property, room, None)
+	doc.save()
+	return {"ok": True, "room": doc.room, "reservation": doc.reservation}
+
+
 @frappe.whitelist(methods=["POST"])
 @require_roles(*POS_ROLES)
 def create_order(outlet: str, items, property: str | None = None,
@@ -107,13 +171,13 @@ def create_order(outlet: str, items, property: str | None = None,
                  customer_phone: str | None = None,
                  delivery_address: str | None = None,
                  allergy_note: str | None = None):
-	"""Captain takes an order. If a room is given but no reservation, the
-	in-house stay is resolved so it can post to the folio later. Takeaway
-	and delivery carry the customer's details instead of a table/room."""
+	"""Captain takes an order. A room (room service, or a dine-in guest
+	charging to their room) must have a checked-in stay: it is resolved now
+	so the bill posts to that folio on delivery. A room with nobody in house
+	is refused - take it as a walk-in bill instead. Takeaway and delivery
+	carry the customer's details instead of a table/room."""
 	property = property or frappe.db.get_value("POS Outlet", outlet, "property")
-	if room and not reservation:
-		reservation = frappe.db.get_value(
-			"Reservation", {"room": room, "status": "Checked In"}, "name")
+	room, reservation = _in_house_stay(property, room, reservation)
 	lines = _load_items(items)
 	if not lines:
 		frappe.throw(_("Add at least one available item."))
@@ -185,6 +249,8 @@ def _kot_tickets_of(doc) -> list:
 
 def _label(r) -> str:
 	"""A human tag for a bill: where it is, or who it's for."""
+	if r.get("table_no") and r.get("order_type") == "Dine In":
+		return f"Table {r['table_no']}"
 	if r.get("room"):
 		return f"Room {(r['room'] or '').split('-')[-1]}"
 	if r.get("table_no"):

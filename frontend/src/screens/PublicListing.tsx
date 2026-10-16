@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { clampGuests, maxCapacity } from "../lib/occupancy"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import {
   ArrowLeft,
@@ -104,13 +105,6 @@ interface StayResult {
 const inputCls =
   "w-full rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-base " +
   "focus:outline-2 focus:outline-offset-1 focus:outline-brand-600"
-
-function clampGuests(value: number, floor: number, cap: number) {
-	const n = Number.isFinite(value) ? value : floor
-	const atLeast = Math.max(floor, n)
-	return cap > 0 ? Math.min(atLeast, cap) : atLeast
-}
-
 
 function todayPlus(days: number) {
   const d = new Date()
@@ -255,18 +249,11 @@ export default function PublicListing() {
   // to pick one. Without this the page quotes a party the booking will then
   // refuse - the guest gets a price, fills in their details, and only finds
   // out on submit (Reservation.validate_occupancy is the real guard).
-  const capOf = (
-    rts: { adults_capacity: number; children_capacity: number }[] | undefined,
-    field: "adults_capacity" | "children_capacity",
-  ) => {
-    const caps = (rts || []).map((rt) => Number(rt[field]) || 0)
-    return caps.length && caps.every((c) => c > 0) ? Math.max(...caps) : 0
-  }
   const maxAdults = isSite
-    ? capOf(data?.room_types, "adults_capacity")
+    ? maxCapacity(data?.room_types, "adults_capacity")
     : Number(primary?.adults_capacity) || 0
   const maxChildren = isSite
-    ? capOf(data?.room_types, "children_capacity")
+    ? maxCapacity(data?.room_types, "children_capacity")
     : Number(primary?.children_capacity) || 0
   const atAdultCap = maxAdults > 0 && search.adults >= maxAdults
   const atChildCap = maxChildren > 0 && search.children >= maxChildren

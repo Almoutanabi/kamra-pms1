@@ -246,7 +246,7 @@ def open_session(property: str, opening_float: float = 0,
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Kamra Agent")
+@require_roles("Front Desk", "Finance", "Night Auditor", "Kamra Agent")
 def current_session(property: str):
 	"""Caller's open session, or null."""
 	user = frappe.session.user
@@ -272,7 +272,7 @@ def current_session(property: str):
 
 
 @frappe.whitelist(methods=["POST"])
-@require_roles("Front Desk", "Finance", "Kamra Agent")
+@require_roles("Front Desk", "Finance", "Night Auditor", "Kamra Agent")
 def close_session(session: str, counted_cash: float,
                   notes: str | None = None, pin: str | None = None):
 	"""Count the drawer and close the till."""
@@ -281,8 +281,9 @@ def close_session(session: str, counted_cash: float,
 		frappe.throw("This session is already closed.")
 	if doc.user != frappe.session.user and not (
 			set(frappe.get_roles()) & {"Hotel Admin", "System Manager",
-			                           "Administrator", "Finance"}):
-		frappe.throw("Only the owning cashier (or Finance) can close this till.")
+			                           "Administrator", "Finance",
+			                           "Night Auditor"}):
+		frappe.throw("Only the owning cashier (or Finance / the night auditor) can close this till.")
 	from kamra.authz import require_cashier_pin
 	require_cashier_pin(doc.property, pin)
 	totals = _recompute_session_totals(session)
@@ -418,7 +419,7 @@ def post_petty_cash(property: str, amount: float, payee: str, category: str,
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Hotel Admin", "Kamra Agent")
+@require_roles("Front Desk", "Finance", "Hotel Admin", "Night Auditor", "Kamra Agent")
 def list_sessions(property: str, business_date: str | None = None,
                   status: str | None = None):
 	filters: dict[str, Any] = {"property": property}
@@ -441,13 +442,13 @@ def list_sessions(property: str, business_date: str | None = None,
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Hotel Admin", "Kamra Agent")
+@require_roles("Front Desk", "Finance", "Hotel Admin", "Night Auditor", "Kamra Agent")
 def session_report(session: str):
 	return session_as_dict(session)
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Hotel Admin", "Kamra Agent")
+@require_roles("Front Desk", "Finance", "Hotel Admin", "Night Auditor", "Kamra Agent")
 def cash_summary_v2(property: str, date: str | None = None):
 	"""Unified FO + POS cash for a business date (replaces folio-only summary)."""
 	date = date or get_business_date(property)
@@ -498,7 +499,7 @@ def cash_summary_v2(property: str, date: str | None = None):
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Hotel Admin", "Kamra Agent")
+@require_roles("Front Desk", "Finance", "Hotel Admin", "Night Auditor", "Kamra Agent")
 def shift_report(property: str, business_date: str | None = None):
 	"""Per-cashier totals for a business date."""
 	date = business_date or get_business_date(property)

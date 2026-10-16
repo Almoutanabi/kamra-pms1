@@ -36,6 +36,7 @@
   "room_levy_label",
   "room_levy_percent",
   "room_levy_taxable",
+  "default_company_billing",
   "access_instructions",
   "require_precheckin_for_access",
   "hourly_view_start",
@@ -268,6 +269,14 @@
    "fieldtype": "Check",
    "label": "VAT / tax applies to the levy",
    "default": "1"
+  },
+  {
+   "default": "Room and F&B (liquor to guest)",
+   "description": "What a credit company pays when it has no billing rules of its own. Explicit rules always win; liquor never bills to a company.",
+   "fieldname": "default_company_billing",
+   "fieldtype": "Select",
+   "label": "Default company billing",
+   "options": "Room and F&B (liquor to guest)\nRoom only\nEverything except liquor\nNothing (guest pays unless rules say so)"
   },
   {
    "description": "Released to the guest only after payment, deposit, and optional pre-check-in gates pass.",
@@ -637,7 +646,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-15 10:00:00.000000",
+ "modified": "2026-10-15 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kamra",
  "name": "Property",
@@ -708,6 +717,12 @@
    "read": 1,
    "report": 1,
    "role": "Housekeeping Supervisor"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "role": "Night Auditor"
   }
  ],
  "row_format": "Dynamic",

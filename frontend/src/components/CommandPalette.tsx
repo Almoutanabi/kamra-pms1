@@ -181,7 +181,8 @@ export function CommandPalette() {
     () =>
       navItems
         .filter(({ item, app }) =>
-          fuzzy(`${item.label} ${app} ${t(item.label)} ${t(app)}`, q),
+          fuzzy(`${item.label} ${app} ${t(item.label)} ${t(app)}`, q) ||
+          (item.keywords ?? []).some((k) => fuzzy(`${k} ${t(k)}`, q)),
         )
         .map(({ item, app }) => ({
           id: `nav:${item.to ?? item.href ?? item.label}`,

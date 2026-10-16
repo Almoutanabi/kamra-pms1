@@ -304,7 +304,8 @@ def owner_briefing(property: str, date: str | None = None):
 	)[0][0]
 
 	audit = frappe.db.get_value(
-		"Night Audit Run", {"property": property, "business_date": yesterday},
+		"Night Audit Run", {"property": property, "business_date": yesterday,
+		                    "status": ("!=", "Draft")},
 		["name", "room_charges_posted", "no_shows_flagged"], as_dict=True,
 	)
 
@@ -678,7 +679,7 @@ def registration_card(reservation: str):
 
 
 @frappe.whitelist()
-@require_roles("Finance", "Front Desk", "Kamra Agent")
+@require_roles("Finance", "Front Desk", "Night Auditor", "Kamra Agent")
 def cash_summary(property: str, date: str | None = None):
 	"""Cashier reconciliation: what the system says was collected today,
 	per payment mode - the number the drawer must match at shift close.
@@ -1334,7 +1335,7 @@ def advance_ticket(ticket: str, status: str, resolution_note: str | None = None)
 
 
 @frappe.whitelist()
-@require_roles("Finance", "Front Desk", "Kamra Agent")
+@require_roles("Finance", "Front Desk", "Night Auditor", "Kamra Agent")
 def get_folio(reservation: str):
 	"""Folio for a reservation - opens one if the guest is checked in."""
 	name = frappe.db.get_value(
@@ -1462,6 +1463,11 @@ def add_folio_payment(folio: str, mode: str, amount: float,
 		record_payment_ledger(doc, pay.as_dict(), session=sess)
 	except Exception:
 		frappe.log_error(title="ledger payment write failed")
+	if kind == "Advance" and doc.reservation and frappe.db.get_value(
+			"Reservation", doc.reservation, "status") == "Checked In":
+		# an advance taken from a guest already in house pays the stay
+		from kamra.ledger import transfer_advances_to_guest
+		transfer_advances_to_guest(doc.reservation)
 	if kind == "Security Deposit" and doc.reservation and \
 	   (doc.folio_type or "Guest") == "Guest":
 		# keep the stay's Security Deposit record in step, whichever screen
@@ -1682,6 +1688,30 @@ def get_billing_rules(company: str):
 	doc = frappe.get_doc("Corporate Account", company)
 	return [{"charge_type": r.charge_type, "pay_by": r.pay_by}
 	        for r in (doc.get("billing_rules") or [])]
+
+
+@frappe.whitelist()
+@require_roles("Finance", "Front Desk", "Kamra Agent")
+def company_billing_default(company: str, property: str | None = None):
+	"""What this company pays when it has no billing rules: the property's
+	`default_company_billing` for a credit company, nothing otherwise.
+	`charge_types` is None when every charge type (except liquor) is covered."""
+	from kamra.folio import COMPANY_BILLING_DEFAULTS, default_company_billing
+	if property:
+		from kamra.crs import assert_property_access
+		assert_property_access(property)
+	doc = frappe.get_doc("Corporate Account", company)
+	has_rules = bool(doc.get("billing_rules"))
+	label = default_company_billing(property)
+	covered = COMPANY_BILLING_DEFAULTS[label]
+	return {
+		"company": company,
+		"credit_allowed": bool(doc.credit_allowed),
+		"has_rules": has_rules,
+		"default": label,
+		"charge_types": None if covered is None else sorted(covered),
+		"applies": bool(doc.credit_allowed) and not has_rules,
+	}
 
 
 @frappe.whitelist()
@@ -2086,11 +2116,16 @@ def _invoice_guest(res) -> dict:
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Kamra Agent")
-def run_night_audit(property: str, business_date: str | None = None):
+@require_roles("Front Desk", "Finance", "Night Auditor", "Kamra Agent")
+def run_night_audit(property: str, business_date: str | None = None,
+                    acknowledge=None, note: str | None = None):
+	"""Close the current business date. Refused while a blocking pre-check
+	(kamra.night_audit.night_audit_precheck) has items, unless each is
+	listed in `acknowledge` (check keys) with a `note` giving the reason."""
 	# Night audit is a front-desk / night-auditor ritual, not admin-only.
 	from kamra.folio import run_night_audit as _run
-	return _run(property, business_date)
+	return _run(property, business_date, acknowledge=acknowledge, note=note,
+	            mode="manual")
 
 
 @frappe.whitelist()
@@ -2510,7 +2545,7 @@ def _stay_balance(reservation: str) -> dict:
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent", "Finance", "Revenue Manager")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent", "Finance", "Revenue Manager")
 def front_desk_snapshot(property: str | None = None, date: str | None = None):
 	"""Everything the front desk needs for one day, in one call."""
 	date = date or nowdate()
@@ -2834,7 +2869,7 @@ def verify_precheckin(reservation: str):
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent")
 def checkin_context(reservation: str):
 	"""Everything the check-in flow needs in one round trip: how complete
 	the guest's registration is, the assigned room - or the allocator's
@@ -2910,7 +2945,7 @@ def checkin_context(reservation: str):
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent")
 def check_in(reservation: str, room: str | None = None):
 	doc = frappe.get_doc("Reservation", reservation)
 	if room:
@@ -3145,7 +3180,12 @@ def cancellation_tier_for(property: str, days_before: int) -> dict | None:
 	policy, so nothing changes for anyone who has not set them up.
 	"""
 	rows = frappe.get_all(
-		"Cancellation Tier", filters={"parent": property},
+		"Cancellation Tier",
+		# a child table is addressed by all three: parent alone would pick up
+		# rows from any other doctype that grows a Cancellation Tier table,
+		# and quietly change what a guest is charged
+		filters={"parenttype": "Property", "parentfield": "cancellation_tiers",
+		         "parent": property},
 		fields=["days_before", "charge_pct", "label"],
 		order_by="days_before desc")
 	if not rows:
@@ -3166,7 +3206,7 @@ def _cancellation_terms(res):
 	"""Policy + fee estimate for a reservation, before anyone commits."""
 	from frappe.utils import date_diff
 
-	from kamra.folio import policy_fee
+	from kamra.folio import percent_fee, policy_fee
 
 	policy = frappe.db.get_value(
 		"Property", res.property,
@@ -3188,7 +3228,7 @@ def _cancellation_terms(res):
 			"tier": {"days_before": days_before, "charge_pct": 100.0,
 			         "label": rules["season"] or "Non-refundable dates"},
 			"non_refundable_season": rules["season"],
-			"estimated_fee": policy_fee(res, "", pct=100),
+			"estimated_fee": percent_fee(res, 100),
 		}
 
 	tier = cancellation_tier_for(res.property, days_before)
@@ -3200,7 +3240,7 @@ def _cancellation_terms(res):
 			"inside_window": pct > 0,
 			"fee_basis": f"{pct:g}% of stay",
 			"tier": tier,
-			"estimated_fee": policy_fee(res, "", pct=pct) if pct else 0.0,
+			"estimated_fee": percent_fee(res, pct) if pct else 0.0,
 		}
 
 	inside_window = days_before < int(policy.free_cancel_days or 0)
@@ -3358,29 +3398,35 @@ def _assert_settled(doc):
 	"""A guest never departs owing money, or owed it (issue #132).
 
 	Every night is posted first, because night audit may not have run for the
-	last one. A balance on a corporate stay whose company has credit moves to
-	the city ledger, as quick_checkout does; anything else is collected or
-	refunded before departure. frappe.flags.allow_unsettled_checkout is for
-	seed and test scripts only - no endpoint sets it.
+	last one. Only what the company pays moves to the city ledger: the stay's
+	Company folio, or the group master when the group's company has credit.
+	The guest's own folios (Guest, Extra) - liquor, extras, anything the
+	billing rules left on the guest - are the guest's to settle, so a balance
+	there refuses the check-out. Closed folios count too: a bill closed with
+	money still on it is still owed. frappe.flags.allow_unsettled_checkout is
+	for seed and test scripts only - no endpoint sets it.
 	"""
 	if frappe.flags.allow_unsettled_checkout:
 		return
 	from kamra.folio import post_remaining_nights
+	from kamra.ledger import company_payer_of
 	from kamra.localization import pack_for
 
 	post_remaining_nights(doc)
 	symbol = pack_for(doc.property).locale(
 		frappe.get_cached_doc("Property", doc.property)).get("currency_symbol", "")
-	credit = bool(doc.company and frappe.db.get_value("Corporate Account", doc.company, "credit_allowed"))
 	owed = refund = 0.0
-	for f in frappe.get_all("Folio", filters={"reservation": doc.name, "status": "Open"},
-	                        fields=["name", "balance"]):
+	to_city_ledger = []
+	for f in frappe.get_all("Folio", filters={"reservation": doc.name},
+	                        fields=["name", "balance", "folio_type",
+	                                "group_booking", "reservation"]):
 		balance = float(f.balance or 0)
-		if balance > 0.009 and credit:
-			from kamra.ledger import transfer_to_city_ledger
-			transfer_to_city_ledger(f.name, doc.company)
-		elif balance > 0.009:
-			owed += balance
+		if balance > 0.009:
+			payer = company_payer_of(f)
+			if payer:
+				to_city_ledger.append((f.name, payer))
+			else:
+				owed += balance
 		elif balance < -0.009:
 			refund -= balance
 	if owed:
@@ -3389,10 +3435,14 @@ def _assert_settled(doc):
 	if refund:
 		frappe.throw(_("Cannot check out: the guest is owed {0}{1:,.2f}. Issue the "
 		               "refund before departure.").format(symbol, refund))
+	# nothing moves until the guest's side is settled
+	from kamra.ledger import transfer_to_city_ledger
+	for folio, company in to_city_ledger:
+		transfer_to_city_ledger(folio, company)
 
 
 @frappe.whitelist()
-@require_roles("Front Desk", "Kamra Agent")
+@require_roles("Front Desk", "Night Auditor", "Kamra Agent")
 def check_out(reservation: str):
 	doc = frappe.get_doc("Reservation", reservation)
 	_assert_settled(doc)

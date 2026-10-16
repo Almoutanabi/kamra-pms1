@@ -140,6 +140,8 @@ interface Detail {
 
 type OrderType = "Dine In" | "Room Service" | "Takeaway" | "Delivery"
 const ORDER_TYPES: OrderType[] = ["Dine In", "Room Service", "Takeaway", "Delivery"]
+/** A room with a checked-in guest - the only kind that can take a room charge. */
+interface InHouseRoom { room: string; room_number: string; guest_name: string | null; reservation: string }
 
 const TILE: Record<TableTile["state"], string> = {
   vacant: "border-zinc-200 bg-white text-zinc-600 hover:border-brand-400 hover:text-brand-700",
@@ -172,7 +174,7 @@ export default function POS() {
   const rootRef = useRef<HTMLDivElement>(null)
   const [outlets, setOutlets] = useState<Outlet[]>([])
   const [outlet, setOutlet] = useState("")
-  const [rooms, setRooms] = useState<{ name: string; room_number: string }[]>([])
+  const [rooms, setRooms] = useState<InHouseRoom[]>([])
   const [cats, setCats] = useState<{ category: string; items: MenuItem[] }[]>([])
   const [cat, setCat] = useState("All")
   const [query, setQuery] = useState("")
@@ -192,6 +194,7 @@ export default function POS() {
   const [detail, setDetail] = useState<Detail | null>(null)
   const [orderType, setOrderType] = useState<OrderType>("Dine In")
   const [room, setRoom] = useState("")
+  const [postRoom, setPostRoom] = useState("") // settle sheet: charge a running bill to a room
   const [table, setTable] = useState("")
   const [guests, setGuests] = useState("")
   const [custName, setCustName] = useState("")
@@ -227,10 +230,15 @@ export default function POS() {
     call<Outlet[]>("kamra.pos.outlets", { property: getCurrentProperty() })
       .then((o) => { setOutlets(o); if (o[0]) setOutlet(o[0].name) })
       .catch((e) => setError(serverError(e)))
-    call<{ rooms: { name: string; room_number: string }[] }>("kamra.api.hk_queue", { property: getCurrentProperty() })
-      .then((d) => setRooms(d.rooms || []))
-      .catch(() => {})
+    loadRooms()
   }, [])
+
+  /** Only rooms with a checked-in guest can take a room charge. */
+  function loadRooms() {
+    call<InHouseRoom[]>("kamra.pos.in_house_rooms", { property: getCurrentProperty() })
+      .then((d) => setRooms(d || []))
+      .catch(() => {})
+  }
 
   useEffect(() => { localStorage.setItem("pos_print_kot", printKot ? "1" : "0") }, [printKot])
 
@@ -264,7 +272,7 @@ export default function POS() {
     setResTile(null); setReserveOpen(false); setTablesOpen(false)
   }
   function newOrder(atTable?: string) {
-    setSelected(null); setDetail(null); setRoom(""); resetPanel()
+    setSelected(null); setDetail(null); setRoom(""); setPostRoom(""); resetPanel()
     setTable(atTable || ""); setCustomTable(false)
     setGuests(""); setCustName(""); setCustPhone(""); setCustAddr("")
     if (atTable) setOrderType("Dine In")
@@ -366,7 +374,8 @@ export default function POS() {
     return {
       outlet, property: getCurrentProperty(),
       order_type: orderType,
-      room: orderType === "Room Service" ? room || null : null,
+      // room service, or a dine-in guest charging the bill to their room
+      room: orderType === "Room Service" || orderType === "Dine In" ? room || null : null,
       table_no: orderType === "Dine In" ? table || null : null,
       guests: guests || null,
       customer_name: orderType === "Takeaway" || orderType === "Delivery" ? custName || null : null,
@@ -445,6 +454,18 @@ export default function POS() {
     if (!selected) return
     await act(async () => {
       await call("kamra.pos.deliver_order", { order: selected })
+      newOrder()
+    })
+  }
+  /** A dine-in guest signs the bill to their room: link the stay, then
+   *  Deliver posts it to their folio (billing rules and alcohol rule apply). */
+  async function chargeToRoom() {
+    if (!selected || !postRoom) return
+    const order = selected
+    await act(async () => {
+      await call("kamra.pos.charge_to_room", { order, room: postRoom })
+      await call("kamra.pos.deliver_order", { order })
+      setPostRoom("")
       newOrder()
     })
   }
@@ -1096,10 +1117,12 @@ export default function POS() {
                   </div>
                 )}
                 {orderType === "Room Service" && (
-                  <select className={inputCls} value={room} onChange={(e) => setRoom(e.target.value)}>
-                    <option value="">Room…</option>
-                    {rooms.map((r) => <option key={r.name} value={r.name}>Room {r.room_number}</option>)}
-                  </select>
+                  <RoomPicker rooms={rooms} value={room} onChange={setRoom} onOpen={loadRooms}
+                    placeholder={rooms.length ? "Room…" : "No guests in house"} />
+                )}
+                {orderType === "Dine In" && rooms.length > 0 && (
+                  <RoomPicker rooms={rooms} value={room} onChange={setRoom} onOpen={loadRooms}
+                    placeholder="Charge to room (optional)…" />
                 )}
                 {isNewCustomerType && (
                   <>
@@ -1365,10 +1388,18 @@ export default function POS() {
                         <Button key={m} className="h-12 justify-center text-base" disabled={busy} onClick={() => settle(m)}>{m}</Button>
                       ))}
                     </div>
-                    {detail.room && (
+                    {detail.room ? (
                       <Button variant="outline" className="h-11 w-full" disabled={busy} onClick={settleDeliver}>
                         <BedDouble className="size-4" />Deliver & post to Room {detail.room.split("-").pop()}
                       </Button>
+                    ) : detail.order_type === "Dine In" && rooms.length > 0 && (
+                      <div className="flex gap-1.5">
+                        <RoomPicker rooms={rooms} value={postRoom} onChange={setPostRoom} onOpen={loadRooms}
+                          placeholder="Charge to a guest's room…" />
+                        <Button variant="outline" className="h-10 shrink-0" disabled={busy || !postRoom} onClick={chargeToRoom}>
+                          <BedDouble className="size-4" />Post
+                        </Button>
+                      </div>
                     )}
                     <Button variant="outline" className="h-11 w-full text-amber-700" disabled={busy} onClick={() => setSheetNc(true)}>
                       <Gift className="size-4" />Complimentary — close at {cur()}0
@@ -1424,6 +1455,24 @@ export default function POS() {
         </div>
       )}
     </div>
+  )
+}
+
+/** "101 · Guest Name" for every in-house room; refreshes when opened. */
+function RoomPicker({ rooms, value, onChange, onOpen, placeholder }: {
+  rooms: InHouseRoom[]; value: string; onChange: (room: string) => void
+  onOpen: () => void; placeholder: string
+}) {
+  return (
+    <select className={inputCls} value={value} onFocus={onOpen}
+      onChange={(e) => onChange(e.target.value)}>
+      <option value="">{placeholder}</option>
+      {rooms.map((r) => (
+        <option key={r.room} value={r.room}>
+          {r.room_number}{r.guest_name ? ` · ${r.guest_name}` : ""}
+        </option>
+      ))}
+    </select>
   )
 }
 

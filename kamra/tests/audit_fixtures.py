@@ -76,6 +76,7 @@ def make_property(name: str, **fields) -> str:
 		"no_show_timing": "At audit for arrival date",
 		"protect_late_arrivals": 1, "waive_no_show_fee_for_ota": 1,
 		"non_guaranteed_release_time": None, "timezone": None,
+		"default_company_billing": "Room and F&B (liquor to guest)",
 	}
 	payload.update(fields)
 	if frappe.db.exists("Property", name):
