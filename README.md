@@ -54,9 +54,12 @@
 
 ## What's new
 
-Latest release: **[v2.6.13](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
+Latest release: **[v2.6.14](https://github.com/Kamra-PMS/kamra-pms/releases/latest)**
 (`develop` ships nightly).
 
+- **2.6.14** — Request-to-Book inbox, per-property no-show policy, rate lock
+  at booking, security deposits, day use, printable QR codes, city-ledger
+  payments, a complete ledger, and a lighter first page load
 - **2.6.13** — settings hub, tiered cancellation and peak-date rules, POS
   auto-KOT; night audit can't run ahead of the calendar, no-show balances read
   from the folio, whole-villa check-in, `/hk` app keeps staff signed in,
