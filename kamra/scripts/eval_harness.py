@@ -7120,8 +7120,13 @@ def t220():
 	assert frappe.db.get_value("Corporate Account", "EVAL Golive Cash Co",
 	                           "credit_allowed") == 0
 	acc = frappe.db.get_value("City Ledger Account", {
-		"property": GL, "company": "EVAL Golive Corp"}, ["credit_limit", "credit_days"])
-	assert float(acc[0]) == 50000 and acc[1] == 45, acc
+		"property": GL, "company": "EVAL Golive Corp"},
+		["credit_limit", "credit_days", "use_default_credit_days"])
+	assert float(acc[0]) == 50000 and acc[1] == 45 and acc[2] == 0, acc
+	# no Credit Days on the row: the company follows the property default
+	assert frappe.db.get_value("City Ledger Account", {
+		"property": GL, "company": "EVAL Golive Prepaid"},
+		"use_default_credit_days") == 1
 	n = frappe.db.count("Corporate Account", {"company_name": ("like", "EVAL Golive%")})
 	again = golive.run_companies(GL, companies)
 	assert again["created"] == 0 and again["updated"] == 3, again
@@ -7330,7 +7335,8 @@ def _credit_bill(corp, name, phone, room_code, amount, limit=0, days=0):
 	from kamra.ledger import _ar_account, transfer_to_city_ledger
 	acct = _ar_account(P, corp)
 	frappe.db.set_value("City Ledger Account", acct,
-	                    {"credit_limit": limit, "credit_days": days})
+	                    {"credit_limit": limit, "credit_days": days,
+	                     "use_default_credit_days": 0 if days else 1})
 	_, f = _in_house(name, phone, "2036-07-01", "2036-07-03", _ledger_room(room_code))
 	api.add_folio_charge(f, "Misc", "eval credit bill", amount, gst_rate=0)
 	transfer_to_city_ledger(f, corp, credit_check=False)

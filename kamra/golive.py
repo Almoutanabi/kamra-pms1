@@ -169,8 +169,11 @@ def _normalize_companies(csv_text: str):
 			problems.append("credit limit can't be negative")
 		days = None
 		raw_days = get("credit_days")
-		if raw_days:
-			# "30", "30 days", "Net 30"
+		if raw_days and _norm(raw_days) in ("immediate", "onreceipt",
+		                                    "dueonreceipt", "cod"):
+			days = 0
+		elif raw_days:
+			# "30", "30 days", "Net 30"; 0 = due on the invoice date
 			digits = re.sub(r"[^0-9]", "", raw_days)
 			if not digits or int(digits) > 365:
 				problems.append(f"unreadable credit days '{raw_days}'")
@@ -270,7 +273,10 @@ def run_companies(property: str, csv_text: str):
 				                     _ar_account(property, doc.name))
 				acc.credit_limit = row["credit_limit"]
 				if row["credit_days"] is not None:
+					# an explicit value is the company's own terms (0 = due
+					# on the invoice date); blank keeps the property default
 					acc.credit_days = row["credit_days"]
+					acc.use_default_credit_days = 0
 				if row["account_number"]:
 					acc.account_number = row["account_number"]
 				acc.save(ignore_permissions=True)
@@ -857,10 +863,13 @@ def reconcile(property: str, opening_csv: str | None = None,
 				if acc is None or not _same(limit, r["credit_limit"]):
 					problems.append(f"{name}: credit limit "
 					                f"{r['credit_limit']:,.2f} not set")
+				terms = frappe.db.get_value(
+					"City Ledger Account", acc,
+					["credit_days", "use_default_credit_days"],
+					as_dict=True) if acc else None
 				if r["credit_days"] is not None and (
-						acc is None or int(frappe.db.get_value(
-							"City Ledger Account", acc, "credit_days") or 0)
-						!= r["credit_days"]):
+						terms is None or terms.use_default_credit_days
+						or int(terms.credit_days or 0) != r["credit_days"]):
 					problems.append(f"{name}: credit days "
 					                f"{r['credit_days']} not set")
 		problems += [f"Row {i['row']} ({i['name']}): {i['error']}"

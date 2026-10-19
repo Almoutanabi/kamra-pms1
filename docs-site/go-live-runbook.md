@@ -62,8 +62,9 @@ From the old system, fill in the templates:
 2. **Companies.** Take every corporate account that is billed on
    credit or has a balance. `Credit Allowed` is Yes or No. A credit
    limit on its own means Yes. `Credit Days` is the company's payment
-   terms (`30`, `30 days` or `Net 30`); leave it blank to use the
-   property default. Each city ledger bill is then due on its invoice
+   terms (`30`, `30 days`, `Net 30`, or `0` / `On receipt` for due on
+   the invoice date); a value turns off **Use property default** for that
+   company. Leave it blank to follow the property default. Each city ledger bill is then due on its invoice
    date + the credit days, so the aging matches the old system's.
 3. **Opening balances.** Take the closing balances of the last night
    audit. Use one row per balance. The `Type` column is one of:

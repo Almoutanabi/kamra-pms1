@@ -77,7 +77,9 @@ class CreditControlTestCase(AuditTestCase):
 			corp.save(ignore_permissions=True)
 		self.company = corp.name
 		self.account = ledger._ar_account(PROP_A, self.company)
-		self.terms(limit=0, days=0)
+		self.terms(limit=0)
+		frappe.db.set_value("City Ledger Account", self.account,
+		                    {"credit_days": 0, "use_default_credit_days": 1})
 
 	def tearDown(self):
 		super().tearDown()
@@ -85,12 +87,16 @@ class CreditControlTestCase(AuditTestCase):
 
 	# helpers -------------------------------------------------------------
 
-	def terms(self, limit=None, days=None):
+	def terms(self, limit=None, days=None, use_default=None):
+		"""`days` sets the account's own terms (use property default off)."""
 		values = {}
 		if limit is not None:
 			values["credit_limit"] = limit
 		if days is not None:
 			values["credit_days"] = days
+			values["use_default_credit_days"] = 0
+		if use_default is not None:
+			values["use_default_credit_days"] = use_default
 		frappe.db.set_value("City Ledger Account", self.account, values)
 
 	def bill(self, amount, room=None):
@@ -143,6 +149,42 @@ class CreditControlTestCase(AuditTestCase):
 		                          {"account": self.account, "kind": "Invoice"},
 		                          "due_date")
 		self.assertEqual(str(due), d(10))
+
+	def test_due_on_receipt_without_touching_the_property_default(self):
+		self.terms(days=0)
+		self.assertEqual(ledger.effective_credit_days(self.account), 0)
+		self.bill(500)
+		due = frappe.db.get_value("City Ledger Entry",
+		                          {"account": self.account, "kind": "Invoice"},
+		                          "due_date")
+		self.assertEqual(str(due), TODAY)
+		self.assertEqual(credit.company_credit_terms(self.company, PROP_A)
+		                 ["default_credit_days"], 30)
+		row = self.aging(d(1))
+		self.assertAlmostEqual(row["d1_30"], 500, places=2)
+		# back on the default: 30 days again
+		self.terms(use_default=1)
+		self.assertEqual(ledger.effective_credit_days(self.account), 30)
+
+	def test_use_default_patch_keeps_old_behaviour(self):
+		from kamra.patches.v42 import credit_days_use_property_default as patch_mod
+		other = frappe.get_doc({"doctype": "Corporate Account",
+		                        "company_name": "UT Credit Own Terms",
+		                        "credit_allowed": 1}).insert(ignore_permissions=True)
+		own = ledger._ar_account(PROP_A, other.name)
+		# a fresh account follows the property default
+		self.assertEqual(frappe.db.get_value("City Ledger Account", own,
+		                                     "use_default_credit_days"), 1)
+		# as left by the old code: 0 = default, anything else = own terms
+		frappe.db.set_value("City Ledger Account", own,
+		                    {"credit_days": 21, "use_default_credit_days": 1})
+		patch_mod.execute()
+		self.assertEqual(frappe.db.get_value("City Ledger Account", own,
+		                                     "use_default_credit_days"), 0)
+		self.assertEqual(frappe.db.get_value("City Ledger Account", self.account,
+		                                     "use_default_credit_days"), 1)
+		self.assertEqual(ledger.effective_credit_days(own), 21)
+		self.assertEqual(ledger.effective_credit_days(self.account), 30)
 
 	def test_45_day_company_is_not_due_at_day_35(self):
 		self.terms(days=45)
@@ -375,6 +417,13 @@ class CreditControlTestCase(AuditTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			credit.set_company_credit_terms(self.company, PROP_A, 5000, 45)
 		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- back to the fixture user
-		out = credit.set_company_credit_terms(self.company, PROP_A, 5000, 45)
-		self.assertEqual((out["credit_limit"], out["credit_days"]), (5000, 45))
+		out = credit.set_company_credit_terms(self.company, PROP_A, 5000, 45, 0)
+		self.assertEqual((out["credit_limit"], out["credit_days"],
+		                  out["use_default_credit_days"], out["effective_credit_days"]),
+		                 (5000, 45, False, 45))
+		out = credit.set_company_credit_terms(self.company, PROP_A, 5000, 0, 0)
+		self.assertEqual(out["effective_credit_days"], 0)  # due on receipt
+		out = credit.set_company_credit_terms(self.company, PROP_A,
+		                                      use_default_credit_days=1)
+		self.assertEqual(out["effective_credit_days"], 30)
 		self.assertTrue(self.logs("credit_terms_changed"))

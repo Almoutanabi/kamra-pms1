@@ -347,8 +347,8 @@ MODULES: tuple[Module, ...] = (
 			        "city ledger at check-out. Set each company's credit limit and credit days on its "
 			        "corporate account.", (
 				S("default_credit_days", "Default payment terms", "number", 30, min=0, max=365, unit="days",
-				  hint="Days after the invoice date a company bill is due, when the company has no credit days "
-				       "of its own. 0 means due on the invoice date."),
+				  hint="Days after the invoice date a company bill is due, for companies set to use the property "
+				       "default (the default for every company). 0 means due on the invoice date."),
 				S("credit_control", "Credit control", "select", "Warn", options=("Off", "Warn", "Block"),
 				  hint="Checks the credit limit and overdue bills. Warn: the desk sees a warning and can go "
 				       "ahead. Block: refused unless Finance or a Hotel Admin overrides it with a reason, "

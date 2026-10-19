@@ -224,10 +224,13 @@ GSTR-1 export lives in the billing APIs for your accountant.
 ### Company credit — payment terms and credit control
 
 Each company on credit has, per property, a **credit limit** (0 = no
-limit) and **credit days** (payment terms; 0 = the property default).
-Set both on the company: **Corporate accounts → the company → Credit terms
-at this property** (Finance or Hotel Admin). A bill moved to the city
-ledger is **due** on its invoice date + the credit days.
+limit) and **payment terms**. Set both on the company: **Corporate
+accounts → the company → Credit terms at this property** (Finance or Hotel
+Admin). **Use property default** (on for every company to start with)
+follows the property's default payment terms; untick it to give the
+company its own **credit days** - 0 means due on the invoice date (a
+company that pays on receipt). A bill moved to the city ledger is **due**
+on its invoice date + the credit days.
 
 **Finance → Ledgers → City ledger aging** ages each company's bills by
 due date: **Not due**, then **1-30 / 31-60 / 61-90 / 90+ days overdue**,
@@ -238,7 +241,7 @@ on day 35. The End of Day lists every company with overdue bills.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Default payment terms | 30 days | Credit days for a company that has none of its own. |
+| Default payment terms | 30 days | Credit days for every company set to **Use property default**. |
 | Credit control | Warn | **Off**, **Warn** or **Block**. Checks the credit limit (what the company owes on the city ledger + its in-house stays + the new bill) and bills overdue past the grace period. |
 | Overdue grace period | 0 days | A bill counts as overdue for credit control only this many days after its due date. |
 

@@ -15,6 +15,7 @@ interface Terms {
   account: string | null
   credit_limit: number
   credit_days: number
+  use_default_credit_days: boolean
   effective_credit_days: number
   default_credit_days: number
   balance: number
@@ -29,6 +30,7 @@ export default function CreditTermsEditor({ row }: { row: Row; reload: () => voi
   const [terms, setTerms] = useState<Terms | null>(null)
   const [limit, setLimit] = useState("")
   const [days, setDays] = useState("")
+  const [useDefault, setUseDefault] = useState(true)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -37,6 +39,7 @@ export default function CreditTermsEditor({ row }: { row: Row; reload: () => voi
     setTerms(t)
     setLimit(String(t.credit_limit || 0))
     setDays(String(t.credit_days || 0))
+    setUseDefault(t.use_default_credit_days)
   }
 
   useEffect(() => {
@@ -58,6 +61,7 @@ export default function CreditTermsEditor({ row }: { row: Row; reload: () => voi
           property: getCurrentProperty(),
           credit_limit: Number(limit || 0),
           credit_days: Number(days || 0),
+          use_default_credit_days: useDefault ? 1 : 0,
         }),
       )
       setSaved(true)
@@ -106,26 +110,44 @@ export default function CreditTermsEditor({ row }: { row: Row; reload: () => voi
           />
           <span className="mt-0.5 block text-xs text-zinc-400">{t("0 = no limit")}</span>
         </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-zinc-500">{t("Credit days")}</span>
-          <input
-            type="number"
-            min="0"
-            max="365"
-            step="1"
-            inputMode="numeric"
-            className={inputCls}
-            value={days}
-            disabled={!terms.can_edit}
-            onChange={(e) => {
-              setSaved(false)
-              setDays(e.target.value)
-            }}
-          />
-          <span className="mt-0.5 block text-xs text-zinc-400">
-            {t("0 = property default ({n} days)", { n: terms.default_credit_days })}
-          </span>
-        </label>
+        <div className="text-sm">
+          <span className="mb-1 block text-zinc-500">{t("Payment terms")}</span>
+          <label className="mb-1.5 flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="size-4 accent-brand-600"
+              checked={useDefault}
+              disabled={!terms.can_edit}
+              onChange={(e) => {
+                setSaved(false)
+                setUseDefault(e.target.checked)
+              }}
+            />
+            {t("Use property default ({n} days)", { n: terms.default_credit_days })}
+          </label>
+          {!useDefault && (
+            <>
+              <input
+                type="number"
+                min="0"
+                max="365"
+                step="1"
+                inputMode="numeric"
+                aria-label={t("Credit days")}
+                className={inputCls}
+                value={days}
+                disabled={!terms.can_edit}
+                onChange={(e) => {
+                  setSaved(false)
+                  setDays(e.target.value)
+                }}
+              />
+              <span className="mt-0.5 block text-xs text-zinc-400">
+                {t("Credit days after the invoice date - 0 = due on the invoice date")}
+              </span>
+            </>
+          )}
+        </div>
       </div>
       <p className="mt-2 text-xs text-zinc-500">
         {t("Owes {amount} · terms {n} days", {

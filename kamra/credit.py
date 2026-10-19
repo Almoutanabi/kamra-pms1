@@ -1,8 +1,9 @@
 """Company credit control - payment terms, credit limit and overdue bills.
 
 A company billed on the city ledger has, per property, a credit limit
-(City Ledger Account.credit_limit, 0 = no limit) and payment terms
-(credit_days, 0 = the property's `default_credit_days`). Each bill moved to
+(City Ledger Account.credit_limit, 0 = no limit) and payment terms (the
+property's `default_credit_days` while use_default_credit_days is on, else
+its own credit_days - 0 = due on the invoice date). Each bill moved to
 the city ledger is due on invoice date + credit days.
 
 `check_company_credit` is the one place that decides whether more can be
@@ -343,13 +344,16 @@ def company_credit_terms(company: str, property: str):
 	account = frappe.db.get_value(
 		"City Ledger Account",
 		{"property": property, "company": company, "disabled": 0},
-		["name", "credit_limit", "credit_days", "balance"], as_dict=True)
+		["name", "credit_limit", "credit_days", "use_default_credit_days",
+		 "balance"], as_dict=True)
 	return {
 		"company": company,
 		"credit_allowed": credit_applies(company),
 		"account": account.name if account else None,
 		"credit_limit": flt(account.credit_limit) if account else 0.0,
 		"credit_days": int(account.credit_days or 0) if account else 0,
+		"use_default_credit_days": bool(account.use_default_credit_days)
+		                           if account else True,
 		"effective_credit_days": effective_credit_days(
 			account.name if account else None, property),
 		"default_credit_days": int(get_setting(property, "default_credit_days") or 0),
@@ -364,17 +368,21 @@ def company_credit_terms(company: str, property: str):
 @require_roles("Finance", "Hotel Admin")
 def set_company_credit_terms(company: str, property: str,
                              credit_limit: float | None = None,
-                             credit_days: int | None = None):
-	"""Set a company's credit limit (0 = no limit) and credit days (0 = the
-	property default) at one property. Creates its city ledger account if
-	it has none. Logged with before / after."""
+                             credit_days: int | None = None,
+                             use_default_credit_days=None):
+	"""Set a company's credit limit (0 = no limit) and payment terms at one
+	property: `use_default_credit_days` 1 follows the property's default
+	payment terms; 0 uses `credit_days` as given (0 = due on the invoice
+	date). Creates its city ledger account if it has none. Logged with
+	before / after."""
 	assert_property_access(property)
 	if not frappe.db.exists("Corporate Account", company):
 		frappe.throw(_("Unknown company {0}.").format(company))
 	from kamra.ledger import _ar_account
 	acc = frappe.get_doc("City Ledger Account", _ar_account(property, company))
 	before = {"credit_limit": flt(acc.credit_limit),
-	          "credit_days": int(acc.credit_days or 0)}
+	          "credit_days": int(acc.credit_days or 0),
+	          "use_default_credit_days": int(acc.use_default_credit_days or 0)}
 	if credit_limit not in (None, ""):
 		limit = flt(credit_limit)
 		if limit < 0:
@@ -385,14 +393,20 @@ def set_company_credit_terms(company: str, property: str,
 		if days < 0 or days > 365:
 			frappe.throw(_("Credit days must be between 0 and 365."))
 		acc.credit_days = days
+	if use_default_credit_days not in (None, ""):
+		acc.use_default_credit_days = 1 if str(use_default_credit_days).lower() in (
+			"1", "true") else 0
 	acc.save(ignore_permissions=True)
 	after = {"credit_limit": flt(acc.credit_limit),
-	         "credit_days": int(acc.credit_days or 0)}
+	         "credit_days": int(acc.credit_days or 0),
+	         "use_default_credit_days": int(acc.use_default_credit_days or 0)}
 	if after != before:
 		from kamra.savings import log_action
 		log_action("credit_terms_changed", "City Ledger Account", acc.name,
 		           property, rationale=f"{company}: credit limit "
 		                               f"{after['credit_limit']:,.2f}, "
-		                               f"{after['credit_days']} credit days",
+		                               + ("property default payment terms"
+		                                  if after["use_default_credit_days"]
+		                                  else f"{after['credit_days']} credit days"),
 		           before_snapshot=before, after_snapshot=after)
 	return company_credit_terms(company, property)

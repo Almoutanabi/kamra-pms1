@@ -10798,7 +10798,7 @@
         "kamra.credit.set_company_credit_terms"
        ]
       },
-      "description": "Set a company's credit limit (0 = no limit) and credit days (0 = the\nproperty default) at one property. Creates its city ledger account if\nit has none. Logged with before / after.",
+      "description": "Set a company's credit limit (0 = no limit) and payment terms at one\nproperty: `use_default_credit_days` 1 follows the property's default\npayment terms; 0 uses `credit_days` as given (0 = due on the invoice\ndate). Creates its city ledger account if it has none. Logged with\nbefore / after.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"company\": \"<company>\",\n  \"property\": \"Your Property\"\n}",

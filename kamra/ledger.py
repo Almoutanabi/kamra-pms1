@@ -433,16 +433,16 @@ def company_payer_of(folio) -> str | None:
 
 
 def effective_credit_days(account: str | None, property: str | None = None) -> int:
-	"""The payment terms of a city ledger account: its own credit days, or
-	the property's `default_credit_days` when the account has none (0)."""
-	days = 0
+	"""The payment terms of a city ledger account. With "use property
+	default" on (the default), the property's `default_credit_days`;
+	otherwise its own credit_days as entered - 0 is due on the invoice date."""
 	if account:
-		row = frappe.db.get_value("City Ledger Account", account,
-		                          ["credit_days", "property"], as_dict=True) or {}
-		days = int(row.get("credit_days") or 0)
+		row = frappe.db.get_value(
+			"City Ledger Account", account,
+			["credit_days", "use_default_credit_days", "property"], as_dict=True) or {}
 		property = property or row.get("property")
-	if days > 0:
-		return days
+		if row and not int(row.get("use_default_credit_days") or 0):
+			return max(int(row.get("credit_days") or 0), 0)
 	from kamra.settings import get_setting
 	return max(int(get_setting(property, "default_credit_days") or 0), 0)
 
@@ -931,6 +931,7 @@ def city_ledger_account(account: str):
 		"account_number": acc.account_number,
 		"credit_limit": acc.credit_limit,
 		"account_credit_days": int(acc.get("credit_days") or 0),
+		"use_default_credit_days": bool(acc.get("use_default_credit_days")),
 		"balance": float(acc.balance or 0),
 		**pos,
 		"open_items": open_items,

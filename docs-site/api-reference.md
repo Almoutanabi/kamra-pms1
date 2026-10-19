@@ -4038,9 +4038,11 @@ what it owes (for the corporate account editor).
 
 **POST** · roles: `Finance`, `Hotel Admin`
 
-Set a company's credit limit (0 = no limit) and credit days (0 = the
-property default) at one property. Creates its city ledger account if
-it has none. Logged with before / after.
+Set a company's credit limit (0 = no limit) and payment terms at one
+property: `use_default_credit_days` 1 follows the property's default
+payment terms; 0 uses `credit_days` as given (0 = due on the invoice
+date). Creates its city ledger account if it has none. Logged with
+before / after.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -4048,6 +4050,7 @@ it has none. Logged with before / after.
 | `property` | yes |  |
 | `credit_limit` | no | `None` |
 | `credit_days` | no | `None` |
+| `use_default_credit_days` | no | `None` |
 
 
 ## Night audit (End of Day checklist, audit pack)
