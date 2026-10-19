@@ -409,6 +409,11 @@ def quote(
 	nightly = []
 	room_total = Decimal(0)
 	room_tax = Decimal(0)
+	# Guests above the room's capacity, at the price agreed on this booking:
+	# gathered per night so each night is taxed at its own rate.
+	night_over_cap = _dec(over_capacity_charge)
+	over_cap = Decimal(0)
+	over_cap_tax = Decimal(0)
 	occ_cache: dict = {}
 	# a day-use stay bills one "night" on the check-in date
 	for i in range(max(nights, 1)):
@@ -427,12 +432,19 @@ def quote(
 				property, date, exclude=exclude_reservation)
 		rate, tier = demand_adjust(property, room_type, date, rate,
 		                           occupancy=occ_cache[str(date)])
-		# guests above capacity, at the price agreed on this booking
-		rate += _dec(over_capacity_charge)
-		gst = room_gst_rate(property, rt, rate)
+		# The agreed amount for extra beds counts toward the slab even though
+		# it bills as its own line: GST reads what the unit fetches for the
+		# day, not the occupancy its rate card started from. A room at 7,000
+		# with 2,000 of extra beds is a 9,000 night, so 18%, not 5%.
+		gst = room_gst_rate(property, rt, rate + night_over_cap)
 		if inclusive:
 			# configured price is gross — back out the taxable value
 			rate = rate / (Decimal(1) + gst / Decimal(100))
+		if night_over_cap:
+			net = (night_over_cap / (Decimal(1) + gst / Decimal(100))
+			       if inclusive else night_over_cap)
+			over_cap += net
+			over_cap_tax += net * gst / Decimal(100)
 		nightly.append({"date": str(date), "rate": float(rate),
 		                "gst_rate": float(gst),
 		                "demand_premium_pct": tier["premium_pct"] if tier else 0,
@@ -495,6 +507,14 @@ def quote(
 	else:
 		total_base = taxable
 
+	# The extra beds bill as their own line rather than buried in the room
+	# rate: the guest is told what the house costs and what the extra beds
+	# cost, and the desk agreed the second number separately. A rate plan or
+	# a discount does not touch it - it is a figure a person agreed.
+	if over_cap > 0:
+		tax += over_cap_tax
+		total_base += over_cap
+
 	# Room levy (municipality fee, city / tourism tax): a % of the room rate
 	# net of discount, posted per night as its own folio line
 	levy_pct = _dec(prop.get("room_levy_percent") or 0)
@@ -532,6 +552,16 @@ def quote(
 			"tax_amount": float(meal_tax * (taxable / subtotal) if subtotal else 0),
 			"nights_applied": billable_nights,
 		})
+	if over_cap > 0:
+		line_items.append({
+			"component": "over_capacity",
+			"description": "Extra guests by arrangement",
+			"amount": float(over_cap),
+			"tax_amount": float(over_cap_tax),
+			"tax_rate": float(over_cap_tax / over_cap * 100) if over_cap else 0,
+			"is_tax_inclusive": bool(inclusive),
+			"nights_applied": billable_nights,
+		})
 	if cleaning > 0:
 		line_items.append({
 			"component": "cleaning_fee",
@@ -565,6 +595,7 @@ def quote(
 		"room_total": float(room_total),
 		"meal_total": float(meal_total),
 		"cleaning_fee": float(cleaning),
+		"over_capacity_total": float(over_cap),
 		"room_levy": float(levy),
 		"discount": float(discount),
 		"voucher": voucher_name,

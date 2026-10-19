@@ -201,11 +201,12 @@ def open_company_folio(reservation) -> str:
 # What a credit company pays when it has NO billing rules of its own - the
 # property's `default_company_billing` setting. "Room" means the stay as sold:
 # the room night, its meal plan, the levies on it, early/late fees, the
-# cleaning fee and any discount against it. Alcohol is filtered out before
-# any of this (target_folio), so no option can bill liquor to a company.
+# cleaning fee, the extra beds agreed on it and any discount against it.
+# Alcohol is filtered out before any of this (target_folio), so no option can
+# bill liquor to a company.
 _ROOM_CHARGES = frozenset({
 	"Room", "Meal Plan", "Room Levy", "Early Check-in", "Late Checkout",
-	"Cleaning Fee", "Discount",
+	"Cleaning Fee", "Extra Guests", "Discount",
 })
 COMPANY_BILLING_DEFAULTS = {
 	"Room and F&B (liquor to guest)": _ROOM_CHARGES | {"Food & Beverage"},
@@ -368,14 +369,18 @@ def _plan_free_night_rate(reservation, date) -> Decimal:
 			rt, reservation.check_in_date, reservation.check_out_date))
 	rate = season_adjust(reservation.property, date, base,
 	                     reservation.room_type)
-	# Guests above the room's capacity are there by arrangement at a price
-	# agreed on the booking, so it rides the room night rather than sitting
-	# in a separate line the desk has to remember to post.
-	rate += Decimal(str(reservation.get("over_capacity_charge") or 0))
 	if rates_include_tax(reservation.property):
-		gst = room_gst_rate(reservation.property, rt, rate)
+		gst = room_gst_rate(reservation.property, rt,
+		                    rate + _over_cap_night(reservation))
 		rate = rate / (Decimal(1) + gst / Decimal(100))
 	return rate
+
+
+def _over_cap_night(reservation) -> Decimal:
+	"""The night's agreed extra-bed amount. It bills as its own line, but the
+	slab reads the whole night's tariff, so it has to be in hand wherever the
+	room's tax rate is worked out - matching pricing.quote."""
+	return Decimal(str(reservation.get("over_capacity_charge") or 0))
 
 
 def _nightly_gst(reservation, date) -> float:
@@ -396,8 +401,8 @@ def _nightly_gst(reservation, date) -> float:
 			rt, reservation.check_in_date, reservation.check_out_date))
 	gross = season_adjust(reservation.property, date, base,
 	                      reservation.room_type)
-	gross += Decimal(str(reservation.get("over_capacity_charge") or 0))
-	return float(room_gst_rate(reservation.property, rt, gross))
+	return float(room_gst_rate(reservation.property, rt,
+	                           gross + _over_cap_night(reservation)))
 
 
 def _append_charge(folios, reservation, charge_type, line, is_alcohol=0):
@@ -437,6 +442,27 @@ def post_room_night(reservation, date, folios=None) -> bool:
 		})
 		posted = True
 		_post_room_levy(folios, reservation, date, night_rate)
+
+	# Its own charge type, not the shared Misc bucket: dedupe is by type and
+	# date, so a sundry the desk had already typed as Misc that day would
+	# otherwise make the night's extra-bed charge look posted and skip it.
+	over_cap = float(reservation.get("over_capacity_charge") or 0)
+	if over_cap > 0 and not _charge_posted(
+			reservation.name, "Extra Guests", date):
+		guests = int(reservation.get("over_capacity_guests") or 0)
+		_append_charge(folios, reservation, "Extra Guests", {
+			"posting_date": date,
+			"charge_type": "Extra Guests",
+			"reservation": reservation.name,
+			"description": "Extra guests by arrangement"
+			               + (f" × {guests}" if guests else ""),
+			"qty": 1,
+			"rate": over_cap,
+			"amount": over_cap,
+			"gst_rate": _nightly_gst(reservation, date),
+			"auto_posted": 1,
+		})
+		posted = True
 
 	if reservation.meal_plan and not _charge_posted(
 			reservation.name, "Meal Plan", date):
