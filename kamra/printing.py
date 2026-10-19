@@ -349,6 +349,10 @@ def save_printer(property: str, printer: dict | str, name: str | None = None) ->
 		if r.get("outlet") not in outlets:
 			frappe.throw(_("Outlet {0} is not at this property.").format(r.get("outlet")))
 		routes.append({"outlet": r["outlet"], "prep_station": r.get("prep_station") or ""})
+	taken = frappe.db.get_value("Kitchen Printer", {"property": property,
+	                                               "printer_name": data["printer_name"].strip()})
+	if taken and taken != name:
+		frappe.throw(_("There's already a printer called {0}.").format(data["printer_name"].strip()))
 	fallback = data.get("fallback_printer") or None
 	if fallback and frappe.db.get_value("Kitchen Printer", fallback, "property") != property:
 		frappe.throw(_("The fallback printer must be at this property."))

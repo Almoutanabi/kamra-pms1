@@ -1975,7 +1975,8 @@ def t39d():
 	assert _json.loads(frappe.db.get_value("Print Job", rp, "payload"))["reprint"] is True
 	for bad, msg in (({"printer_name": ""}, "no name"),
 	                 ({"printer_name": "X", "connection": "Direct IP"}, "Direct IP without an address"),
-	                 ({"printer_name": "X", "routes": [{"outlet": "nope"}]}, "a foreign outlet")):
+	                 ({"printer_name": "X", "routes": [{"outlet": "nope"}]}, "a foreign outlet"),
+	                 ({"printer_name": "Eval Main"}, "a duplicate name")):
 		try:
 			printing.save_printer(P, bad)
 			raise AssertionError(f"saved a printer with {msg}")
