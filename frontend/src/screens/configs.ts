@@ -637,10 +637,11 @@ export const outletsConfig: ScreenConfig = {
     { field: "gst_rate", label: "GST %", type: "float" },
     { field: "disabled", label: "Disabled", type: "check" },
     {
-      field: "auto_kot",
-      label: "Auto-accept and print KOT",
-      type: "check",
-      hint: "When a captain sends an order, the kitchen ticket prints immediately and the order shows on the kitchen display as started. Leave this off if the kitchen must press Start.",
+      field: "kot_mode",
+      label: "KOT on send",
+      type: "select",
+      options: ["Use F&B setting", "Auto-accept and print", "Kitchen presses Start"],
+      hint: "Auto-accept and print: sending an order prints the KOT and shows it on the kitchen display as started. Kitchen presses Start: the pass accepts each ticket. Use F&B setting follows Settings > F&B.",
     },
   ],
 }

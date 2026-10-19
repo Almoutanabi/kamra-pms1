@@ -10,6 +10,7 @@ import {
 import { getTheme, setTheme, type Theme } from "../../lib/theme"
 import { getLang, setLang, LANGS, type Lang } from "../../lib/dir"
 import { useT } from "../../lib/i18n"
+import { probeSocket } from "../../lib/realtime"
 import { Button } from "../../components/ui/button"
 import ImageField from "../../components/ImageField"
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card"
@@ -1222,6 +1223,93 @@ export function HurdleRatesCard({ property }: { property: string }) {
           </table>
         )}
       </CardContent>
+    </Card>
+  )
+}
+
+interface SpeedResult {
+  rtt: number
+  server: { database_ms?: number; open_bills_ms?: number; kitchen_display_ms?: number }
+  setup: { background_workers: number | null; developer_mode: boolean; socketio_configured: boolean }
+  socketMs: number | null
+}
+
+/** "Why is the POS slow here?" - one button that separates our code from
+ *  the network and the hosting. Read-only. */
+export function SpeedCheckCard({ property }: { property: string }) {
+  const { t } = useT()
+  const [busy, setBusy] = useState(false)
+  const [res, setRes] = useState<SpeedResult | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function run() {
+    setBusy(true); setErr(null); setRes(null)
+    try {
+      type R = { server: SpeedResult["server"]; setup: SpeedResult["setup"] }
+      const rtts: number[] = []
+      let last: R | null = null
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now()
+        last = await call<R>("kamra.pos.speed_check", { property })
+        rtts.push(performance.now() - t0)
+      }
+      rtts.sort((a, b) => a - b)
+      const socketMs = await probeSocket(() => call("kamra.pos.speed_check", { property, echo: 1 }))
+      setRes({ rtt: Math.round(rtts[2]), server: last!.server, setup: last!.setup, socketMs })
+    } catch (e) {
+      setErr(serverError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const verdicts: { ok: boolean; text: string }[] = []
+  if (res) {
+    const srv = Math.max(res.server.open_bills_ms ?? 0, res.server.kitchen_display_ms ?? 0)
+    verdicts.push(res.rtt <= 300
+      ? { ok: true, text: t("Network round trip {ms} ms - fine.", { ms: res.rtt }) }
+      : { ok: false, text: t("Network round trip {ms} ms - slow. The server is far from the hotel or the connection is weak; every POS action waits this long.", { ms: res.rtt }) })
+    verdicts.push(srv <= 300
+      ? { ok: true, text: t("Server work {ms} ms - fine.", { ms: Math.round(srv) }) }
+      : { ok: false, text: t("Server work {ms} ms - slow. The server is busy or under-sized.", { ms: Math.round(srv) }) })
+    verdicts.push(res.socketMs !== null
+      ? { ok: true, text: t("Live updates arrive in {ms} ms.", { ms: res.socketMs }) }
+      : { ok: false, text: t("Live updates are not reaching this browser, so the kitchen display only refreshes every few seconds. Check that socket.io is running and proxied by the web server.") })
+    if (res.setup.background_workers === 0) {
+      verdicts.push({ ok: false, text: t("No background workers are running.") })
+    }
+    if (res.setup.developer_mode) {
+      verdicts.push({ ok: false, text: t("Developer mode is on - turn it off in production.") })
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>{t("POS speed check")}</CardTitle>
+            <p className="mt-0.5 text-xs text-zinc-400">
+              {t("Run this on a till when service feels slow. It tells you whether the network, the server or live updates are the cause.")}
+            </p>
+          </div>
+          <Button variant="outline" disabled={busy} onClick={run}>
+            {busy ? t("Checking…") : t("Check speed")}
+          </Button>
+        </div>
+      </CardHeader>
+      {(res || err) && (
+        <CardContent>
+          {err && <p className="text-sm text-rose-700">{err}</p>}
+          <ul className="space-y-1.5 text-sm">
+            {verdicts.map((v, i) => (
+              <li key={i} className={v.ok ? "text-emerald-700" : "text-amber-800"}>
+                {v.ok ? "✓ " : "! "}{v.text}
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      )}
     </Card>
   )
 }
