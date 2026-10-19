@@ -9,6 +9,7 @@
   "account_number",
   "column_break_a",
   "credit_limit",
+  "credit_days",
   "balance",
   "disabled"
  ],
@@ -46,6 +47,13 @@
    "default": "0"
   },
   {
+   "fieldname": "credit_days",
+   "fieldtype": "Int",
+   "label": "Credit Days",
+   "default": "0",
+   "description": "Payment terms: days after the invoice date a bill is due. 0 uses the property default (Settings, Finance)."
+  },
+  {
    "fieldname": "balance",
    "fieldtype": "Currency",
    "label": "Balance",
@@ -62,7 +70,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-01 18:00:00.000000",
+ "modified": "2026-10-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kamra",
  "name": "City Ledger Account",
