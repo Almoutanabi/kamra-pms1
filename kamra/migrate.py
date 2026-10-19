@@ -298,6 +298,17 @@ def preview_import(property: str, csv_text: str, preset: str = "auto"):
 @frappe.whitelist(methods=["POST"])
 @require_roles()
 def run_import(property: str, csv_text: str, preset: str = "auto"):
+	"""Import the file (see _run_import). Migrated stays are not new
+	business, so they never reach outbound webhook subscribers."""
+	was_muted = frappe.flags.kamra_mute_webhooks
+	frappe.flags.kamra_mute_webhooks = True
+	try:
+		return _run_import(property, csv_text, preset)
+	finally:
+		frappe.flags.kamra_mute_webhooks = was_muted
+
+
+def _run_import(property: str, csv_text: str, preset: str = "auto"):
 	"""Import the file. Live rows (confirmed / in-house) go through the
 	full booking validation; history rows (checked-out / cancelled /
 	no-show) are stored as records with their status stamped directly, so
