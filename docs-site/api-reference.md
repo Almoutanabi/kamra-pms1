@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **327 endpoints**, generated from the source
+the UI and the AI use. **333 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -3236,16 +3236,93 @@ detected, and every row that would be skipped - nothing is written.
 
 **POST**
 
-Import the file. Live rows (confirmed / in-house) go through the
-full booking validation; history rows (checked-out / cancelled /
-no-show) are stored as records with their status stamped directly, so
-guest history survives the migration.
+Import the file (see _run_import). Migrated stays are not new
+business, so they never reach outbound webhook subscribers.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
 | `csv_text` | yes |  |
 | `preset` | no | `'auto'` |
+
+
+## Go-live data (companies, opening balances, reconciliation)
+
+### `kamra.golive.csv_template`
+
+**GET/POST** · roles: `Finance`
+
+The header row of one of Kamra's go-live CSV templates.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `kind` | yes |  |
+
+### `kamra.golive.preview_companies`
+
+**POST** · roles: `Finance`
+
+Dry run of the companies file: column mapping, which companies are
+new and which already exist (they are updated, never duplicated).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `csv_text` | yes |  |
+
+### `kamra.golive.run_companies`
+
+**POST** · roles: `Finance`
+
+Create or update each company (an upsert, so a re-run changes
+nothing) and, for a company on credit, its city ledger account at this
+property with the credit limit.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `csv_text` | yes |  |
+
+### `kamra.golive.preview_opening`
+
+**POST** · roles: `Finance`
+
+Dry run of the opening-balance file: what each row matched, totals
+per category, what is already posted (a re-run skips it) and every row
+that can't be posted. Nothing is written.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `csv_text` | yes |  |
+
+### `kamra.golive.run_opening`
+
+**POST** · roles: `Finance`
+
+Post the opening balances. Each item is posted once: a re-run of the
+same file finds it in Kamra and skips it (and says so). Company bills
+go in before company credits, so a credit settles the oldest bill.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `csv_text` | yes |  |
+
+### `kamra.golive.reconcile`
+
+**POST** · roles: `Finance`
+
+Counts and totals in each go-live file against what is now in Kamra,
+per category. `ready` is true only when every category matches and no
+row of any file was left out - the gate before the hotel goes live.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `opening_csv` | no | `None` |
+| `companies_csv` | no | `None` |
+| `bookings_csv` | no | `None` |
 
 
 ## Inventory & recipes

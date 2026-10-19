@@ -29,6 +29,7 @@ MODULES = [
     ("laundry", "Laundry (housekeeping)", ""),
     ("banquet", "Banquets (functions, quotations, event orders)", ""),
     ("migrate", "Migration (CSV import)", ""),
+    ("golive", "Go-live data (companies, opening balances, reconciliation)", ""),
     ("inventory", "Inventory & recipes", ""),
     ("menu_import", "Menu bulk import", ""),
     ("id_documents", "Guest ID documents", ""),
