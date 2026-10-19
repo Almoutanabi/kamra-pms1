@@ -1652,6 +1652,12 @@ logic the double-booking guard enforces, exposed as a query. Confirmed
 group blocks hold their unsold rooms out of general sale; pass the
 group to book against its own block.
 
+A stay may start on another's departure date, so a room whose guest
+departs today is "free" for a booking. Pass ready_now=1 when the guest
+is being put in the room now (check-in, walk-in, allocation for today):
+a room whose occupant is still Checked In is then left out until they
+check out - the same rule Reservation.validate_room_vacant enforces.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -1659,6 +1665,7 @@ group to book against its own block.
 | `check_in_date` | yes |  |
 | `check_out_date` | yes |  |
 | `group_booking` | no | `None` |
+| `ready_now` | no | `0` |
 
 ### `kamra.api.room_blocks`
 

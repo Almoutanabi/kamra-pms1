@@ -4392,10 +4392,10 @@
         "kamra.api.available_rooms"
        ]
       },
-      "description": "Rooms of a type with no overlapping live reservation - the same\nlogic the double-booking guard enforces, exposed as a query. Confirmed\ngroup blocks hold their unsold rooms out of general sale; pass the\ngroup to book against its own block.",
+      "description": "Rooms of a type with no overlapping live reservation - the same\nlogic the double-booking guard enforces, exposed as a query. Confirmed\ngroup blocks hold their unsold rooms out of general sale; pass the\ngroup to book against its own block.\n\nA stay may start on another's departure date, so a room whose guest\ndeparts today is \"free\" for a booking. Pass ready_now=1 when the guest\nis being put in the room now (check-in, walk-in, allocation for today):\na room whose occupant is still Checked In is then left out until they\ncheck out - the same rule Reservation.validate_room_vacant enforces.",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"property\": \"Your Property\",\n  \"room_type\": \"Your Property-DLX\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\"\n}",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"room_type\": \"Your Property-DLX\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\",\n  \"ready_now\": 0\n}",
        "options": {
         "raw": {
          "language": "json"

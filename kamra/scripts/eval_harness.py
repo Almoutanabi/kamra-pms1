@@ -7214,6 +7214,187 @@ def t216():
 	set_pets(pets_allowed=0, pet_charge=0)
 
 
+def _t300_rooms(code):
+	"""An isolated two-room type on the eval property for the 30x checks."""
+	rt = frappe.get_doc({
+		"doctype": "Room Type", "property": P, "room_type_code": code,
+		"room_type_name": f"Eval {code}", "base_price": 4000,
+		"base_occupancy": 2, "adults_capacity": 3, "children_capacity": 1,
+		"tax_percent": 5,
+	}).insert(ignore_permissions=True)
+	rooms = [frappe.get_doc({
+		"doctype": "Room", "property": P, "room_number": f"{code}{n}",
+		"room_type": rt.name, "housekeeping_status": "Clean",
+	}).insert(ignore_permissions=True).name for n in (1, 2)]
+	return rt.name, rooms
+
+
+def _t300_in_house(rt, room, guest_name, phone):
+	"""A guest checked in yesterday, departing today, still in the room."""
+	g = _guest(guest_name, phone)
+	res = frappe.get_doc({
+		"doctype": "Reservation", "property": P, "guest": g,
+		"room_type": rt, "room": room,
+		"check_in_date": add_days(nowdate(), -1), "check_out_date": nowdate(),
+		"adults": 2, "auto_price": 1,
+	})
+	res.flags.allow_past_check_in = True
+	res.insert(ignore_permissions=True)
+	res.status = "Checked In"
+	res.save(ignore_permissions=True)
+	return res
+
+
+@check("departure day: a room whose guest is still checked in is not offered for a check-in today, but stays bookable")
+def t300():
+	from kamra import api
+	from kamra.allocation import suggest_allocation
+	rt, (busy, free) = _t300_rooms("T3A")
+	_t300_in_house(rt, busy, "Eval Departing", "+91 70000 30001")
+	today, tomorrow = nowdate(), add_days(nowdate(), 1)
+	now = {r["name"] for r in api.available_rooms(
+		P, rt, today, tomorrow, ready_now=1)}
+	assert now == {free}, now
+	# a booking for tonight may still take it - the guest leaves today
+	booking = {r["name"] for r in api.available_rooms(P, rt, today, tomorrow)}
+	assert booking == {busy, free}, booking
+	# and a stay from tomorrow is untouched either way
+	later = {r["name"] for r in api.available_rooms(
+		P, rt, tomorrow, add_days(tomorrow, 1), ready_now=1)}
+	assert later == {busy, free}, later
+	# the allocator never proposes the occupied room for today's arrival
+	arr = _guest("Eval Arriving", "+91 70000 30002")
+	a = frappe.get_doc({
+		"doctype": "Reservation", "property": P, "guest": arr,
+		"room_type": rt, "check_in_date": today, "check_out_date": tomorrow,
+		"adults": 2, "auto_price": 1,
+	}).insert(ignore_permissions=True)
+	props = [p_ for p_ in suggest_allocation(P, today)["proposals"]
+	         if p_["reservation"] == a.name]
+	assert props and props[0]["suggested_room"] == free, props
+	ctx = api.checkin_context(a.name)
+	assert {r["name"] for r in ctx["rooms"]} == {free}, ctx["rooms"]
+	# when the only free room is the occupied one, nothing is offered
+	frappe.db.set_value("Room", free, "housekeeping_status", "Out of Order")
+	props = [p_ for p_ in suggest_allocation(P, today)["proposals"]
+	         if p_["reservation"] == a.name]
+	assert not props, props
+
+
+@check("check-in into a room whose guest has not checked out is refused; it goes through once they leave")
+def t301():
+	from kamra import api
+	from kamra.kamra.doctype.reservation.reservation import InventoryRefused
+	rt, (busy, _free) = _t300_rooms("T3B")
+	first = _t300_in_house(rt, busy, "Eval Still In", "+91 70000 30011")
+	g = _guest("Eval Next", "+91 70000 30012")
+	nxt = frappe.get_doc({
+		"doctype": "Reservation", "property": P, "guest": g,
+		"room_type": rt, "room": busy, "check_in_date": nowdate(),
+		"check_out_date": add_days(nowdate(), 1), "adults": 2,
+		"auto_price": 1,
+	}).insert(ignore_permissions=True)  # back-to-back booking is fine
+	try:
+		api.check_in(nxt.name)
+		raise AssertionError("second guest checked into an occupied room")
+	except InventoryRefused as e:
+		assert "still occupied" in str(e), e
+	assert frappe.db.get_value("Reservation", nxt.name, "status") == "Confirmed"
+	frappe.flags.allow_unsettled_checkout = True
+	try:
+		api.check_out(first.name)
+	finally:
+		frappe.flags.allow_unsettled_checkout = False
+	assert api.check_in(nxt.name)["room"] == busy
+	# re-saving the in-house stay is not a second check-in
+	doc = frappe.get_doc("Reservation", nxt.name)
+	doc.special_requests = "late check-out please"
+	doc.save(ignore_permissions=True)
+
+
+@check("walk-in into a room whose guest departs today but is still in is refused")
+def t302():
+	from kamra import api
+	from kamra.kamra.doctype.reservation.reservation import InventoryRefused
+	rt, (busy, free) = _t300_rooms("T3C")
+	_t300_in_house(rt, busy, "Eval Sneha", "+91 70000 30021")
+	try:
+		api.walk_in(P, rt, busy, add_days(nowdate(), 1), "Eval Walker",
+		            phone="+91 70000 30022")
+		raise AssertionError("walk-in was put in an occupied room")
+	except InventoryRefused:
+		pass
+	out = api.walk_in(P, rt, free, add_days(nowdate(), 1), "Eval Walker Two",
+	                  phone="+91 70000 30023")
+	assert out["room"] == free, out
+
+
+@check("quote cancellation terms are judged from today: a closed window never shows a past date")
+def t303():
+	from kamra import api
+	frappe.db.set_value("Property", P, {"free_cancel_days": 2,
+	                                    "cancellation_fee": "First Night"})
+	frappe.db.delete("Cancellation Tier", {"parenttype": "Property",
+	                                       "parent": P})
+	today = nowdate()
+	c = api.cancellation_outlook(P, RT, today, add_days(today, 1))
+	assert c["free_now"] is False and c["free_until"] is None, c
+	assert c["fee_label"] == "the first night", c
+	ci = add_days(today, 10)
+	c = api.cancellation_outlook(P, RT, ci, add_days(ci, 1))
+	assert c["free_now"] and c["free_until"] == str(add_days(ci, -2)), c
+	assert c["free_until"] >= today
+	# the last free day is exactly where cancellation_preview stops charging
+	g = _guest("Eval Cxl", "+91 70000 30031")
+	res = _res(g, ci, add_days(ci, 1))
+	assert api.cancellation_preview(res.name)["inside_window"] is False
+	q = api.get_quote(P, RT, today, add_days(today, 1))
+	assert q["cancellation"]["free_now"] is False, q.get("cancellation")
+	frappe.db.set_value("Property", P, "cancellation_fee", "None")
+	c = api.cancellation_outlook(P, RT, today, add_days(today, 1))
+	assert c["free_now"] and c["free_until"] is None, c
+
+
+@check("guest journey names the person who acted, never 'None'")
+def t304():
+	from kamra import api
+	from kamra.savings import log_action
+	g = _guest("Eval Journey", "+91 70000 30041")
+	res = _res(g, add_days(nowdate(), 3), add_days(nowdate(), 4))
+	log_action("check_in", "Reservation", res.name, P, rationale="eval")
+	j = api.guest_journey(g)
+	titles = [e["title"] for e in j["timeline"] if e["type"] == "agent"]
+	assert titles, j["timeline"]
+	assert not any(t_.startswith("None") for t_ in titles), titles
+	assert any(t_.endswith("· Check in") for t_ in titles), titles
+
+
+@check("a departure's balance counts the nights night audit has not posted, as check-out does, and keeps nothing")
+def t305():
+	from kamra import api
+	rt, (room, _r2) = _t300_rooms("T3D")
+	res = _t300_in_house(rt, room, "Eval Owes", "+91 70000 30051")
+	folio = frappe.db.get_value("Folio", {"reservation": res.name,
+	                                      "folio_type": "Guest"})
+	charges_before = frappe.db.count("Folio Charge", {"parent": folio})
+	posted = float(frappe.db.get_value("Folio", folio, "balance") or 0)
+	log_before = list(getattr(frappe.local, "_realtime_log", []) or [])
+	due = api._stay_balance(res.name)["due"]
+	assert due > posted, (due, posted)
+	# the projection is a read: no charge, balance or realtime ping is kept
+	assert float(frappe.db.get_value("Folio", folio, "balance") or 0) == posted
+	assert frappe.db.count("Folio Charge", {"parent": folio}) == charges_before
+	assert list(getattr(frappe.local, "_realtime_log", []) or []) == log_before
+	snap = api.front_desk_snapshot(P)
+	dep = [r for r in snap["departures"] if r["name"] == res.name]
+	assert dep and dep[0]["balance_due"] == due, dep
+	try:
+		api.check_out(res.name)
+		raise AssertionError("check-out let an unpaid guest leave")
+	except frappe.ValidationError as e:
+		assert f"{due:,.2f}" in str(e), (due, str(e))
+
+
 # --- billing / cashier / end-of-day / reports fixes (t320-t328) ---------------
 
 @check("cashier: reading the till writes nothing (no 1020 race on load); a drifted total is refreshed")
@@ -8199,9 +8380,9 @@ def execute():
 		           t183, t184, t185, t186, t190, t191, t192, t193, t194,
 		           t200, t201, t202, t203, t204,
 		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214,
-		           t215, t216, t320, t321, t322, t323, t324, t325, t326, t327, t328, t220, t221,
-		           t223, t222, t224, t310, t311, t312, t313, t314, t315, t316, t317, t318, t330,
-		           t331, t332, t333, t334, t335, t336):
+		           t215, t216, t300, t301, t302, t303, t304, t305, t220, t221, t223, t222, t224,
+		           t320, t321, t322, t323, t324, t325, t326, t327, t328, t310, t311, t312, t313,
+		           t314, t315, t316, t317, t318, t330, t331, t332, t333, t334, t335, t336):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

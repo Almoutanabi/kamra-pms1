@@ -147,7 +147,7 @@ export function BookingDialog(props: {
   onClose: () => void
   onBooked: () => void
 }) {
-  const { t } = useT()
+  const { t, tn } = useT()
   const [options, setOptions] = useState<BookingOptions | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -453,6 +453,9 @@ export function BookingDialog(props: {
       room_type: form.room_type,
       check_in_date: form.check_in_date,
       check_out_date: checkOut,
+      // the guest takes the key now: a room whose guest has not checked
+      // out yet is not free, even on their departure day
+      ready_now: 1,
     })
       .then((rs) => {
         if (!live) return
@@ -791,12 +794,26 @@ export function BookingDialog(props: {
     payAmount < 0 ||
     (!!walk.id_number.trim() && !walk.id_type)
 
-  const cancelCutoff = (() => {
-    const pol = options?.property
-    if (!pol) return ""
-    const d = new Date(form.check_in_date + "T00:00:00")
-    d.setDate(d.getDate() - (pol.free_cancel_days || 0))
-    return d.toISOString().slice(0, 10)
+  // the server judges the terms from today (season, tiers, free window);
+  // a window that has already closed reads as non-refundable, never as a
+  // "free until" date in the past
+  const cancelText = (() => {
+    const c = quote?.cancellation
+    if (!c) return ""
+    if (c.non_refundable_season)
+      return t("Non-refundable dates ({season}): the full stay is charged on cancellation.", {
+        season: c.non_refundable_season,
+      })
+    if (!c.free_now)
+      return t("Non-refundable from now: {fee} is charged on cancellation.", {
+        fee: c.fee_label,
+      })
+    if (c.free_until)
+      return t("Free cancellation until {date}; after that {fee} is charged.", {
+        date: c.free_until,
+        fee: c.fee_label,
+      })
+    return t("Free cancellation.")
   })()
 
   const addonsGross = Object.entries(addonQty).reduce((s, [n, q]) => {
@@ -1231,9 +1248,16 @@ export function BookingDialog(props: {
                       selectedRt.children_capacity > 0) &&
                     !overCapacity && (
                       <p className="mt-1.5 text-xs text-zinc-400">
-                        Sleeps up to {selectedRt.adults_capacity} adults
-                        {selectedRt.children_capacity > 0 &&
-                          ` · ${selectedRt.children_capacity} children`}
+                        {t("Sleeps up to {guests}", {
+                          guests: [
+                            selectedRt.adults_capacity > 0 &&
+                              tn(selectedRt.adults_capacity, "{n} adult", "{n} adults"),
+                            selectedRt.children_capacity > 0 &&
+                              tn(selectedRt.children_capacity, "{n} child", "{n} children"),
+                          ]
+                            .filter(Boolean)
+                            .join(" · "),
+                        })}
                       </p>
                     )}
                 </Field>
@@ -2127,9 +2151,7 @@ export function BookingDialog(props: {
 
                     {options?.property && (
                       <p className="pt-1 text-xs leading-relaxed text-zinc-500">
-                        {(options.property.cancellation_fee || "None") === "None"
-                          ? "Free cancellation."
-                          : `Free cancellation until ${cancelCutoff}; after that the ${String(options.property.cancellation_fee).toLowerCase()} is charged.`}
+                        {cancelText}
                         {(options.property.no_show_charge || "None") !== "None" &&
                           ` No-show: ${String(options.property.no_show_charge).toLowerCase()} charged.`}
                         {(options.property.deposit_pct ?? 0) > 0 &&

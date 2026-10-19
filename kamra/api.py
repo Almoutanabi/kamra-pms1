@@ -2443,7 +2443,7 @@ def guest_journey(guest: str):
 			"check_in_date", "check_out_date", "nights", "adults", "children",
 			"amount_after_tax", "discount_amount", "special_requests",
 			"booking_type", "company", "creation",
-			"actual_check_in", "actual_check_out",
+			"actual_check_in", "actual_check_out", "property",
 		],
 		order_by="check_in_date desc",
 	)
@@ -2480,7 +2480,8 @@ def guest_journey(guest: str):
 			timeline.append({
 				"ts": str(r.actual_check_out), "type": "check_out",
 				"title": "Checked out",
-				"detail": f"Folio ₹{float(r.amount_after_tax or 0):,.0f}",
+				"detail": f"Folio {_currency_symbol(r.property)}"
+				          f"{float(r.amount_after_tax or 0):,.0f}",
 				"reference": r.name,
 			})
 		if r.status == "Cancelled":
@@ -2499,14 +2500,19 @@ def guest_journey(guest: str):
 				"reference_doctype": "Reservation",
 				"reference_name": ("in", res_names),
 			},
-			fields=["creation", "agent_name", "action_type", "rationale",
-			        "minutes_saved", "action_channel"],
+			fields=["creation", "agent_name", "actor", "action_type",
+			        "rationale", "minutes_saved", "action_channel"],
 			order_by="creation desc",
 			limit=50,
 		):
+			# a person at the desk is the actor and leaves agent_name empty
+			who = log.agent_name or (
+				frappe.utils.get_fullname(log.actor) if log.actor else "") \
+				or "Staff"
+			what = (log.action_type or "").replace("_", " ")
 			timeline.append({
 				"ts": str(log.creation), "type": "agent",
-				"title": f"{log.agent_name} · {log.action_type.replace('_', ' ')}",
+				"title": f"{who} · {what[:1].upper()}{what[1:]}",
 				"detail": log.rationale or "",
 				"channel": log.action_channel,
 			})
@@ -2530,6 +2536,15 @@ def guest_journey(guest: str):
 		"reservations": reservations,
 		"timeline": timeline,
 	}
+
+
+def _currency_symbol(property: str | None) -> str:
+	"""The property's currency symbol from its country pack."""
+	if not property:
+		return ""
+	from kamra.localization import pack_for
+	return pack_for(property).locale(
+		frappe.get_cached_doc("Property", property)).get("currency_symbol", "")
 
 
 def _property_scope():
@@ -2572,21 +2587,18 @@ def _stay_balances(names: list) -> dict:
 		return {}
 	resv = {r.name: r for r in frappe.get_all(
 		"Reservation", filters={"name": ("in", names)},
-		fields=["name", "status", "amount_after_tax", "advance_paid"])}
-	folios = {}
-	for row in frappe.db.sql(
-		"""
-		SELECT reservation,
-		       COALESCE(SUM(grand_total), 0) AS total,
-		       COALESCE(SUM(payments_total), 0) AS paid,
-		       COALESCE(SUM(balance), 0) AS due
-		FROM `tabFolio`
-		WHERE reservation IN %(names)s AND folio_type = 'Guest'
-		GROUP BY reservation
-		""",
-		{"names": names}, as_dict=True,
-	):
-		folios[row.reservation] = row
+		fields=["name", "status", "amount_after_tax", "advance_paid",
+		        "check_out_date"])}
+	folios = _guest_folio_sums(names)
+	# A guest due out has nights the night audit has not posted yet;
+	# check-out posts them before it counts what is owed, so the board does
+	# the same (and throws the postings away) rather than show a balance
+	# that check-out then refuses.
+	today = getdate(nowdate())
+	due_out = [n for n, r in resv.items() if r.status == "Checked In"
+	           and r.check_out_date and getdate(r.check_out_date) <= today]
+	if due_out:
+		folios.update(_checkout_projection(due_out))
 	out = {}
 	for name, res in resv.items():
 		folio = folios.get(name)
@@ -2612,6 +2624,57 @@ def _stay_balances(names: list) -> dict:
 			     "has_folio": False, "source": "booking"}
 		out[name] = m
 	return out
+
+
+def _guest_folio_sums(names: list) -> dict:
+	"""Guest-folio total / paid / balance per reservation."""
+	if not names:
+		return {}
+	return {row.reservation: row for row in frappe.db.sql(
+		"""
+		SELECT reservation,
+		       COALESCE(SUM(grand_total), 0) AS total,
+		       COALESCE(SUM(payments_total), 0) AS paid,
+		       COALESCE(SUM(balance), 0) AS due
+		FROM `tabFolio`
+		WHERE reservation IN %(names)s AND folio_type = 'Guest'
+		GROUP BY reservation
+		""",
+		{"names": list(names)}, as_dict=True,
+	)}
+
+
+def _checkout_projection(names: list) -> dict:
+	"""Guest-folio sums as they will stand at check-out: every remaining
+	night posted by the same writer check-out uses (post_remaining_nights),
+	inside a savepoint that is rolled back. Nothing is kept - not the
+	charges, the ledger lines, nor the realtime pings their saves queue -
+	so this is a read. Falls back to the posted figures on any error."""
+	from kamra.folio import post_remaining_nights
+
+	db = frappe.db
+	queues = (db.before_commit, db.after_commit, db.after_rollback)
+	saved = [list(q._functions) for q in queues]
+	had_log = hasattr(frappe.local, "_realtime_log")
+	saved_log = list(getattr(frappe.local, "_realtime_log", None) or [])
+	sp = "kamra_checkout_projection"
+	db.savepoint(sp)
+	try:
+		for name in names:
+			post_remaining_nights(frappe.get_doc("Reservation", name))
+		return _guest_folio_sums(names)
+	except Exception:
+		frappe.log_error(title="Kamra: check-out balance projection")
+		return {}
+	finally:
+		db.rollback(save_point=sp)
+		for q, fns in zip(queues, saved):
+			q._functions.clear()
+			q._functions.extend(fns)
+		if had_log:
+			frappe.local._realtime_log = saved_log
+		elif hasattr(frappe.local, "_realtime_log"):
+			del frappe.local._realtime_log
 
 
 def _stay_balance(reservation: str) -> dict:
@@ -3063,7 +3126,8 @@ def checkin_context(reservation: str):
 			 "housekeeping_status": r["housekeeping_status"]}
 			for r in available_rooms(res.property, res.room_type,
 			                         res.check_in_date, res.check_out_date,
-			                         group_booking=res.group_booking)]
+			                         group_booking=res.group_booking,
+			                         ready_now=1)]
 		from kamra.allocation import suggest_allocation
 		for p_ in suggest_allocation(
 				res.property, str(res.check_in_date))["proposals"]:
@@ -4020,10 +4084,10 @@ def position_briefing(property: str, date: str | None = None):
 	for dep in departures:
 		dep["etd"] = str(dep.planned_check_out_time)[:5] if dep.planned_check_out_time else None
 		dep["room_no"] = (dep.room or "").split("-")[-1]
-		folio = frappe.db.get_value(
-			"Folio", {"reservation": dep.name, "folio_type": "Guest"},
-			["balance"], as_dict=True)
-		dep["balance_due"] = float(folio.balance) if folio else 0
+	# what check-out will ask for, unposted nights included
+	dep_money = _stay_balances([dep.name for dep in departures])
+	for dep in departures:
+		dep["balance_due"] = (dep_money.get(dep.name) or {}).get("due", 0.0)
 
 	# back-to-back: departure and arrival share a room today and the times cross
 	conflicts = []
@@ -4547,11 +4611,86 @@ def get_quote(property: str, room_type: str, check_in_date: str,
 	room_type = resolve_room_type(property, room_type)
 	meal_plan = resolve_meal_plan(property, meal_plan)
 	rate_plan = resolve_rate_plan(property, rate_plan)
-	return quote(property, room_type, check_in_date, check_out_date,
-	             int(adults), int(children), meal_plan or None,
-	             rate_plan or None, voucher_code or None,
-	             over_capacity_charge=float(over_capacity_charge or 0),
-	             pets=int(pets or 0), company=company or None)
+	q = quote(property, room_type, check_in_date, check_out_date,
+	          int(adults), int(children), meal_plan or None,
+	          rate_plan or None, voucher_code or None,
+	          over_capacity_charge=float(over_capacity_charge or 0),
+	          pets=int(pets or 0), company=company or None)
+	if isinstance(q, dict):
+		q["cancellation"] = cancellation_outlook(
+			property, room_type, check_in_date, check_out_date)
+	return q
+
+
+def _fee_label(basis: str) -> str:
+	"""'First Night' -> 'the first night'; '50% of stay' -> '50% of the stay'."""
+	if "%" in basis:
+		return basis.replace("of stay", "of the stay")
+	return f"the {basis.lower()}"
+
+
+def cancellation_outlook(property: str, room_type: str, check_in_date: str,
+                         check_out_date: str) -> dict:
+	"""The cancellation terms a quote can promise, decided by the same rules
+	cancellation_preview applies when someone actually cancels (season,
+	tiers, then the single free window) - evaluated from today, so a window
+	that has already closed is never offered as a future date.
+
+	free_now: cancelling today costs nothing. free_until: the last date that
+	is still free (None while free_now means free right up to arrival)."""
+	from frappe.utils import add_days, date_diff
+
+	from kamra.pricing import stay_season_rules
+
+	days_now = date_diff(check_in_date, nowdate())
+	rules = stay_season_rules(property, check_in_date, check_out_date,
+	                          room_type)
+	if rules["non_refundable"]:
+		return {"free_now": False, "free_until": None,
+		        "fee_basis": "100% of stay",
+		        "fee_label": _fee_label("100% of stay"),
+		        "non_refundable_season": rules["season"]
+		        or "Non-refundable dates"}
+
+	def charge(d: int) -> tuple[bool, str]:
+		"""(charged?, basis) for a cancellation d days before arrival -
+		the branch _cancellation_terms takes."""
+		tier = cancellation_tier_for(property, d)
+		if tier:
+			return tier["charge_pct"] > 0, f"{tier['charge_pct']:g}% of stay"
+		policy = frappe.db.get_value(
+			"Property", property, ["free_cancel_days", "cancellation_fee"],
+			as_dict=True)
+		basis = policy.cancellation_fee or "None"
+		inside = d < int(policy.free_cancel_days or 0)
+		return inside and basis != "None", basis
+
+	charged_now, basis_now = charge(days_now)
+	if charged_now:
+		return {"free_now": False, "free_until": None,
+		        "fee_basis": basis_now, "fee_label": _fee_label(basis_now),
+		        "non_refundable_season": None}
+
+	# free today: walk towards arrival to the first day that costs. Charges
+	# only change where a tier band starts or where the free window ends,
+	# so those are the only days worth asking about.
+	free_days = int(frappe.db.get_value(
+		"Property", property, "free_cancel_days") or 0)
+	tiers = frappe.get_all(
+		"Cancellation Tier",
+		filters={"parenttype": "Property", "parentfield": "cancellation_tiers",
+		         "parent": property},
+		pluck="days_before")
+	edges = {int(t or 0) - 1 for t in tiers} | {free_days - 1, -1}
+	for d in sorted((e for e in edges if e < days_now), reverse=True):
+		charged, basis = charge(d)
+		if charged:
+			last_free = add_days(check_in_date, -(d + 1))
+			return {"free_now": True, "free_until": str(last_free),
+			        "fee_basis": basis, "fee_label": _fee_label(basis),
+			        "non_refundable_season": None}
+	return {"free_now": True, "free_until": None, "fee_basis": "None",
+	        "fee_label": "", "non_refundable_season": None}
 
 
 def _find_or_create_guest(guest_name: str, phone: str | None,
@@ -4891,6 +5030,11 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 		# a group pickup books against its own block, not general inventory
 		free = available_rooms(property, room_type, check_in_date,
 		                       check_out_date, group_booking=group_booking)
+		if free and getdate(check_in_date) <= getdate(nowdate()):
+			# arriving today: hand out a room nobody is still checked in to
+			# before one whose guest departs today but has not left yet
+			occupied = in_house_rooms(property)
+			free = sorted(free, key=lambda r: r["name"] in occupied)
 		# SIU path returns plain dicts; legacy SQL returns frappe._dict.
 		room = free[0]["name"] if free else None
 	elif not int(waitlist or 0):
@@ -5156,11 +5300,18 @@ def inventory_availability(property: str, check_in_date: str, check_out_date: st
 @frappe.whitelist()
 @require_roles("Front Desk", "Kamra Agent")
 def available_rooms(property: str, room_type: str, check_in_date: str,
-                    check_out_date: str, group_booking: str | None = None):
+                    check_out_date: str, group_booking: str | None = None,
+                    ready_now: int = 0):
 	"""Rooms of a type with no overlapping live reservation - the same
 	logic the double-booking guard enforces, exposed as a query. Confirmed
 	group blocks hold their unsold rooms out of general sale; pass the
-	group to book against its own block."""
+	group to book against its own block.
+
+	A stay may start on another's departure date, so a room whose guest
+	departs today is "free" for a booking. Pass ready_now=1 when the guest
+	is being put in the room now (check-in, walk-in, allocation for today):
+	a room whose occupant is still Checked In is then left out until they
+	check out - the same rule Reservation.validate_room_vacant enforces."""
 	# Prefer Sellable Unit availability when SIUs exist for this type
 	# (ADR-003). Fall back to legacy Room SQL during migration.
 	rooms = None
@@ -5173,12 +5324,26 @@ def available_rooms(property: str, room_type: str, check_in_date: str,
 	if rooms is None:
 		rooms = _available_rooms_raw(property, room_type, check_in_date,
 		                             check_out_date)
+	if int(ready_now or 0) and getdate(check_in_date) <= getdate(nowdate()):
+		occupied = in_house_rooms(property)
+		rooms = [r for r in (rooms or []) if r["name"] not in occupied]
 	hold = _block_hold(property, room_type, check_in_date, check_out_date,
 	                   for_group=group_booking)
 	if hold:
 		rooms = rooms[:max(0, len(rooms) - hold)]
 	# Always frappe._dict so callers can use row["name"] or row.name.
 	return [frappe._dict(r) for r in (rooms or [])]
+
+
+def in_house_rooms(property: str) -> set[str]:
+	"""Rooms a guest is checked in to right now, whatever their departure
+	date says - they stay occupied until the guest checks out."""
+	return set(frappe.get_all(
+		"Reservation",
+		filters={"property": property, "status": "Checked In",
+		         "room": ("is", "set"),
+		         "check_in_date": ("<=", nowdate())},
+		pluck="room"))
 
 
 def _available_rooms_raw(property: str, room_type: str, check_in_date: str,
