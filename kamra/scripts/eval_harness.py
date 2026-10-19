@@ -7292,6 +7292,264 @@ def t335():
 		pass
 
 
+# ── go-live data (#228) ─────────────────────────────────────────────────────
+
+GL = "EVAL GoLive Hotel"
+
+
+def _golive_property():
+	"""A small hotel switching over today: two room types, three rooms, a
+	cleaning fee that must NOT hit carried-forward stays."""
+	if not frappe.db.exists("Property", GL):
+		frappe.get_doc({
+			"doctype": "Property", "property_name": GL, "city": "Testville",
+			"gst_mode": "Fixed", "gst_rate_low": 5, "gst_rate_high": 5,
+		}).insert(ignore_permissions=True)
+	frappe.db.set_value("Property", GL, {"cleaning_fee": 750,
+	                                     "business_date": nowdate()})
+	rt = frappe.db.get_value("Room Type", {"property": GL,
+	                                       "room_type_code": "GLD"})
+	if not rt:
+		rt = frappe.get_doc({
+			"doctype": "Room Type", "property": GL, "room_type_code": "GLD",
+			"room_type_name": "Golive Deluxe", "base_price": 4000,
+			"base_occupancy": 2, "adults_capacity": 3,
+			"children_capacity": 2, "tax_percent": 5,
+		}).insert(ignore_permissions=True).name
+		for n in ("G101", "G102", "G103"):
+			frappe.get_doc({"doctype": "Room", "property": GL,
+			                "room_number": n, "room_type": rt,
+			                }).insert(ignore_permissions=True)
+	return rt
+
+
+def _golive_files():
+	today = getdate(nowdate())
+	def d(n):
+		return add_days(today, n).strftime("%d/%m/%Y")
+	bookings = (
+		"Reservation No,Guest Name,Phone,Room Type,Room,Check In,Check Out,"
+		"Adults,Total Amount,Status\n"
+		f"OLD-1,Golive Inhouse,+91 70000 22801,Golive Deluxe,G101,{d(-3)},"
+		f"{d(2)},2,21000,In House\n"
+		f"OLD-2,Golive Settled,+91 70000 22802,Golive Deluxe,G102,{d(-1)},"
+		f"{d(1)},2,8400,Checked In\n"
+		f"OLD-3,Golive Future,+91 70000 22803,Golive Deluxe,,{d(10)},"
+		f"{d(12)},2,8400,Confirmed\n")
+	companies = (
+		"Company Name,Tax ID,Contact Name,Credit Allowed,Credit Limit\n"
+		"EVAL Golive Corp,29ABCDE1234F1Z5,Asha,Yes,\"50,000\"\n"
+		"EVAL Golive Prepaid,,Ravi,Yes,10000\n"
+		"EVAL Golive Cash Co,,,No,\n")
+	opening = (
+		"Type,Reservation No,Guest Name,Room,Check In,Company,Invoice No,"
+		"Invoice Date,Amount,Mode\n"
+		"In-house,OLD-1,,,,,,,\"12,600.00\",\n"
+		"In-house,,Golive Settled,,"
+		f"{d(-1)},,,,0,\n"
+		"Deposit,OLD-3,,,,,,,3000,UPI\n"
+		f"City ledger,,Mr Traveller,,,EVAL Golive Corp,INV-881,{d(-40)},18000,\n"
+		f"City ledger,,,,,EVAL Golive Corp,INV-902,{d(-5)},\"4,500.50\",\n"
+		"City ledger,,,,,EVAL Golive Prepaid,,,(2000),\n")
+	return bookings, companies, opening
+
+
+@check("go-live: templates, companies upsert with credit terms, re-run is a no-op")
+def t220():
+	from kamra import golive
+	_golive_property()
+	tpl = golive.csv_template("opening")
+	assert tpl["headers"][0] == "Type" and "Amount" in tpl["headers"], tpl
+	assert golive.csv_template("companies")["csv"].startswith("Company Name")
+	_b, companies, _o = _golive_files()
+	p = golive.preview_companies(GL, companies)
+	assert p["ok"] == 3 and p["on_credit"] == 2, p
+	r = golive.run_companies(GL, companies)
+	assert r["created"] + r["updated"] == 3 and not r["errors"], r
+	assert frappe.db.get_value("Corporate Account", "EVAL Golive Corp",
+	                           "credit_allowed") == 1
+	assert frappe.db.get_value("Corporate Account", "EVAL Golive Cash Co",
+	                           "credit_allowed") == 0
+	acc = frappe.db.get_value("City Ledger Account", {
+		"property": GL, "company": "EVAL Golive Corp"}, "credit_limit")
+	assert float(acc) == 50000, acc
+	n = frappe.db.count("Corporate Account", {"company_name": ("like", "EVAL Golive%")})
+	again = golive.run_companies(GL, companies)
+	assert again["created"] == 0 and again["updated"] == 3, again
+	assert frappe.db.count("Corporate Account",
+	                       {"company_name": ("like", "EVAL Golive%")}) == n
+	rec = golive.reconcile(GL, companies_csv=companies)
+	assert rec["categories"][0]["matched"], rec
+
+
+@check("go-live: in-house guests carried forward - room set, no one-time fees, re-run skips")
+def t221():
+	from kamra import migrate
+	_golive_property()
+	bookings, _c, _o = _golive_files()
+	p = migrate.preview_import(GL, bookings, "auto")
+	assert p["ok"] == 3 and p["skipped"] == 0, p
+	r = migrate.run_import(GL, bookings, "auto")
+	assert r["created"] == 3 and not r["errors"], r
+	res = frappe.get_doc("Reservation", {"property": GL,
+	                                     "idempotency_key": "import:OLD-1"})
+	assert res.status == "Checked In" and res.room == f"{GL}-G101", (res.status, res.room)
+	folio = frappe.get_doc("Folio", {"reservation": res.name, "folio_type": "Guest"})
+	fees = [c.charge_type for c in folio.charges]
+	assert "Cleaning Fee" not in fees, fees  # billed by the old system
+	again = migrate.run_import(GL, bookings, "auto")
+	assert again["created"] == 0 and again["already_imported"] == 3, again
+	assert migrate.preview_import(GL, bookings, "auto")["already_imported"] == 3
+
+
+@check("go-live: opening balances post through the ledgers, idempotent, reconcile to the file")
+def t222():
+	from kamra import golive, migrate
+	from kamra.folio import post_remaining_nights
+	_golive_property()
+	bookings, companies, opening = _golive_files()
+	golive.run_companies(GL, companies)
+	migrate.run_import(GL, bookings, "auto")
+
+	pv = golive.preview_opening(GL, opening)
+	assert pv["skipped"] == 0, pv["issues"]
+	cats = {c["category"]: c for c in pv["categories"]}
+	assert cats["in_house"]["count"] == 2 and cats["in_house"]["total"] == 12600, cats
+	assert cats["deposit"]["total"] == 3000, cats
+	assert cats["ar"]["count"] == 3 and cats["ar"]["total"] == 20500.5, cats
+	# not ready before anything is posted
+	assert not golive.reconcile(GL, opening_csv=opening)["ready"]
+
+	r = golive.run_opening(GL, opening)
+	assert not r["errors"], r["errors"]
+	assert r["posted"] == {"in_house": 2, "deposit": 1, "ar": 3}, r["posted"]
+
+	# in-house: one labelled line on the guest folio, on the Guest ledger
+	res = frappe.db.get_value("Reservation", {"property": GL,
+	                                          "idempotency_key": "import:OLD-1"})
+	folio = frappe.get_doc("Folio", {"reservation": res, "folio_type": "Guest"})
+	ob = [c for c in folio.charges if c.charge_type == "Opening Balance"]
+	assert len(ob) == 1 and ob[0].amount == 12600 and ob[0].transaction_code == "8900", ob
+	assert frappe.db.get_value("Folio Ledger Entry", {
+		"source_doctype": "Folio Charge", "source_name": ob[0].name,
+		"ledger": "Guest"}, "debit") == 12600
+	# no money in today's till
+	assert not frappe.db.exists("Cashier Transaction", {"folio": folio.name})
+
+	# deposit: an Advance in the Deposit ledger, booking's advance_paid up
+	fut = frappe.get_doc("Reservation", {"property": GL,
+	                                     "idempotency_key": "import:OLD-3"})
+	assert float(fut.advance_paid) == 3000, fut.advance_paid
+	dep = frappe.db.sql("""SELECT SUM(e.credit - e.debit) FROM `tabFolio Ledger Entry` e
+	        JOIN `tabFolio` f ON f.name = e.folio
+	        WHERE f.reservation = %s AND e.ledger = 'Deposit'""", fut.name)[0][0]
+	assert float(dep) == 3000, dep
+
+	# AR: the company owes both invoices, dated as billed; the prepaid
+	# company carries a credit
+	corp = frappe.db.get_value("City Ledger Account",
+	                           {"property": GL, "company": "EVAL Golive Corp"})
+	bal = frappe.db.sql("""SELECT SUM(debit - credit) FROM `tabCity Ledger Entry`
+	                       WHERE account = %s""", corp)[0][0]
+	assert abs(float(bal) - 22500.5) < 0.01, bal
+	old = frappe.db.get_value("City Ledger Entry", {
+		"account": corp, "invoice_number": "INV-881"}, "posting_date")
+	assert str(old) == str(add_days(getdate(nowdate()), -40)), old
+	ar = frappe.db.sql("""SELECT SUM(debit - credit) FROM `tabFolio Ledger Entry`
+	                      WHERE property = %s AND ledger = 'AR'""", GL)[0][0]
+	assert abs(float(ar) - 22500.5) < 0.01, ar
+	prepaid = frappe.db.get_value("City Ledger Account",
+	                              {"property": GL, "company": "EVAL Golive Prepaid"})
+	pbal = frappe.db.sql("""SELECT SUM(debit - credit) FROM `tabCity Ledger Entry`
+	                        WHERE account = %s""", prepaid)[0][0]
+	assert float(pbal) == -2000, pbal
+	# not revenue: the day's other revenue ignores opening balances
+	# (the deposit opened the future booking's folio early, which posts its
+	# cleaning fee as record_advance always has - that 750 is real revenue)
+	from kamra.reports import _day_stats
+	assert _day_stats(GL, nowdate(), 3)["other_revenue"] in (0, 750)
+
+	# idempotent: the same file again posts nothing
+	again = golive.run_opening(GL, opening)
+	assert sum(again["posted"].values()) == 0 and again["already_posted"] == 6, again
+	assert len([c for c in frappe.get_doc("Folio", folio.name).charges
+	            if c.charge_type == "Opening Balance"]) == 1
+
+	rec = golive.reconcile(GL, opening_csv=opening, companies_csv=companies,
+	                       bookings_csv=bookings)
+	assert rec["ready"], rec["blockers"]
+	by = {c["category"]: c for c in rec["categories"]}
+	assert by["ar"]["kamra_total"] == 20500.5 and by["ar"]["matched"], by["ar"]
+	assert {c["company"]: c["matched"] for c in by["ar"]["by_company"]} == {
+		"EVAL Golive Corp": True, "EVAL Golive Prepaid": True}, by["ar"]["by_company"]
+
+	# a file that no longer ties out is not ready
+	changed = opening.replace('"12,600.00"', "12000")
+	bad = golive.reconcile(GL, opening_csv=changed)
+	assert not bad["ready"] and not {c["category"]: c for c in bad["categories"]}[
+		"in_house"]["matched"], bad
+
+	# checkout bills Kamra's nights only: go-live (today) to departure
+	stay = frappe.get_doc("Reservation", res)
+	post_remaining_nights(stay)
+	nights = frappe.db.sql("""SELECT fc.posting_date FROM `tabFolio Charge` fc
+	        JOIN `tabFolio` f ON f.name = fc.parent
+	        WHERE f.reservation = %s AND fc.charge_type = 'Room'""", res, pluck=True)
+	assert len(nights) == 2 and min(nights) == getdate(nowdate()), nights
+
+
+@check("go-live: in-house stay with no opening row blocks go-live")
+def t223():
+	from kamra import golive, migrate
+	# runs before t222 and leaves nothing behind for it
+	frappe.db.savepoint("t223_own")
+	try:
+		_golive_property()
+		bookings, companies, opening = _golive_files()
+		golive.run_companies(GL, companies)
+		migrate.run_import(GL, bookings, "auto")
+		only_one = "\n".join(l for l in opening.splitlines()
+		                     if "Golive Settled" not in l) + "\n"
+		golive.run_opening(GL, only_one)
+		rec = golive.reconcile(GL, opening_csv=only_one)
+		assert not rec["ready"], rec
+		assert any("Golive Settled" in b for b in rec["blockers"]), rec["blockers"]
+	finally:
+		frappe.db.rollback(save_point="t223_own")
+
+
+@check("go-live: Finance-only gate; opening balances never hand-posted")
+def t224():
+	from kamra import api, golive
+	_golive_property()
+	_b, companies, opening = _golive_files()
+	frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- eval role-gate check as Front Desk
+	try:
+		for fn, args in ((golive.run_opening, (GL, opening)),
+		                 (golive.preview_opening, (GL, opening)),
+		                 (golive.run_companies, (GL, companies)),
+		                 (golive.reconcile, (GL, opening))):
+			try:
+				fn(*args)
+				raise AssertionError(f"Front Desk ran {fn.__name__}")
+			except frappe.PermissionError:
+				pass
+	finally:
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- restore eval admin context
+	out = api.create_booking(
+		property=P, room_type=RT, check_in_date="2031-04-10",
+		check_out_date="2031-04-12", guest_name="Eval OB Desk",
+		phone="+91 70000 22809")
+	api.check_in(out["reservation"])
+	folio = frappe.db.get_value("Folio", {"reservation": out["reservation"],
+	                                      "folio_type": "Guest"})
+	try:
+		api.add_folio_charge(folio, "Opening Balance", "sneaky", 500)
+		raise AssertionError("an opening balance was hand-posted")
+	except frappe.ValidationError:
+		pass
+
+
 @check("budget vs actual: occupancy over nights elapsed; unposted in-house nights are counted and explained")
 def t336():
 	from frappe.utils import date_diff
@@ -7352,8 +7610,8 @@ def execute():
 		           t183, t184, t185, t186, t190, t191, t192, t193, t194,
 		           t200, t201, t202, t203, t204,
 		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214,
-		           t215, t216,
-		           t330, t331, t332, t333, t334, t335, t336):
+		           t215, t216, t330, t331, t332, t333, t334, t335, t336, t220, t221, t223, t222,
+		           t224):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

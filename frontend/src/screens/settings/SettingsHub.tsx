@@ -23,6 +23,7 @@ import {
   ToggleRight,
   Users,
   UtensilsCrossed,
+  Webhook,
   type LucideIcon,
 } from "lucide-react"
 
@@ -46,6 +47,7 @@ import {
   ZatcaCard,
 } from "./cards"
 import { ModulePage, Switch, type OptionSources } from "./ModulePage"
+import { WebhooksPage } from "./WebhooksPage"
 
 /** Settings hub. One place, one left rail: the property, each module's
  *  own page, who can do what, and the integrations - with search across
@@ -93,6 +95,9 @@ const CUSTOM_PAGES: CustomPage[] = [
   { id: "claude", title: "Claude & MCP", group: "integrations", icon: LayoutGrid,
     description: "Let staff connect Claude to this property's governed tools.",
     keywords: "mcp claude desktop connector oauth agent" },
+  { id: "webhooks", title: "Webhooks", group: "integrations", icon: Webhook,
+    description: "Send bookings, check-ins, folio postings and the night audit to another system as signed events.",
+    keywords: "webhook integration events api door lock pos crm data warehouse signature delivery log resend" },
   { id: "verify", title: "Kamra Verify", group: "integrations", icon: FileCheck2,
     description: "Tax ID and guest ID checks through Kamra Connect.",
     keywords: "gstin aadhaar passport verify connect wallet" },
@@ -502,6 +507,8 @@ function CustomPageBody({
       return <AiSection property={property} />
     case "claude":
       return <AgentAccessCard />
+    case "webhooks":
+      return <WebhooksPage property={property} />
     case "verify":
       return <KamraVerifyCard />
     case "zatca":
