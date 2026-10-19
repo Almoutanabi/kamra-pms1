@@ -145,7 +145,7 @@ Progress is saved on a draft run, so reopening resumes where you stopped.
 | 1 | Prepare End of Day | Pre-checks load; business date, server date and property time side by side. |
 | 2 | Arrivals not checked in | Check in, **Mark no-show** or Continue. Each row shows what the no-show policy will do: no-show with the fee, held late arrival, or OTA fee waived. |
 | 3 | Departures not checked out | **Check out**, **Extend stay**, or **Quick check out** every zero-balance departure at once. *Blocks by default.* |
-| 4 | Open folios and high balances | In-house folios over the threshold, balances left on departed stays, companies over their credit limit (AR plus in-house company folios). |
+| 4 | Open folios and high balances | In-house folios over the threshold, balances left on departed stays, companies over their credit limit (AR plus in-house company folios), and companies with overdue bills (past the due date, by 1-30 / 31-60 / 61-90 / 90+ days). |
 | 5 | Outlets and room postings | Open restaurant bills (*blocks by default*) and every outlet bill posted to a room today - outlet, bill no, room and guest - to catch a wrong-room posting. |
 | 6 | Rate check | Room nights posted more than the tolerance away from the booked (locked) rate, and zero-rate / complimentary rooms. |
 | 7 | Room status | Rooms where the front office and the room board disagree, and vacant rooms. |
@@ -215,10 +215,43 @@ Check out from the departure row (the chip warns you if money is owed).
 Checkout back-fills any unposted nights, then refuses while any folio has
 a balance: collect what is owed, or refund an overpayment, first. On a
 corporate stay whose company has credit, the balance moves to the city
-ledger automatically. On the folio, **Close &
+ledger automatically, after the company's credit check (see below). On
+the folio, **Close &
 generate invoice** assigns the GST invoice number and produces the
 printable multi-rate invoice (B2B GSTIN included when a company pays).
 GSTR-1 export lives in the billing APIs for your accountant.
+
+### Company credit — payment terms and credit control
+
+Each company on credit has, per property, a **credit limit** (0 = no
+limit) and **payment terms**. Set both on the company: **Corporate
+accounts → the company → Credit terms at this property** (Finance or Hotel
+Admin). **Use property default** (on for every company to start with)
+follows the property's default payment terms; untick it to give the
+company its own **credit days** - 0 means due on the invoice date (a
+company that pays on receipt). A bill moved to the city ledger is **due**
+on its invoice date + the credit days.
+
+**Finance → Ledgers → City ledger aging** ages each company's bills by
+due date: **Not due**, then **1-30 / 31-60 / 61-90 / 90+ days overdue**,
+with the overdue total per company. A 45-day company's bill is "Not due"
+on day 35. The End of Day lists every company with overdue bills.
+
+**Settings → Finance → Company credit:**
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Default payment terms | 30 days | Credit days for every company set to **Use property default**. |
+| Credit control | Warn | **Off**, **Warn** or **Block**. Checks the credit limit (what the company owes on the city ledger + its in-house stays + the new bill) and bills overdue past the grace period. |
+| Overdue grace period | 0 days | A bill counts as overdue for credit control only this many days after its due date. |
+
+The check runs at **check-out** (before the company's bill moves to the
+city ledger) and when a stay is **booked on company billing**. Under
+**Warn** the desk sees why and can go ahead. Under **Block** it is
+refused unless **Finance or a Hotel Admin** overrides it with a reason;
+the override is logged in the Activity log with who, why and the amount.
+Front Desk can't override, and an AI agent never can — it gets the reason
+and hands it to staff.
 
 **Saudi Arabia:** settled bills print as a *Simplified Tax Invoice*
 (*فاتورة ضريبية مبسطة*) with the ZATCA QR code; cancelling an invoice
