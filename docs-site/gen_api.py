@@ -29,6 +29,7 @@ MODULES = [
     ("laundry", "Laundry (housekeeping)", ""),
     ("banquet", "Banquets (functions, quotations, event orders)", ""),
     ("migrate", "Migration (CSV import)", ""),
+    ("golive", "Go-live data (companies, opening balances, reconciliation)", ""),
     ("inventory", "Inventory & recipes", ""),
     ("menu_import", "Menu bulk import", ""),
     ("id_documents", "Guest ID documents", ""),
@@ -40,6 +41,10 @@ MODULES = [
     ("agents_api", "Activity ledger", ""),
     ("settings", "Settings hub (module settings)", ""),
     ("staff", "Staff & access", ""),
+    ("webhooks", "Outbound webhooks (subscriptions, delivery log)",
+     "Hotel Admin / System Manager. Events are signed with HMAC-SHA256 - see the Integrations page."),
+    ("pos_interface", "External POS (room charges from a third-party POS)",
+     "For a POS Integrator service user. ticket_id makes every posting idempotent."),
     ("public_api", "Public (no auth - booking page, QR menu)",
      "These are allow_guest endpoints: no token needed, rate-limited."),
 ]

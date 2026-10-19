@@ -96,9 +96,9 @@ DEFAULT_SAC = "999799"
 
 
 def service_code_for(prop_doc, charge_type: str | None = None) -> dict | None:
-	"""The SAC for one line. Discounts and allowances aren't a supply, so
-	they carry no code at all."""
-	if charge_type in ("Discount", "Allowance"):
+	"""The SAC for one line. Discounts, allowances and a go-live opening
+	balance aren't a supply, so they carry no code at all."""
+	if charge_type in ("Discount", "Allowance", "Opening Balance"):
 		return None
 	return {"label": "SAC",
 	        "value": SAC_CODES.get(charge_type or "", DEFAULT_SAC)}
