@@ -159,6 +159,31 @@ ingredients with a stock ledger, recipes per menu item, consumption
 posted as KOTs fire; and the **menu imports in bulk** from a spreadsheet
 with a preview.
 
+### Auto-accept and print KOT
+
+Busy kitchens that don't want the pass pressing **Start** on every ticket
+can turn on **Settings → F&B → Kitchen orders (KOT) → Auto-accept and
+print KOT**. When a captain sends an order, the KOT prints at once and the
+ticket appears on the kitchen display already started, so the cook's clock
+runs from the moment it was punched. With it off (the default), the
+kitchen presses Start on each ticket and each till chooses whether to
+print.
+
+Each outlet can override the property setting under **F&B → Outlets →
+KOT on send**:
+
+| KOT on send | What happens when an order is sent |
+| --- | --- |
+| Use F&B setting (default) | Follows Settings → F&B |
+| Auto-accept and print | Prints the KOT and marks the ticket started, whatever the F&B setting |
+| Kitchen presses Start | The pass accepts each ticket; the till's printer switch decides printing |
+
+So a hotel can auto-accept in the bar and room service while the main
+restaurant's pass still starts each ticket by hand. A later round on the
+same bill prints its own KOT but doesn't reset the original start time.
+Outlets that had the old per-outlet checkbox ticked are moved to
+**Auto-accept and print** on upgrade, so nothing changes on the floor.
+
 ## Housekeeping
 
 A phone app for floor staff: task assignment *and* a self-claim pool,

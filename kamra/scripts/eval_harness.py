@@ -1768,15 +1768,32 @@ def t39():
 
 @check("POS: auto KOT accepts the ticket and tells the till to print")
 def t39b():
-	from kamra import pos
+	from kamra import pos, settings
 	manual = frappe.get_doc({
 		"doctype": "POS Outlet", "property": P, "outlet_name": "Manual Pass",
-		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 0,
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Kitchen presses Start",
 	}).insert(ignore_permissions=True).name
 	auto = frappe.get_doc({
 		"doctype": "POS Outlet", "property": P, "outlet_name": "Auto Pass",
-		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 1,
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Auto-accept and print",
 	}).insert(ignore_permissions=True).name
+	follow = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Follow Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5,
+	}).insert(ignore_permissions=True).name
+
+	# The F&B setting drives outlets left on "Use F&B setting"; the
+	# outlet's own choice beats it in both directions.
+	def _flags():
+		return {o.name: o.auto_kot for o in pos.outlets(P)}
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 0})
+	f = _flags()
+	assert (f[manual], f[auto], f[follow]) == (0, 1, 0), f
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 1})
+	f = _flags()
+	assert (f[manual], f[auto], f[follow]) == (0, 1, 1), f
+	assert pos.outlet_auto_kot(follow) and not pos.outlet_auto_kot(manual)
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 0})
 
 	def _mi(outlet, name):
 		return frappe.get_doc({

@@ -26,3 +26,4 @@ kamra.patches.v40.backfill_charge_ledger
 kamra.patches.v40.apply_city_ledger_payments
 kamra.patches.v40.lock_confirmed_night_rates
 kamra.patches.v41.move_advances_to_guest_ledger
+kamra.patches.v42.outlet_kot_mode

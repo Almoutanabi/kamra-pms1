@@ -251,6 +251,12 @@ MODULES: tuple[Module, ...] = (
 		related=(("Outlets", "/outlets"), ("Menu", "/menu-items"), ("Kitchen inventory", "/inventory"),
 		         ("QR codes", "/qr-codes")),
 		sections=(
+			Section("kot", "Kitchen orders (KOT)", "What happens when a captain sends an order to the kitchen.", (
+				S("pos_auto_kot", "Auto-accept and print KOT", "check", 0,
+				  hint="On: sending an order prints the KOT and shows it on the kitchen display as "
+				       "started, so nobody presses Start. Off: the kitchen presses Start and each till "
+				       "chooses whether to print. An outlet can override this on its own record."),
+			)),
 			Section("tables", "Table reservations", "Which bookings show against a table on the POS floor.", (
 				S("pos_reservation_before_min", "Show a reservation from", "number", 60, min=0, max=480, unit="min before"),
 				S("pos_reservation_after_min", "Keep showing it until", "number", 240, min=0, max=720, unit="min after"),
