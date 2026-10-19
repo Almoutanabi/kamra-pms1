@@ -7792,6 +7792,312 @@ def t328():
 	assert any(r["folio"] == folio and r["action"] == "Allowance" for r in rows), rows[:3]
 
 
+def _other_property(name):
+	"""A second, minimal property - for checks about what crosses a
+	property boundary."""
+	if not frappe.db.exists("Property", name):
+		frappe.get_doc({
+			"doctype": "Property", "property_name": name, "city": "Testville",
+			"gst_mode": "Slab", "gst_slab_threshold": 7500,
+			"gst_rate_low": 5, "gst_rate_high": 18,
+		}).insert(ignore_permissions=True)
+	return name
+
+
+@check("booking engine: /stay/<property-slug> resolves, and /book scopes to the chosen property")
+def t330():
+	from kamra import public_api
+	from kamra.booking_slugs import resolve_public_slug
+
+	other = _other_property("EVAL Slug Two")
+	frappe.db.set_value("Property", P, {"booking_engine_enabled": 1,
+	                                     "page_slug": "eval-hotel-page"})
+	frappe.db.set_value("Property", other, {"booking_engine_enabled": 1,
+	                                         "page_slug": None})
+	r = resolve_public_slug("eval-hotel-page")
+	assert r == {"kind": "property", "property": P,
+	             "property_slug": "eval-hotel-page"}, r
+	# no page_slug: the slug of the name, as the chooser advertises it
+	assert resolve_public_slug("eval-slug-two")["property"] == other
+
+	idx = public_api.catalog_index()
+	assert idx["mode"] == "properties", idx["mode"]
+	slugs = {p["property_slug"]: p["name"] for p in idx["properties"]}
+	assert slugs.get("eval-hotel-page") == P and slugs.get("eval-slug-two") == other, slugs
+
+	scoped = public_api.catalog_index(property_slug="eval-hotel-page")
+	assert scoped["mode"] in ("catalog", "sites", "single_listing"), scoped
+	assert scoped["property"] == P, scoped
+	try:
+		public_api.catalog_index(property_slug="no-such-place")
+		raise AssertionError("an unknown property slug resolved")
+	except frappe.DoesNotExistError:
+		pass
+	# a property off the booking engine is not reachable by its slug
+	frappe.db.set_value("Property", other, "booking_engine_enabled", 0)
+	try:
+		resolve_public_slug("eval-slug-two")
+		raise AssertionError("a property off the booking engine resolved")
+	except frappe.DoesNotExistError:
+		pass
+
+
+@check("banquet: a new enquiry keeps the session it was sold as")
+def t331():
+	from kamra.kamra.doctype.venue_booking.venue_booking import SESSION_HOURS
+
+	fn = _function(day_offset=91, session="Evening")
+	doc = frappe.get_doc("Venue Booking", fn)
+	assert doc.session == "Evening", doc.session
+	want = SESSION_HOURS["Evening"]
+	assert (str(doc.start_time).zfill(8), str(doc.end_time).zfill(8)) == want, (
+		doc.start_time, doc.end_time)
+	# the form sends its clock too - a named session still wins
+	fn = _function(day_offset=92, session="Morning",
+	               start_time="19:00", end_time="23:00")
+	doc = frappe.get_doc("Venue Booking", fn)
+	assert doc.session == "Morning", doc.session
+	assert str(doc.start_time).zfill(8) == SESSION_HOURS["Morning"][0], doc.start_time
+	# Custom Hours, or times with no session, keep the times
+	fn = _function(day_offset=93, session="Custom Hours")
+	doc = frappe.get_doc("Venue Booking", fn)
+	assert doc.session == "Custom Hours", doc.session
+	assert str(doc.start_time).zfill(8) == "19:00:00", doc.start_time
+	try:
+		_function(day_offset=94, session="Midnight Feast")
+		raise AssertionError("an unknown session was accepted")
+	except frappe.ValidationError:
+		pass
+
+
+@check("banquet: a function ties to a group at its own property, and then posts to its bill")
+def t332():
+	from kamra import banquet as bq
+
+	other = _other_property("EVAL Link Two")
+	fn = _function(day_offset=95)
+	day = add_days(nowdate(), 95)
+	gb = frappe.get_doc({
+		"doctype": "Group Booking", "property": P, "group_name": "EVAL Wedding Party",
+		"check_in_date": day, "check_out_date": add_days(day, 2),
+		"status": "Confirmed"}).insert(ignore_permissions=True).name
+	far = frappe.get_doc({
+		"doctype": "Group Booking", "property": other, "group_name": "EVAL Elsewhere",
+		"check_in_date": day, "check_out_date": add_days(day, 2),
+		"status": "Confirmed"}).insert(ignore_permissions=True).name
+
+	assert any(g["name"] == gb for g in bq.linkable_groups(fn))
+	assert not any(g["name"] == far for g in bq.linkable_groups(fn))
+	try:
+		bq.link_group(fn, far)
+		raise AssertionError("tied a function to another property's group")
+	except (frappe.ValidationError, frappe.PermissionError):
+		pass
+	out = bq.link_group(fn, gb)
+	assert out["group_booking"] == gb, out
+	assert frappe.db.get_value("Group Booking", gb, "event") == fn
+	assert bq.function_sheet(fn)["group_detail"]["name"] == gb
+	assert frappe.db.exists("Agent Action Log", {
+		"action_type": "banquet_group_link", "reference_name": fn})
+
+	# the group has a guest, the function is sold: Post to the bill works
+	res = _res(_guest("Eval Bride", "+91 70000 03320"), add_days(day, 0),
+	           add_days(day, 1))
+	res.group_booking = gb
+	res.save(ignore_permissions=True)
+	bq.set_status(fn, "Confirmed")
+	posted = bq.post_to_folio(fn)
+	assert posted["posted"], posted
+	assert frappe.db.get_value("Folio", posted["folio"], "group_booking") == gb
+	# once billed, the group can't be swapped out from under the bill
+	try:
+		bq.link_group(fn, None)
+		raise AssertionError("untied a billed function from its group")
+	except frappe.ValidationError:
+		pass
+
+
+@check("banquet: Completed only through close-out; a guarded, logged reopen; re-close never refunds twice")
+def t333():
+	from kamra import banquet as bq
+
+	b = _banquet_setup()
+	fn = _function(day_offset=96)
+	bq.update_function(fn, {"pax_guaranteed": 100})
+	bq.add_menu(fn, b["menu"])
+	bq.set_status(fn, "Confirmed")
+	try:
+		bq.set_status(fn, "Completed")
+		raise AssertionError("Completed without the close-out")
+	except frappe.ValidationError:
+		pass
+	bq.record_receipt(fn, 10000, kind="Security Deposit", mode="Cash")
+	out = bq.close_out(fn, pax_actual=110)
+	assert out["status"] == "Completed" and out["refunded"] == 10000, out
+	try:
+		bq.update_function(fn, {"beo_notes": "late change"})
+		raise AssertionError("edited a closed function")
+	except frappe.ValidationError:
+		pass
+
+	me = frappe.session.user
+	try:
+		frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		try:
+			bq.reopen_function(fn, "guest disputes covers")
+			raise AssertionError("Front Desk reopened a closed function")
+		except frappe.PermissionError:
+			pass
+	finally:
+		frappe.set_user(me)  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+	try:
+		bq.reopen_function(fn, "  ")
+		raise AssertionError("reopened without a reason")
+	except frappe.ValidationError:
+		pass
+	out = bq.reopen_function(fn, "Guest disputes the cover count")
+	assert out["status"] == "Confirmed", out
+	assert frappe.db.exists("Agent Action Log", {
+		"action_type": "banquet_reopen", "reference_name": fn})
+	bq.update_function(fn, {"beo_notes": "recounted"})   # editable again
+
+	# the money settled at the first close-out stands
+	try:
+		bq.close_out(fn, damage_amount=500, damage_note="a glass")
+		raise AssertionError("deducted damages twice")
+	except frappe.ValidationError:
+		pass
+	out = bq.close_out(fn, pax_actual=105)
+	assert out["status"] == "Completed" and out.get("reclosed"), out
+	assert out["refunded"] == 0, out
+	doc = frappe.get_doc("Venue Booking", fn)
+	assert sum(1 for r in doc.receipts if r.kind == "Refund") == 1, \
+		[r.as_dict() for r in doc.receipts]
+	assert doc.pax_actual == 105, doc.pax_actual
+
+
+@check("pricing: a company's negotiated rate plan prices its stays; an explicit plan wins")
+def t334():
+	from kamra import api
+	from kamra.pricing import negotiated_rate_plan, quote
+
+	rp = frappe.get_doc({
+		"doctype": "Rate Plan", "property": P, "rate_plan_name": "EVAL Corp 20",
+		"code": "EVCORP", "modifier_type": "Percent", "modifier_value": -20,
+	}).insert(ignore_permissions=True).name
+	bar = frappe.get_doc({
+		"doctype": "Rate Plan", "property": P, "rate_plan_name": "EVAL BAR",
+		"code": "EVBAR", "modifier_type": "Percent", "modifier_value": 0,
+	}).insert(ignore_permissions=True).name
+	comp = frappe.get_doc({
+		"doctype": "Corporate Account", "company_name": "EVAL Negotiated Co",
+		"negotiated_rate_plan": rp,
+	}).insert(ignore_permissions=True).name
+
+	ci, co = "2031-04-01", "2031-04-03"
+	base = quote(P, RT, ci, co, 2, 0)
+	q = quote(P, RT, ci, co, 2, 0, company=comp)
+	assert q["rate_plan"] == rp, q["rate_plan"]
+	assert round(q["room_total"], 2) == round(base["room_total"] * 0.8, 2), (
+		q["room_total"], base["room_total"])
+	# a plan the desk picked beats the contract
+	q2 = quote(P, RT, ci, co, 2, 0, rate_plan=bar, company=comp)
+	assert q2["rate_plan"] == bar and q2["room_total"] == base["room_total"], q2
+	# the desk endpoint quotes the same number
+	dq = api.get_quote(P, RT, ci, co, 2, 0, company=comp)
+	assert dq["amount_after_tax"] == q["amount_after_tax"], (dq, q)
+
+	# the booking stores the plan, so its nights and folio agree with the quote
+	res = frappe.get_doc({
+		"doctype": "Reservation", "property": P,
+		"guest": _guest("Eval Corp Guest", "+91 70000 03340"),
+		"room_type": RT, "check_in_date": ci, "check_out_date": co,
+		"adults": 2, "auto_price": 1, "company": comp,
+		"booking_type": "Corporate",
+	}).insert(ignore_permissions=True)
+	assert res.rate_plan == rp, res.rate_plan
+	assert round(res.amount_after_tax, 2) == round(q["amount_after_tax"], 2), (
+		res.amount_after_tax, q["amount_after_tax"])
+
+	# at a sister property the plan with the same code stands in; none, none
+	other = _other_property("EVAL Rate Two")
+	assert negotiated_rate_plan(other, comp) is None
+	twin = frappe.get_doc({
+		"doctype": "Rate Plan", "property": other, "rate_plan_name": "EVAL Corp 20",
+		"code": "EVCORP", "modifier_type": "Percent", "modifier_value": -20,
+	}).insert(ignore_permissions=True).name
+	assert negotiated_rate_plan(other, comp) == twin
+	# a disabled contract plan applies nowhere
+	frappe.db.set_value("Rate Plan", rp, "disabled", 1)
+	assert negotiated_rate_plan(P, comp) is None
+
+
+@check("hurdle tiers can target one room type, and only this property's")
+def t335():
+	from kamra import api
+	from kamra.pricing import quote
+
+	suite = frappe.get_doc({
+		"doctype": "Room Type", "property": P, "room_type_code": "EVHS",
+		"room_type_name": "EVAL Hurdle Suite", "base_price": 6000,
+		"base_occupancy": 2, "adults_capacity": 3, "children_capacity": 1,
+		"tax_percent": 18,
+	}).insert(ignore_permissions=True).name
+	out = api.save_hurdle_rate(P, 0, premium_pct=10, room_type=suite)
+	row = next(r for r in api.hurdle_rates(P) if r["name"] == out["name"])
+	assert row["room_type"] == suite, row
+	assert row["room_type_name"] == "EVAL Hurdle Suite", row
+
+	day_in, day_out = "2031-05-05", "2031-05-06"
+	assert quote(P, suite, day_in, day_out, 2, 0)["nightly"][0]["demand_premium_pct"] == 10
+	assert quote(P, RT, day_in, day_out, 2, 0)["nightly"][0]["demand_premium_pct"] == 0
+
+	other = _other_property("EVAL Hurdle Two")
+	far = frappe.get_doc({
+		"doctype": "Room Type", "property": other, "room_type_code": "EVFAR",
+		"room_type_name": "EVAL Far Room", "base_price": 3000,
+		"base_occupancy": 2, "adults_capacity": 2, "tax_percent": 5,
+	}).insert(ignore_permissions=True).name
+	try:
+		api.save_hurdle_rate(P, 50, premium_pct=5, room_type=far)
+		raise AssertionError("a tier targeted another property's room type")
+	except frappe.ValidationError:
+		pass
+
+
+@check("budget vs actual: occupancy over nights elapsed; unposted in-house nights are counted and explained")
+def t336():
+	from frappe.utils import date_diff
+
+	from kamra.reports import budget_vs_actual
+
+	period = nowdate()[:7]
+	before = budget_vs_actual(P, period)
+	start = period + "-01"
+	assert 0 <= before["days_elapsed"] <= before["total_days"], before
+	rooms = frappe.db.count("Room", {"property": P})
+	assert before["elapsed_room_nights"] == rooms * before["days_elapsed"], before
+	assert before["basis"] == "posted"
+
+	# an in-house stay nobody has run End of Day for yet
+	ci, co = add_days(nowdate(), -1), add_days(nowdate(), 2)
+	_res(_guest("Eval Inhouse", "+91 70000 03360"), ci, co, allow_past=1)
+	after = budget_vs_actual(P, period)
+	window_end = add_days(start, after["days_elapsed"])
+	expect = max(0, date_diff(min(str(co), str(window_end)), max(str(ci), start)))
+	assert after["on_books_nights"] - before["on_books_nights"] == expect, (
+		before["on_books_nights"], after["on_books_nights"], expect)
+	assert after["unposted_nights"] - before["unposted_nights"] == expect, (before, after)
+	# nothing posted, nothing claimed as actual
+	assert after["posted_nights"] == before["posted_nights"], (before, after)
+
+	# a month that hasn't started has no elapsed nights; a past one has all
+	future = budget_vs_actual(P, "2031-01")
+	assert future["days_elapsed"] == 0 and future["rows"][1]["actual"] == 0, future
+	past = budget_vs_actual(P, "2020-02")
+	assert past["days_elapsed"] == past["total_days"] == 29, past
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -7820,7 +8126,8 @@ def execute():
 		           t200, t201, t202, t203, t204,
 		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214,
 		           t215, t216, t300, t301, t302, t303, t304, t305, t310, t311, t312, t313, t314,
-		           t315, t316, t317, t318, t320, t321, t322, t323, t324, t325, t326, t327, t328):
+		           t315, t316, t317, t318, t320, t321, t322, t323, t324, t325, t326, t327, t328,
+		           t330, t331, t332, t333, t334, t335, t336):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

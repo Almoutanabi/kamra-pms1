@@ -1542,5 +1542,8 @@
   "Every void, allowance and cancelled invoice: who, when and why.": "كل إلغاء وخصم وفاتورة ملغاة: من ومتى ولماذا.",
   "Search folio, staff or reason": "ابحث عن فاتورة أو موظف أو سبب",
   "No voids, allowances or cancelled invoices in this window.": "لا توجد إلغاءات أو خصومات أو فواتير ملغاة في هذه الفترة.",
-  "Invoice cancelled": "فاتورة ملغاة"
+  "Invoice cancelled": "فاتورة ملغاة",
+  "Company rate": "سعر الشركة",
+  "Standard rate (no plan)": "السعر القياسي (بدون خطة)",
+  "Experiences": "التجارب"
 }

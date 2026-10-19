@@ -173,6 +173,8 @@ export function BookingDialog(props: {
     adults: 2,
     children: 0,
     meal_plan: "",
+    // "" = no plan picked: the company's negotiated plan applies, if any
+    rate_plan: "",
     voucher_code: "",
     over_capacity_reason: "",
     over_capacity_guests: 0,
@@ -337,6 +339,13 @@ export function BookingDialog(props: {
     }
   }, [])
 
+  // With no plan picked, a company's negotiated plan prices the stay - the
+  // server decides (pricing.negotiated_rate_plan); the quote says which.
+  const companyPlan =
+    form.company && !form.rate_plan && quote?.rate_plan
+      ? options?.rate_plans.find((rp) => rp.name === quote.rate_plan) ?? null
+      : null
+
   const checkOut = (() => {
     if (dayUse) return form.check_in_date
     const d = new Date(form.check_in_date)
@@ -372,6 +381,8 @@ export function BookingDialog(props: {
         adults: form.adults,
         children: form.children,
         meal_plan: form.meal_plan || undefined,
+        rate_plan: form.rate_plan || undefined,
+        company: form.company || undefined,
         voucher_code: form.voucher_code || undefined,
         over_capacity_charge: form.over_capacity_charge || undefined,
         pets: form.pets || undefined,
@@ -394,6 +405,8 @@ export function BookingDialog(props: {
     form.adults,
     form.children,
     form.meal_plan,
+    form.rate_plan,
+    form.company,
     form.voucher_code,
     // the agreed amount for guests above capacity rides the room night, so a
     // change to it has to re-quote - without this the panel kept showing the
@@ -420,13 +433,15 @@ export function BookingDialog(props: {
                 adults: r.adults,
                 children: r.children,
                 meal_plan: r.meal_plan || undefined,
+                rate_plan: form.rate_plan || undefined,
+                company: form.company || undefined,
               }).catch(() => null)
             : Promise.resolve(null),
         ),
       ).then(setMoreQuotes)
     }, 300)
     return () => clearTimeout(t)
-  }, [moreRooms, form.check_in_date, checkOut])
+  }, [moreRooms, form.check_in_date, checkOut, form.rate_plan, form.company])
 
   // walk-in: the actual rooms free tonight, clean ones first
   useEffect(() => {
@@ -502,6 +517,7 @@ export function BookingDialog(props: {
           adults: form.adults,
           children: form.children,
           meal_plan: form.meal_plan || undefined,
+          rate_plan: form.rate_plan || undefined,
           voucher_code: form.voucher_code || undefined,
           pets: form.pets || undefined,
           company: form.company || undefined,
@@ -544,6 +560,7 @@ export function BookingDialog(props: {
           guest_name: form.guest_name,
           phone: form.phone || undefined,
           company: form.company || undefined,
+          rate_plan: form.rate_plan || undefined,
         })
         if (out.skipped.length > 0) {
           setError(
@@ -569,6 +586,7 @@ export function BookingDialog(props: {
         adults: form.adults,
         children: form.children,
         meal_plan: form.meal_plan || undefined,
+        rate_plan: form.rate_plan || undefined,
         voucher_code: form.voucher_code || undefined,
         pets: form.pets || undefined,
         company: form.company || undefined,
@@ -649,6 +667,8 @@ export function BookingDialog(props: {
         adults: form.adults,
         children: form.children,
         meal_plan: form.meal_plan || undefined,
+        rate_plan: form.rate_plan || undefined,
+        company: form.company || undefined,
         voucher_code: form.voucher_code || undefined,
         id_type: walk.id_type || undefined,
         id_number: walk.id_number.trim() || undefined,
@@ -1510,6 +1530,27 @@ export function BookingDialog(props: {
                       ))}
                     </select>
                   </Field>
+                  {(options?.rate_plans.length ?? 0) > 0 && (
+                    <Field label={t("Rate plan")}>
+                      <select
+                        className={inputCls}
+                        value={form.rate_plan}
+                        onChange={(e) => set("rate_plan", e.target.value)}
+                      >
+                        <option value="">
+                          {companyPlan
+                            ? `${t("Company rate")}: ${companyPlan.rate_plan_name}`
+                            : t("Standard rate (no plan)")}
+                        </option>
+                        {options?.rate_plans.map((rp) => (
+                          <option key={rp.name} value={rp.name}>
+                            {rp.rate_plan_name}
+                            {rp.code ? ` (${rp.code})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
                   <Field label={t("Voucher")}>
                     <input
                       className={inputCls}

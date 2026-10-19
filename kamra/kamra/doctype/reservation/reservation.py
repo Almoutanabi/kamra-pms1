@@ -257,7 +257,20 @@ class Reservation(Document):
 		self.validate_villa_lockout()
 		self.validate_type_capacity()
 		self.validate_cancellation_path()
+		self.apply_negotiated_rate_plan()
 		self.apply_pricing()
+
+	def apply_negotiated_rate_plan(self):
+		"""A new booking for a company with no rate plan of its own takes
+		the plan the company negotiated. Stored on the booking, so the quote,
+		the locked night rates and every folio night agree on it. Only new
+		bookings: a confirmed stay is never re-priced by a contract change."""
+		if not self.is_new() or self.rate_plan or not self.get("company"):
+			return
+		from kamra.pricing import negotiated_rate_plan
+		plan = negotiated_rate_plan(self.property, self.company)
+		if plan:
+			self.rate_plan = plan
 
 	def validate_minimum_nights(self):
 		"""Property.minimum_nights is a hard floor for overnight stays."""

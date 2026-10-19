@@ -198,26 +198,55 @@ def _month_bounds(period: str):
 @require_roles("Finance", "Revenue Manager", "Kamra Agent")
 def budget_vs_actual(property: str, period: str | None = None):
 	"""Monthly target vs actual: room revenue, occupancy %, ADR, RevPAR - with
-	variance. period is 'YYYY-MM' (defaults to the current month)."""
-	from frappe.utils import nowdate
+	variance. period is 'YYYY-MM' (defaults to the current month).
+
+	"Actual" is posted money: Room charges on folios, dated inside the month.
+	A room night reaches a folio when End of Day (night audit) posts it, so a
+	stay in-house tonight counts once its night is audited - not before.
+	Occupancy and RevPAR divide by the room nights elapsed so far (to the
+	business date), not the whole month, so a month-to-date figure compares
+	with a monthly occupancy target. `on_books_nights` / `unposted_nights`
+	say how many sold nights in the same window are still waiting for End
+	of Day, so a zero is explained rather than mysterious."""
+	from frappe.utils import date_diff, nowdate
 
 	period = period or nowdate()[:7]
 	start, nxt, days = _month_bounds(period)
 	total_rooms = frappe.db.count("Room", {"property": property}) or 0
-	room_nights = total_rooms * days
+
+	# the nights that have happened: up to the business date (the night
+	# being audited next), else through today
+	business = frappe.db.get_value("Property", property, "business_date") \
+		if frappe.db.has_column("Property", "business_date") else None
+	upto = str(getdate(business)) if business else str(add_days(nowdate(), 1))
+	window_end = min(max(upto, start), nxt)
+	elapsed = date_diff(window_end, start)
+	room_nights = total_rooms * elapsed
 
 	agg = frappe.db.sql(
 		"""
 		SELECT
 		  COUNT(DISTINCT CASE WHEN fc.charge_type='Room'
 		        THEN CONCAT(COALESCE(fc.reservation,f.reservation),'|',fc.posting_date) END) AS rooms_sold,
-		  COALESCE(SUM(CASE WHEN fc.charge_type='Room' THEN fc.amount ELSE 0 END),0) AS room_revenue
+		  COALESCE(SUM(CASE WHEN fc.charge_type='Room' THEN fc.amount ELSE 0 END),0) AS room_revenue,
+		  MAX(CASE WHEN fc.charge_type='Room' THEN fc.posting_date END) AS posted_through
 		FROM `tabFolio Charge` fc JOIN `tabFolio` f ON fc.parent=f.name
 		WHERE f.property=%(p)s AND fc.posting_date>=%(s)s AND fc.posting_date<%(n)s
 		""",
 		{"p": property, "s": start, "n": nxt}, as_dict=True)[0]
 	sold = int(agg.rooms_sold or 0)
 	room_rev = float(agg.room_revenue or 0)
+	# sold nights in the same elapsed window, whether posted yet or not
+	on_books = int(frappe.db.sql(
+		"""
+		SELECT COALESCE(SUM(DATEDIFF(LEAST(check_out_date, %(e)s),
+		                             GREATEST(check_in_date, %(s)s))), 0)
+		FROM `tabReservation`
+		WHERE property=%(p)s
+		  AND status IN ('Confirmed', 'Checked In', 'Checked Out')
+		  AND check_in_date < %(e)s AND check_out_date > %(s)s
+		""",
+		{"p": property, "s": start, "e": window_end})[0][0] or 0)
 
 	actual = {
 		"room_revenue": round(room_rev, 0),
@@ -245,9 +274,14 @@ def budget_vs_actual(property: str, period: str | None = None):
 			"variance": round(a - t, 1),
 			"attainment": round(100 * a / t, 0) if t else None,
 		})
-	return {"period": period, "days_elapsed": min(
-		days, max(0, __import__("frappe").utils.date_diff(nowdate(), start) + 1)),
-		"total_days": days, "rows": rows, "has_budget": bool(b)}
+	return {"period": period, "days_elapsed": elapsed,
+	        "total_days": days, "rows": rows, "has_budget": bool(b),
+	        "basis": "posted",
+	        "posted_nights": sold,
+	        "posted_through": str(agg.posted_through) if agg.posted_through else None,
+	        "on_books_nights": on_books,
+	        "unposted_nights": max(0, on_books - sold),
+	        "elapsed_room_nights": room_nights}
 
 
 @frappe.whitelist(methods=["POST"])
