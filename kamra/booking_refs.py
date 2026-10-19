@@ -92,6 +92,7 @@ def resolve(doctype: str, property: str, value: str | None,
 		"Pass the id, the code, or the exact name.",
 		frappe.ValidationError,
 	)
+	return None
 
 
 def resolve_room_type(property: str, value: str | None) -> str:
