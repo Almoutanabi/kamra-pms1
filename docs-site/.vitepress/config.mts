@@ -62,6 +62,7 @@ export default defineConfig({
       {
         text: "AI & integrations",
         items: [
+          { text: "All integrations", link: "/integrations" },
           { text: "Connect your AI (MCP)", link: "/ai-and-mcp" },
           { text: "MCP tool reference", link: "/mcp-tools" },
           { text: "REST API basics", link: "/api" },

@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **316 endpoints**, generated from the source
+the UI and the AI use. **327 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -1450,6 +1450,7 @@ Everything the booking form needs to render its dropdowns.
 | `rate_plan` | no | `None` |
 | `voucher_code` | no | `None` |
 | `over_capacity_charge` | no | `0` |
+| `pets` | no | `0` |
 
 ### `kamra.api.create_booking`
 
@@ -1510,6 +1511,7 @@ ETA / ETD.
 | `check_in_time` | no | `None` |
 | `check_out_time` | no | `None` |
 | `blacklist_override_reason` | no | `None` |
+| `pets` | no | `0` |
 
 ### `kamra.api.waitlist`
 
@@ -4097,6 +4099,155 @@ and whether they can sign in.
 Per role, the settings pages it may change (admins: all of them).
 
 
+## Outbound webhooks (subscriptions, delivery log)
+
+> Hotel Admin / System Manager. Events are signed with HMAC-SHA256 - see the Integrations page.
+
+### `kamra.webhooks.webhook_events`
+
+**GET/POST** · roles: `Hotel Admin`
+
+The events a webhook can subscribe to.
+
+### `kamra.webhooks.list_webhooks`
+
+**GET/POST** · roles: `Hotel Admin`
+
+This property's webhook subscriptions (never the secrets).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.webhooks.save_webhook`
+
+**POST** · roles: `Hotel Admin`
+
+Create or update a subscription. A new one gets a signing secret,
+returned once in `secret` - store it on the receiving side now.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `url` | yes |  |
+| `events` | yes |  |
+| `label` | no | `None` |
+| `active` | no | `1` |
+| `name` | no | `None` |
+
+### `kamra.webhooks.rotate_webhook_secret`
+
+**POST** · roles: `Hotel Admin`
+
+Issue a new signing secret (returned once); the old one stops working.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `name` | yes |  |
+| `property` | no | `None` |
+
+### `kamra.webhooks.delete_webhook`
+
+**POST** · roles: `Hotel Admin`
+
+Remove a subscription and its delivery log.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `name` | yes |  |
+| `property` | no | `None` |
+
+### `kamra.webhooks.webhook_deliveries`
+
+**GET/POST** · roles: `Hotel Admin`
+
+The delivery log, newest first.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `webhook` | no | `None` |
+| `status` | no | `None` |
+| `limit` | no | `50` |
+
+### `kamra.webhooks.delivery_detail`
+
+**GET/POST** · roles: `Hotel Admin`
+
+One delivery with the exact payload that was (or will be) sent.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `delivery` | yes |  |
+
+### `kamra.webhooks.resend_delivery`
+
+**POST** · roles: `Hotel Admin`
+
+Send a delivery again now - same event id, so the receiver can tell
+it is the same event.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `delivery` | yes |  |
+
+### `kamra.webhooks.send_test_event`
+
+**POST** · roles: `Hotel Admin`
+
+Send a signed `ping` to one endpoint right now and report the result.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `name` | yes |  |
+| `property` | no | `None` |
+
+
+## External POS (room charges from a third-party POS)
+
+> For a POS Integrator service user. ticket_id makes every posting idempotent.
+
+### `kamra.pos_interface.pos_room_lookup`
+
+**GET/POST**
+
+In-house stays matching a room number and/or the guest's last name.
+Only checked-in guests, only this property, only what a cashier needs to
+confirm the charge: room, guest name, reservation and departure date.
+Ask with a room or a last name (2+ letters) - never the whole list.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `room` | no | `None` |
+| `last_name` | no | `None` |
+
+### `kamra.pos_interface.pos_post_room_charge`
+
+**POST**
+
+Post one POS ticket to an in-house guest's bill.
+
+`ticket_id` is the idempotency key: the same ticket again returns the
+first posting with duplicate=true. Name the stay by room (number or id)
+and/or reservation. The billing rules choose the folio; anything with
+alcohol (is_alcohol=1) always goes to the guest's own folio, never the
+company's. Tax is the hotel's rule for the charge type, not the POS's.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `ticket_id` | yes |  |
+| `amount` | yes |  |
+| `description` | yes |  |
+| `room` | no | `None` |
+| `reservation` | no | `None` |
+| `charge_type` | no | `'Food & Beverage'` |
+| `is_alcohol` | no | `0` |
+| `tax_rate` | no | `0` |
+| `outlet_name` | no | `None` |
+
+
 ## Public (no auth - booking page, QR menu)
 
 > These are allow_guest endpoints: no token needed, rate-limited.
@@ -4169,6 +4320,7 @@ Availability + real quoted price per room type for the stay.
 | `children` | no | `0` |
 | `listing_slug` | no | `None` |
 | `location_slug` | no | `None` |
+| `pets` | no | `0` |
 
 ### `kamra.public_api.precheckin_info` <Badge type='tip' text='public' />
 
@@ -4282,6 +4434,7 @@ inventory) until the host approves.
 | `addons` | no | `None` |
 | `voucher_code` | no | `''` |
 | `idempotency_key` | no | `''` |
+| `pets` | no | `0` |
 
 ### `kamra.public_api.access_info` <Badge type='tip' text='public' />
 
