@@ -20,6 +20,7 @@ import { Button } from "../components/ui/button"
 import { Sheet } from "../components/ui/sheet"
 import { cur, moneyLocale, adoptUiLocale } from "../lib/money"
 import { formatPhoneDisplay, formatPhoneTel } from "../lib/phone"
+import { petChargeBasis } from "../lib/pets"
 
 const inr = (n: number) =>
   n.toLocaleString(moneyLocale(), { maximumFractionDigits: 0 })
@@ -36,6 +37,9 @@ interface Showcase {
     advance_percent: number
     registration_fee: number
     cleaning_fee: number
+    pets_allowed?: number
+    pet_charge?: number
+    pet_charge_basis?: string
     security_deposit_amount: number
     minimum_nights: number
     free_cancel_days: number
@@ -121,6 +125,7 @@ interface StayResult {
     amount_after_tax: number
     discount: number
     cleaning_fee?: number
+    pet_charge?: number
     totals?: { deposit_required?: number }
     /** Server-computed from the property's payment policy - never derived here. */
     advance_due?: number
@@ -211,6 +216,7 @@ export default function PublicBooking() {
       check_in_date,
       check_out_date: params.checkout ?? addDays(check_in_date, 2),
       adults: Number(params.adults ?? 2) || 2,
+      pets: 0,
       children: Number(params.children ?? 0) || 0,
     }
   })
@@ -365,6 +371,7 @@ export default function PublicBooking() {
       check_out_date: checkOut,
       adults: search.adults,
       children: search.children,
+      pets: search.pets,
     }).then((rows) => {
       const map: Record<string, StayResult> = {}
       rows.forEach((r) => (map[r.room_type] = r))
@@ -391,6 +398,7 @@ export default function PublicBooking() {
           check_out_date: checkOut,
           adults: search.adults,
           children: search.children,
+          pets: search.pets,
           ...form,
           voucher_code: voucherMsg?.ok ? voucher.trim() : "",
           addons: Object.entries(addons)
@@ -545,7 +553,7 @@ export default function PublicBooking() {
       <div className="mx-auto max-w-5xl px-5 pb-16">
         {/* search bar */}
         <div className="relative z-10 -mt-6 mb-8 rounded-xl border border-zinc-200 bg-white p-4 shadow-lg">
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className={`grid gap-3 ${p.pets_allowed ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-zinc-500">Check-in</span>
               <input
@@ -619,6 +627,29 @@ export default function PublicBooking() {
                 </span>
               )}
             </label>
+            {!!p.pets_allowed && (
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-zinc-500">Pets</span>
+                <input
+                  type="number"
+                  min={0}
+                  className={inputCls}
+                  value={search.pets}
+                  onChange={(e) =>
+                    setSearch({
+                      ...search,
+                      pets: Math.max(0, Number(e.target.value) || 0),
+                    })
+                  }
+                />
+                {(p.pet_charge || 0) > 0 && (
+                  <span className="mt-1 block text-xs text-zinc-500">
+                    {cur()}
+                    {inr(p.pet_charge || 0)} {petChargeBasis(p.pet_charge_basis)}
+                  </span>
+                )}
+              </label>
+            )}
           </div>
           <p className="mt-1.5 text-xs text-zinc-400">
             {nightsBetween(search.check_in_date, search.check_out_date)} night
@@ -824,6 +855,13 @@ export default function PublicBooking() {
                                   {inr(r.quote.cleaning_fee || 0)} cleaning fee
                                 </p>
                               )}
+                              {(r.quote.pet_charge || 0) > 0 && (
+                                <p className="text-xs text-zinc-500">
+                                  Includes {cur()}
+                                  {inr(r.quote.pet_charge || 0)} for {search.pets} pet
+                                  {search.pets === 1 ? "" : "s"}
+                                </p>
+                              )}
                               {(r.quote.totals?.deposit_required || 0) > 0 && (
                                 <p className="text-xs text-zinc-500">
                                   Refundable deposit {cur()}
@@ -939,6 +977,14 @@ export default function PublicBooking() {
                 <div>
                   <span className="block font-semibold text-zinc-700 mb-1">Pets Policy</span>
                   <p className="text-zinc-600 text-xs leading-relaxed whitespace-pre-line">{p.pets_policy}</p>
+                </div>
+              )}
+              {!!p.pets_allowed && (p.pet_charge || 0) > 0 && (
+                <div className="flex justify-between border-b border-zinc-100 pb-2">
+                  <span className="font-medium text-zinc-500">Pet charge</span>
+                  <span className="font-semibold text-zinc-800">
+                    {cur()}{inr(p.pet_charge || 0)} {petChargeBasis(p.pet_charge_basis)}
+                  </span>
                 </div>
               )}
               {p.children_policy && (

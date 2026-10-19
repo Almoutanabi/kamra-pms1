@@ -43,6 +43,7 @@ def open_folio(reservation) -> str:
 	)
 	if existing:
 		_post_addons(reservation, existing)
+		_post_pet_charge(reservation, existing)
 		return existing
 	folio = frappe.get_doc({
 		"doctype": "Folio",
@@ -68,11 +69,43 @@ def open_folio(reservation) -> str:
 	save_folio(folio)
 	_post_addons(reservation, folio.name)
 	_post_cleaning_fee(reservation, folio.name)
+	_post_pet_charge(reservation, folio.name)
 	return folio.name
 
 
 def _post_cleaning_fee(reservation, folio_name: str):
 	"""Post one-time cleaning fee from quote snapshot / property (ADR-008)."""
+	fallback = float(
+		frappe.db.get_value("Property", reservation.property, "cleaning_fee") or 0
+	)
+	_post_stay_fee(reservation, folio_name, "cleaning_fee", "Cleaning Fee",
+	               "Cleaning fee", fallback)
+
+
+def _post_pet_charge(reservation, folio_name: str):
+	"""Post the pet charge once per stay, at what the guest was quoted."""
+	pets = int(reservation.get("pets") or 0)
+	if pets <= 0:
+		return
+	from frappe.utils import date_diff
+
+	from kamra.pricing import pet_charge_amount
+	prop = frappe.get_cached_doc("Property", reservation.property)
+	# a property that has since stopped taking pets must not block check-in;
+	# the quoted line in the snapshot still posts
+	fallback = float(pet_charge_amount(
+		prop, pets,
+		date_diff(reservation.check_out_date, reservation.check_in_date),
+	)) if prop.get("pets_allowed") else 0.0
+	_post_stay_fee(reservation, folio_name, "pet_charge", "Pet Charge",
+	               f"Pets × {pets}", fallback)
+
+
+def _post_stay_fee(reservation, folio_name: str, component: str,
+                   charge_type: str, description: str, fallback: float):
+	"""Post a one-time stay fee at the amount and tax in the booking's quote
+	snapshot, so a later price change never re-bills the guest. Without a
+	snapshot line it posts `fallback` untaxed. Idempotent per folio."""
 	import json
 	amount = 0.0
 	tax_rate = 0.0
@@ -81,25 +114,20 @@ def _post_cleaning_fee(reservation, folio_name: str):
 		try:
 			data = json.loads(snap) if isinstance(snap, str) else snap
 			for li in data.get("line_items") or []:
-				if li.get("component") == "cleaning_fee":
+				if li.get("component") == component:
 					amount = float(li.get("amount") or 0)
 					tax = float(li.get("tax_amount") or 0)
 					tax_rate = (tax / amount * 100) if amount else 0
 					break
 		except Exception:
-			pass  # snapshot unreadable; fall back to the property's current cleaning fee
+			pass  # snapshot unreadable; fall back to the property's current fee
 	if amount <= 0:
-		amount = float(
-			frappe.db.get_value(
-				"Property", reservation.property, "cleaning_fee"
-			)
-			or 0
-		)
+		amount = fallback
 	if amount <= 0:
 		return
 	if frappe.db.exists(
 		"Folio Charge",
-		{"parent": folio_name, "charge_type": "Cleaning Fee", "auto_posted": 1},
+		{"parent": folio_name, "charge_type": charge_type, "auto_posted": 1},
 	):
 		return
 	doc = frappe.get_doc("Folio", folio_name)
@@ -109,8 +137,8 @@ def _post_cleaning_fee(reservation, folio_name: str):
 		"charges",
 		{
 			"posting_date": nowdate(),
-			"charge_type": "Cleaning Fee",
-			"description": "Cleaning fee",
+			"charge_type": charge_type,
+			"description": description,
 			"qty": 1,
 			"rate": amount,
 			"amount": amount,
@@ -201,11 +229,12 @@ def open_company_folio(reservation) -> str:
 # What a credit company pays when it has NO billing rules of its own - the
 # property's `default_company_billing` setting. "Room" means the stay as sold:
 # the room night, its meal plan, the levies on it, early/late fees, the
-# cleaning fee and any discount against it. Alcohol is filtered out before
-# any of this (target_folio), so no option can bill liquor to a company.
+# cleaning fee, the extra beds agreed on it and any discount against it.
+# Alcohol is filtered out before any of this (target_folio), so no option can
+# bill liquor to a company.
 _ROOM_CHARGES = frozenset({
 	"Room", "Meal Plan", "Room Levy", "Early Check-in", "Late Checkout",
-	"Cleaning Fee", "Discount",
+	"Cleaning Fee", "Extra Guests", "Discount",
 })
 COMPANY_BILLING_DEFAULTS = {
 	"Room and F&B (liquor to guest)": _ROOM_CHARGES | {"Food & Beverage"},
@@ -368,14 +397,18 @@ def _plan_free_night_rate(reservation, date) -> Decimal:
 			rt, reservation.check_in_date, reservation.check_out_date))
 	rate = season_adjust(reservation.property, date, base,
 	                     reservation.room_type)
-	# Guests above the room's capacity are there by arrangement at a price
-	# agreed on the booking, so it rides the room night rather than sitting
-	# in a separate line the desk has to remember to post.
-	rate += Decimal(str(reservation.get("over_capacity_charge") or 0))
 	if rates_include_tax(reservation.property):
-		gst = room_gst_rate(reservation.property, rt, rate)
+		gst = room_gst_rate(reservation.property, rt,
+		                    rate + _over_cap_night(reservation))
 		rate = rate / (Decimal(1) + gst / Decimal(100))
 	return rate
+
+
+def _over_cap_night(reservation) -> Decimal:
+	"""The night's agreed extra-bed amount. It bills as its own line, but the
+	slab reads the whole night's tariff, so it has to be in hand wherever the
+	room's tax rate is worked out - matching pricing.quote."""
+	return Decimal(str(reservation.get("over_capacity_charge") or 0))
 
 
 def _nightly_gst(reservation, date) -> float:
@@ -396,8 +429,8 @@ def _nightly_gst(reservation, date) -> float:
 			rt, reservation.check_in_date, reservation.check_out_date))
 	gross = season_adjust(reservation.property, date, base,
 	                      reservation.room_type)
-	gross += Decimal(str(reservation.get("over_capacity_charge") or 0))
-	return float(room_gst_rate(reservation.property, rt, gross))
+	return float(room_gst_rate(reservation.property, rt,
+	                           gross + _over_cap_night(reservation)))
 
 
 def _append_charge(folios, reservation, charge_type, line, is_alcohol=0):
@@ -437,6 +470,27 @@ def post_room_night(reservation, date, folios=None) -> bool:
 		})
 		posted = True
 		_post_room_levy(folios, reservation, date, night_rate)
+
+	# Its own charge type, not the shared Misc bucket: dedupe is by type and
+	# date, so a sundry the desk had already typed as Misc that day would
+	# otherwise make the night's extra-bed charge look posted and skip it.
+	over_cap = float(reservation.get("over_capacity_charge") or 0)
+	if over_cap > 0 and not _charge_posted(
+			reservation.name, "Extra Guests", date):
+		guests = int(reservation.get("over_capacity_guests") or 0)
+		_append_charge(folios, reservation, "Extra Guests", {
+			"posting_date": date,
+			"charge_type": "Extra Guests",
+			"reservation": reservation.name,
+			"description": (f"{guests} extra guests by arrangement"
+			                if guests else "Extra guests by arrangement"),
+			"qty": 1,
+			"rate": over_cap,
+			"amount": over_cap,
+			"gst_rate": _nightly_gst(reservation, date),
+			"auto_posted": 1,
+		})
+		posted = True
 
 	if reservation.meal_plan and not _charge_posted(
 			reservation.name, "Meal Plan", date):

@@ -16,6 +16,21 @@ def _dec(v) -> Decimal:
 	return Decimal(str(v or 0))
 
 
+def pet_charge_amount(prop, pets: int, nights: int) -> Decimal:
+	"""What the property charges for this many pets over the stay, before
+	tax. Per stay by default - most homestays charge once per pet, not per
+	night - with Per night for the ones that price it like a room."""
+	pets = max(0, cint(pets))
+	if not pets:
+		return Decimal(0)
+	if not cint(prop.get("pets_allowed")):
+		frappe.throw("This property does not accept pets.")
+	amount = _dec(prop.get("pet_charge")) * pets
+	if (prop.get("pet_charge_basis") or "Per stay") == "Per night":
+		amount *= max(cint(nights), 1)
+	return amount
+
+
 def small_group_allows_stay(rt, check_in, check_out) -> bool:
 	"""Does the small-group rate survive this particular stay?
 
@@ -396,6 +411,7 @@ def quote(
 	check_voucher_limits: bool = True,
 	over_capacity_charge: float = 0,
 	exclude_reservation: str | None = None,
+	pets: int = 0,
 ) -> dict:
 	nights = date_diff(check_out_date, check_in_date)
 	day_use = nights == 0
@@ -409,6 +425,11 @@ def quote(
 	nightly = []
 	room_total = Decimal(0)
 	room_tax = Decimal(0)
+	# Guests above the room's capacity, at the price agreed on this booking:
+	# gathered per night so each night is taxed at its own rate.
+	night_over_cap = _dec(over_capacity_charge)
+	over_cap = Decimal(0)
+	over_cap_tax = Decimal(0)
 	occ_cache: dict = {}
 	# a day-use stay bills one "night" on the check-in date
 	for i in range(max(nights, 1)):
@@ -427,12 +448,19 @@ def quote(
 				property, date, exclude=exclude_reservation)
 		rate, tier = demand_adjust(property, room_type, date, rate,
 		                           occupancy=occ_cache[str(date)])
-		# guests above capacity, at the price agreed on this booking
-		rate += _dec(over_capacity_charge)
-		gst = room_gst_rate(property, rt, rate)
+		# The agreed amount for extra beds counts toward the slab even though
+		# it bills as its own line: GST reads what the unit fetches for the
+		# day, not the occupancy its rate card started from. A room at 7,000
+		# with 2,000 of extra beds is a 9,000 night, so 18%, not 5%.
+		gst = room_gst_rate(property, rt, rate + night_over_cap)
 		if inclusive:
 			# configured price is gross — back out the taxable value
 			rate = rate / (Decimal(1) + gst / Decimal(100))
+		if night_over_cap:
+			net = (night_over_cap / (Decimal(1) + gst / Decimal(100))
+			       if inclusive else night_over_cap)
+			over_cap += net
+			over_cap_tax += net * gst / Decimal(100)
 		nightly.append({"date": str(date), "rate": float(rate),
 		                "gst_rate": float(gst),
 		                "demand_premium_pct": tier["premium_pct"] if tier else 0,
@@ -495,6 +523,27 @@ def quote(
 	else:
 		total_base = taxable
 
+	# The extra beds bill as their own line rather than buried in the room
+	# rate: the guest is told what the house costs and what the extra beds
+	# cost, and the desk agreed the second number separately. A rate plan or
+	# a discount does not touch it - it is a figure a person agreed.
+	if over_cap > 0:
+		tax += over_cap_tax
+		total_base += over_cap
+
+	# Pets: their own line, taxed at the stay's room GST like the cleaning
+	# fee. A voucher discounts the stay, not the pet charge.
+	pets = max(0, cint(pets))
+	pet_fee = pet_charge_amount(prop, pets, billable_nights)
+	pet_tax = Decimal(0)
+	if pet_fee > 0:
+		avg_gst = (room_tax / room_total * Decimal(100)) if room_total else Decimal(0)
+		if inclusive:
+			pet_fee = pet_fee / (Decimal(1) + avg_gst / Decimal(100))
+		pet_tax = pet_fee * avg_gst / Decimal(100)
+		tax += pet_tax
+		total_base += pet_fee
+
 	# Room levy (municipality fee, city / tourism tax): a % of the room rate
 	# net of discount, posted per night as its own folio line
 	levy_pct = _dec(prop.get("room_levy_percent") or 0)
@@ -532,6 +581,16 @@ def quote(
 			"tax_amount": float(meal_tax * (taxable / subtotal) if subtotal else 0),
 			"nights_applied": billable_nights,
 		})
+	if over_cap > 0:
+		line_items.append({
+			"component": "over_capacity",
+			"description": "Extra guests by arrangement",
+			"amount": float(over_cap),
+			"tax_amount": float(over_cap_tax),
+			"tax_rate": float(over_cap_tax / over_cap * 100) if over_cap else 0,
+			"is_tax_inclusive": bool(inclusive),
+			"nights_applied": billable_nights,
+		})
 	if cleaning > 0:
 		line_items.append({
 			"component": "cleaning_fee",
@@ -539,6 +598,15 @@ def quote(
 			"amount": float(cleaning),
 			"tax_amount": float(cleaning_tax),
 			"nights_applied": 0,
+		})
+	if pet_fee > 0:
+		line_items.append({
+			"component": "pet_charge",
+			"description": f"Pets × {pets}",
+			"amount": float(pet_fee),
+			"tax_amount": float(pet_tax),
+			"nights_applied": billable_nights
+				if prop.get("pet_charge_basis") == "Per night" else 0,
 		})
 	if levy:
 		line_items.append({
@@ -565,6 +633,9 @@ def quote(
 		"room_total": float(room_total),
 		"meal_total": float(meal_total),
 		"cleaning_fee": float(cleaning),
+		"over_capacity_total": float(over_cap),
+		"pets": pets,
+		"pet_charge": float(pet_fee),
 		"room_levy": float(levy),
 		"discount": float(discount),
 		"voucher": voucher_name,
@@ -574,7 +645,7 @@ def quote(
 		"amount_after_tax": float(total),
 		"line_items": line_items,
 		"totals": {
-			"subtotal": float(subtotal + cleaning + levy),
+			"subtotal": float(subtotal + cleaning + pet_fee + levy),
 			"discount": float(discount),
 			"tax": float(tax),
 			"total": float(total),

@@ -15,6 +15,7 @@ const ROUTABLE = [
   "Spa",
   "Early Check-in",
   "Late Checkout",
+  "Extra Guests",
   "Misc",
 ]
 
