@@ -54,6 +54,10 @@ const STATUS_TONE: Record<Delivery["status"], "green" | "amber" | "rose" | "zinc
 
 const M = "kamra.webhooks."
 
+/** A message meant for the user as-is (serverError would hide it behind a
+ *  generic "something went wrong"). */
+class ShownError extends Error {}
+
 function SecretOnce({ secret, onDone }: { secret: string; onDone: () => void }) {
   const { t } = useT()
   const [copied, setCopied] = useState(false)
@@ -206,7 +210,7 @@ export function WebhooksPage({ property }: { property: string }) {
       if (done) setNote(done)
       load()
     } catch (e) {
-      setError(serverError(e))
+      setError(e instanceof ShownError ? e.message : serverError(e))
     }
   }
 
@@ -316,7 +320,7 @@ export function WebhooksPage({ property }: { property: string }) {
                           `${M}send_test_event`, { name: h.name, property },
                         )
                         if (r.status !== "Delivered")
-                          throw new Error(`${t("Test failed")}: ${r.error ?? r.status}`)
+                          throw new ShownError(`${t("Test failed")}: ${r.error ?? r.status}`)
                       }, t("Test event delivered."))
                     }
                   >
