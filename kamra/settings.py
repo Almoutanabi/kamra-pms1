@@ -149,6 +149,12 @@ MODULES: tuple[Module, ...] = (
 				S("access_instructions", "Access instructions", "textarea", store=P,
 				  hint="Door codes, parking, Wi-Fi. Released only after payment, deposit and (if set) pre-check-in."),
 			)),
+			Section("door_locks", "Door locks", "How room keys are issued at check-in and cancelled at check-out.", (
+				S("door_lock_adapter", "Door lock system", "select", "manual",
+				  options=("manual",),
+				  hint="Manual: staff encode key cards at the lock's own encoder. Lock vendor "
+				       "connectors plug in here (see the integrations docs)."),
+			)),
 			Section("holds", "Holds & selling", "", (
 				S("hold_minutes", "Hold unconfirmed bookings for", "number", 120, P, min=5, max=10080, unit="min"),
 				S("sell_message", "Sell message", "textarea", store=P,
@@ -264,6 +270,10 @@ MODULES: tuple[Module, ...] = (
 			Section("tables", "Table reservations", "Which bookings show against a table on the POS floor.", (
 				S("pos_reservation_before_min", "Show a reservation from", "number", 60, min=0, max=480, unit="min before"),
 				S("pos_reservation_after_min", "Keep showing it until", "number", 240, min=0, max=720, unit="min after"),
+			)),
+			Section("external_pos", "External POS", "A third-party POS posting room charges through the POS interface.", (
+				S("pos_room_charge_limit", "Largest room charge from an external POS", "number", 0, min=0,
+				  hint="One ticket above this is refused - settle it at the outlet. 0 means no limit."),
 			)),
 		),
 	),
