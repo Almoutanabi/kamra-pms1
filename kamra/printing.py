@@ -278,14 +278,14 @@ def print_direct(job: str):
 			s.sendall(data)
 	except Exception as e:
 		_fail(job, f"{p.ip_address}:{p.port or 9100} - {e}")
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job (print_direct / daily purge) runs outside a request; its result must persist
 		return
 	now = now_datetime()
 	frappe.db.set_value("Print Job", job, {"status": "Printed", "printed_at": now, "error": None},
 	                    update_modified=False)
 	frappe.db.set_value("Kitchen Printer", j.printer, {"last_printed": now, "last_seen": now,
 	                                                 "last_error": None}, update_modified=False)
-	frappe.db.commit()
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job (print_direct / daily purge) runs outside a request; its result must persist
 
 
 # --- settings endpoints -----------------------------------------------------------
@@ -450,4 +450,4 @@ def purge_old_jobs():
 	frappe.db.delete("Print Job", {
 		"status": ["in", ["Printed", "Failed"]],
 		"creation": ["<", add_to_date(now_datetime(), days=-KEEP_DAYS)]})
-	frappe.db.commit()
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job (print_direct / daily purge) runs outside a request; its result must persist
