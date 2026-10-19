@@ -7250,7 +7250,7 @@ def t224():
 	from kamra import api, golive
 	_golive_property()
 	_b, companies, opening = _golive_files()
-	frappe.set_user("frontdesk@kamra.local")
+	frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- eval role-gate check as Front Desk
 	try:
 		for fn, args in ((golive.run_opening, (GL, opening)),
 		                 (golive.preview_opening, (GL, opening)),
@@ -7262,7 +7262,7 @@ def t224():
 			except frappe.PermissionError:
 				pass
 	finally:
-		frappe.set_user("Administrator")
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- restore eval admin context
 	out = api.create_booking(
 		property=P, room_type=RT, check_in_date="2031-04-10",
 		check_out_date="2031-04-12", guest_name="Eval OB Desk",
