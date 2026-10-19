@@ -6873,6 +6873,10 @@ def t215():
 	or what the invoice calls it - all three read the charge type."""
 	from kamra import api
 	from kamra.folio import COMPANY_BILLING_DEFAULTS, post_room_night
+	from kamra.ledger import (
+		CHARGE_TYPE_TO_CODE,
+		ensure_default_transaction_codes,
+	)
 	from kamra.localization.india import service_code_for
 	from kamra.pricing import quote
 
@@ -6937,6 +6941,20 @@ def t215():
 	        == service_code_for(prop, "Room")["value"] == "996311")
 	# and a company billed for the room is billed for the beds on it
 	assert "Extra Guests" in COMPANY_BILLING_DEFAULTS["Room only"]
+
+	# Every charge type the ledger knows has to be spellable on both doctypes
+	# that store one. Transaction Code keeps its own Select, so a charge type
+	# added to Folio Charge alone passes every test that never seeds the
+	# ledger, then fails the first time a site seeds its codes - which is a
+	# fresh install, not a dev machine that already has them.
+	ensure_default_transaction_codes()
+	for doctype in ("Folio Charge", "Transaction Code"):
+		allowed = set(
+			frappe.get_meta(doctype).get_field("charge_type").options.split("\n"))
+		missing = sorted(set(CHARGE_TYPE_TO_CODE) - allowed)
+		assert not missing, f"{doctype} cannot store: {missing}"
+	code = frappe.get_doc("Transaction Code", "1320")
+	assert code.charge_type == "Extra Guests", code.charge_type
 
 
 def execute():
