@@ -1892,6 +1892,117 @@ def t39c():
 	assert "kitchen_display_ms" in sc["server"] and "background_workers" in sc["setup"], sc
 
 
+@check("kitchen printers: KOTs split by outlet and station, stations claim and ack, fallback, void slips")
+def t39d():
+	import json as _json
+
+	from kamra import pos, printing, settings
+
+	def _outlet(name):
+		return frappe.get_doc({"doctype": "POS Outlet", "property": P, "outlet_name": name,
+		                       "outlet_type": "Restaurant", "gst_rate": 5,
+		                       "kot_mode": "Kitchen presses Start"}).insert(ignore_permissions=True).name
+
+	def _mi(o, name, station):
+		return frappe.get_doc({"doctype": "Menu Item", "property": P, "outlet": o, "item_name": name,
+		                       "category": "Food", "price": 50, "is_veg": 1, "available": 1,
+		                       "prep_station": station, "course": "Main"}).insert(ignore_permissions=True).name
+
+	# start from a property with no printers: the till prints everything
+	for name in frappe.get_all("Kitchen Printer", filters={"property": P}, pluck="name"):
+		frappe.delete_doc("Kitchen Printer", name, ignore_permissions=True, force=True)
+	a, b = _outlet("Print A"), _outlet("Print B")
+	dal, beer = _mi(a, "PA Dal", "Kitchen"), _mi(a, "PA Beer", "Bar")
+	roti, juice = _mi(b, "PB Roti", "Kitchen"), _mi(b, "PB Juice", "Bar")
+	r0 = pos.send_order(a, [{"menu_item": dal, "qty": 1}], table_no="X0")
+	assert r0["print_jobs"] == [] and len(r0["till_ticket"]["items"]) == 1, r0
+
+	# Main Kitchen serves all of A and B's kitchen; Bar serves A's bar only
+	bar = printing.save_printer(P, {"printer_name": "Eval Bar", "routes": [
+		{"outlet": a, "prep_station": "Bar"}]})["name"]
+	main = printing.save_printer(P, {"printer_name": "Eval Main", "copies": 2, "routes": [
+		{"outlet": a, "prep_station": ""}, {"outlet": b, "prep_station": "Kitchen"}]})["name"]
+	printing.save_printer(P, {"printer_name": "Eval Bar", "fallback_printer": main, "routes": [
+		{"outlet": a, "prep_station": "Bar"}]}, name=bar)
+
+	ra = pos.send_order(a, [{"menu_item": dal, "qty": 2}, {"menu_item": beer, "qty": 1}], table_no="X1")
+	got = {j["printer"]: j["items"] for j in ra["print_jobs"]}
+	# Main serves ALL stations at A, so it gets the beer too; Bar gets the beer
+	assert got == {main: 2, bar: 1}, got
+	assert ra["till_ticket"]["items"] == [] and ra["auto_print"] is False, ra
+
+	rb = pos.send_order(b, [{"menu_item": roti, "qty": 1}, {"menu_item": juice, "qty": 1}], table_no="X2")
+	assert [j["printer"] for j in rb["print_jobs"]] == [main], rb["print_jobs"]
+	assert [i["item_name"] for i in rb["till_ticket"]["items"]] == ["PB Juice"], rb["till_ticket"]
+
+	# the station claims Main's work once; a second claim gets nothing
+	jobs = printing.claim_jobs(main)
+	assert len(jobs) == 2, [j["ticket"]["items"] for j in jobs]
+	t0 = jobs[0]["ticket"]
+	assert t0["outlet"] and t0["copies"] == 2 and t0["kot_no"], t0
+	assert printing.claim_jobs(main) == [], "a claimed job was handed out twice"
+	printing.ack_jobs(main, printed=_json.dumps([j["job"] for j in jobs]))
+	assert all(frappe.db.get_value("Print Job", j["job"], "status") == "Printed" for j in jobs)
+	ps = {p.name: p for p in printing.printers(P)}
+	assert ps[main].online is True and ps[main].queued == 0, ps[main]
+	assert ps[bar].online is False and ps[bar].queued == 1, ps[bar]
+
+	# Bar fails: its ticket moves to Main, marked as being for the Bar
+	bj = printing.claim_jobs(bar)
+	printing.ack_jobs(bar, failed=_json.dumps([bj[0]["job"]]), error="paper out")
+	assert frappe.db.get_value("Print Job", bj[0]["job"], "status") == "Failed"
+	moved = printing.claim_jobs(main)
+	assert len(moved) == 1 and moved[0]["ticket"]["fallback_from"] == "Eval Bar", moved
+	printing.ack_jobs(main, printed=_json.dumps([moved[0]["job"]]))
+
+	# a fired line voided prints a VOID slip where it was cooked
+	row = next(it.name for it in frappe.get_doc("POS Order", ra["order"]).items if it.menu_item == dal)
+	pos.void_item(ra["order"], row, "guest changed mind")
+	void = printing.claim_jobs(main)
+	assert [j["kind"] for j in void] == ["Void"], void
+	assert void[0]["ticket"]["items"][0]["item_name"] == "PA Dal", void[0]["ticket"]
+	# ...unless the property turned void slips off
+	settings.save_settings(P, "fnb", {"pos_print_void_slips": 0})
+	pos.cancel_order(rb["order"], "walked out")
+	assert printing.claim_jobs(main) == [], "void slip printed with the setting off"
+	settings.save_settings(P, "fnb", {"pos_print_void_slips": 1})
+
+	# test page, reprint, guards
+	printing.test_print(main)
+	tj = printing.claim_jobs(main)
+	assert [j["kind"] for j in tj] == ["Test"], tj
+	rp = printing.reprint(jobs[0]["job"], printer=bar)["job"]
+	assert _json.loads(frappe.db.get_value("Print Job", rp, "payload"))["reprint"] is True
+	for bad, msg in (({"printer_name": ""}, "no name"),
+	                 ({"printer_name": "X", "connection": "Direct IP"}, "Direct IP without an address"),
+	                 ({"printer_name": "X", "routes": [{"outlet": "nope"}]}, "a foreign outlet"),
+	                 ({"printer_name": "Eval Main"}, "a duplicate name")):
+		try:
+			printing.save_printer(P, bad)
+			raise AssertionError(f"saved a printer with {msg}")
+		except frappe.ValidationError:
+			pass
+	try:
+		printing.claim_jobs(frappe.get_doc({"doctype": "Kitchen Printer", "property": P,
+		                                    "printer_name": "Eval IP", "connection": "Direct IP",
+		                                    "ip_address": "127.0.0.1"}).insert(ignore_permissions=True).name)
+		raise AssertionError("a Direct IP printer was claimed by a screen")
+	except frappe.ValidationError:
+		pass
+
+	# Direct IP: ESC/POS bytes, and an unreachable printer fails over
+	raw = printing.escpos({"outlet": "A", "kot_no": 7, "items": [{"item_name": "Dal", "qty": 2}]})
+	assert raw.startswith(b"\x1b@") and b"KOT 7" in raw and b"Dal" in raw and raw.endswith(b"\x1dV\x41\x03"), raw
+	ip = printing.save_printer(P, {"printer_name": "Eval Dead IP", "connection": "Direct IP",
+	                               "ip_address": "127.0.0.1", "port": 9, "fallback_printer": main})["name"]
+	job = frappe.get_doc({"doctype": "Print Job", "property": P, "printer": ip, "kind": "KOT",
+	                      "status": "Queued", "payload": frappe.as_json({"kot_no": 1, "items": []})}
+	                     ).insert(ignore_permissions=True).name
+	printing.print_direct(job)
+	assert frappe.db.get_value("Print Job", job, "status") == "Failed", "unreachable printer printed"
+	assert len(printing.claim_jobs(main)) == 1, "the failed IP job did not move to the fallback"
+
+
 @check("kitchen stock: fire deducts per outlet, shortage never blocks, ledger reconciles")
 def t40():
 	from kamra import inventory, pos
@@ -7679,7 +7790,7 @@ def execute():
 		for fn in (t1, t2, t3, t3b, t3c, t3d, t3f, t3g, t3h, t3i, t3j, t4,
 		           t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16,
 		           t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28,
-		           t29, t30, t31, t32, t33, t34, t35, t36, t37, t38, t39, t39b, t39c,
+		           t29, t30, t31, t32, t33, t34, t35, t36, t37, t38, t39, t39b, t39c, t39d,
 		           t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48,
 		           t49, t50, t51, t53, t54, t55, t56, t57, t58, t59, t60, t61,
 		           t62, t63, t64, t65, t66, t67, t68, t69, t70, t71, t72, t73,

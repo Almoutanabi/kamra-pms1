@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **339 endpoints**, generated from the source
+the UI and the AI use. **347 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -2379,6 +2379,97 @@ times how long it takes to arrive, which proves live updates work.
 | `property` | yes |  |
 | `outlet` | no | `None` |
 | `echo` | no | `0` |
+
+
+## Kitchen printers (routing, print stations, print queue)
+
+### `kamra.printing.claim_jobs`
+
+**POST**
+
+A print station asks for its printer's work. Hands over every queued
+job (and any claimed one nobody confirmed within a minute) and marks
+them Printing. The station prints them and calls ack_jobs.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `printer` | yes |  |
+
+### `kamra.printing.ack_jobs`
+
+**POST**
+
+The station's answer. Printed jobs are done; failed ones move to the
+printer's fallback, or stay Failed for a reprint.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `printer` | yes |  |
+| `printed` | no | `None` |
+| `failed` | no | `None` |
+| `error` | no | `None` |
+
+### `kamra.printing.printers`
+
+**GET/POST**
+
+Every printer with its routes and whether it's online - for the
+settings card and for a kitchen screen choosing what to print for.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.printing.save_printer`
+
+**POST**
+
+Add or change a printer and its routes. Logged to the Activity log.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `printer` | yes |  |
+| `name` | no | `None` |
+
+### `kamra.printing.delete_printer`
+
+**POST**
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `name` | yes |  |
+
+### `kamra.printing.test_print`
+
+**POST**
+
+Queue a test page on one printer.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `name` | yes |  |
+
+### `kamra.printing.reprint`
+
+**POST**
+
+Print a job again - on its own printer or another one.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `job` | yes |  |
+| `printer` | no | `None` |
+
+### `kamra.printing.order_print_status`
+
+**GET/POST**
+
+Where an order's tickets went and whether they printed - for the till.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `order` | yes |  |
 
 
 ## Laundry (housekeeping)

@@ -184,6 +184,66 @@ same bill prints its own KOT but doesn't reset the original start time.
 Outlets that had the old per-outlet checkbox ticked are moved to
 **Auto-accept and print** on upgrade, so nothing changes on the floor.
 
+### Kitchen printers and routing
+
+By default each till prints its own KOTs. Set up **kitchen printers** to
+send each KOT to the printer that cooks it, whichever till sent the order:
+two restaurants can share one kitchen printer, the bar's drinks can print
+at the bar, and room service can print a copy in two kitchens.
+
+**Set up:** Settings → F&B → **Kitchen printers** → *Add printer*.
+
+| Field | What it does |
+| --- | --- |
+| Printer name | "Main kitchen", "Bar", "Tandoor" |
+| Connection | **Print station** or **Direct IP** (below) |
+| Paper width | 80 mm or 58 mm |
+| Copies | 1–3 copies of every ticket |
+| Fallback printer | Where a ticket goes if this printer fails |
+| Prints KOTs for | A grid of outlets × stations. Tick **All stations** for everything an outlet sends, or single stations (Kitchen, Tandoor, Grill, Fryer, Bar). A dish's station comes from its menu item. |
+
+When an order is sent, the round is split by station and each printer
+gets only its own lines, with the outlet name, the station and the KOT
+number at the top. Lines no printer is set up for print at the till as
+before (if its printer switch or auto-KOT is on). The till shows where
+the ticket went: *"KOT 14 sent to Main kitchen, Bar."*
+
+**Print station (any printer, any hosting).** Put a device next to the
+printer (a tablet, mini-PC or old laptop) and connect the printer to it
+over USB, network or Bluetooth. Make that printer the device's **default
+printer**, start Chrome with `--kiosk-printing` (see *Fast silent printing*
+below), open the **kitchen display** and choose **Print for → Main kitchen**
+in its header. That screen now prints Main kitchen's tickets the moment
+they're sent, and keeps working as a kitchen display. The choice is saved
+on that device. A green dot means it's printing; Settings shows whether a
+screen is printing for each printer. One device prints for one printer, so
+three printers need three devices (or three Chrome profiles on one
+computer, each with its own default printer).
+
+This works with Kamra in the cloud, because the kitchen screen connects
+out to Kamra; nothing has to reach into the hotel's network. The printer
+can be anywhere: a central kitchen in another building works the same
+way as one next door.
+
+**Direct IP (Kamra on the hotel's own network).** When the Kamra server
+runs on-site, it can send the ticket straight to a network thermal
+printer's address (ESC/POS on port 9100) with no device in between. Enter
+the printer's IP address and port. A Kamra server in the cloud can't reach
+a printer on a private network (`192.168.x.x`), so use a print station
+there.
+
+**When something goes wrong.**
+- A ticket a printer couldn't print moves to its **fallback printer**,
+  marked *"for Bar"*. Otherwise it stays *failed* for a reprint.
+- A ticket a print station took but never confirmed is offered again after
+  a minute.
+- **Test print** on each printer sends a test page.
+- With **Settings → F&B → Print void slips in the kitchen** on (the
+  default), a line voided or an order cancelled after its KOT was sent
+  prints a **VOID** slip on the same printer, so the cook stops.
+- Finished print jobs are kept for 7 days (for reprints and disputes),
+  then deleted, because tickets carry guest names and delivery addresses.
+
 ### Fast silent printing
 
 A browser normally shows a print dialog for every KOT, and someone has to
