@@ -24,29 +24,10 @@ import {
   phoneLengthForDial,
   splitPhone,
 } from "../lib/phone"
-import { clampGuests } from "../lib/occupancy"
+import { clampGuests, sleeps } from "../lib/occupancy"
 import { useT } from "../lib/i18n"
 import { useCashierAuth } from "../lib/cashierAuth"
 import DepositPanel, { type DepositState } from "./DepositPanel"
-
-type Sleepable = {
-  adults_capacity: number
-  children_capacity: number
-  max_extra_beds?: number
-}
-
-/** The most guests of one kind a room of this type may be told to sleep:
- * its stated occupancy plus the beds the house adds by arrangement.
- *
- * A bigger party is still bookable - it splits across rooms and each one
- * carries its own count - but no single room accepts more guests than it has
- * beds for, because the booking would only be refused on save. A stated
- * capacity of 0 means "unset", so it caps nothing.
- */
-function sleeps(rt: Sleepable | undefined, kind: "adults" | "children") {
-  const base = Number(rt?.[`${kind}_capacity`] || 0)
-  return base > 0 ? base + Number(rt?.max_extra_beds || 0) : 0
-}
 
 interface ExtraRoom {
   room_type: string
@@ -687,14 +668,18 @@ export function BookingDialog(props: {
   )
   const roomTypeName = selectedRt?.room_type_name ?? ""
   const adultsCap = sleeps(selectedRt, "adults")
-  // how many of the party are above the stated occupancy - the desk types
-  // the number of extra beds by hand, and it cannot be more than this
+  const childrenCap = sleeps(selectedRt, "children")
+  // how many of the party are above the stated occupancy - the desk types the
+  // number of extra beds by hand, and it cannot be more than this
   const guestsOverCapacity =
     Math.max(0, form.adults - Number(selectedRt?.adults_capacity || 0)) +
     (Number(selectedRt?.children_capacity || 0) > 0
       ? Math.max(0, form.children - Number(selectedRt?.children_capacity))
       : 0)
-  const childrenCap = sleeps(selectedRt, "children")
+  const bedsAllowed = Math.min(
+    Number(selectedRt?.max_extra_beds || 0),
+    guestsOverCapacity,
+  )
   const overCapacity =
     !!selectedRt &&
     ((selectedRt.adults_capacity > 0 &&
@@ -707,11 +692,7 @@ export function BookingDialog(props: {
   // Over capacity but still inside the extra beds the room type allows:
   // bookable by arrangement, and the reason is what records who agreed it.
   const withinExtraBeds =
-    !!selectedRt &&
-    overCapacity &&
-    Number(form.adults) <=
-      Number(selectedRt.adults_capacity || 0) +
-        Number(selectedRt.max_extra_beds || 0)
+    !!selectedRt && overCapacity && Number(form.adults) <= adultsCap
 
   const roomsNeeded = (() => {
     if (!selectedRt) return 1
@@ -1419,23 +1400,14 @@ export function BookingDialog(props: {
                             <input
                               type="number"
                               min={0}
-                              max={Math.min(
-                                selectedRt.max_extra_beds ?? 0,
-                                guestsOverCapacity,
-                              )}
+                              max={bedsAllowed}
                               className={inputCls}
                               value={form.over_capacity_guests}
                               onChange={(e) =>
                                 set(
                                   "over_capacity_guests",
-                                  clampGuests(
-                                    Number(e.target.value),
-                                    0,
-                                    Math.min(
-                                      selectedRt.max_extra_beds ?? 0,
-                                      guestsOverCapacity,
-                                    ),
-                                  ),
+                                  clampGuests(Number(e.target.value), 0,
+                                              bedsAllowed),
                                 )
                               }
                             />
@@ -1564,7 +1536,11 @@ export function BookingDialog(props: {
                 )}
 
                 {!walkIn && (<>
-                {moreRooms.map((r, i) => (
+                {moreRooms.map((r, i) => {
+                  const rt = options?.room_types.find(
+                    (o) => o.name === r.room_type,
+                  )
+                  return (
                   <div
                     key={i}
                     className="flex flex-wrap items-end gap-2 rounded-xl border border-zinc-200 bg-zinc-50/50 px-3 py-2.5"
@@ -1593,33 +1569,23 @@ export function BookingDialog(props: {
                     <input
                       type="number"
                       min={1}
-                      max={
-                        sleeps(
-                          options?.room_types.find(
-                            (rt) => rt.name === r.room_type,
-                          ),
-                          "adults",
-                        ) || undefined
-                      }
+                      max={sleeps(rt, "adults") || undefined}
                       aria-label={`Room ${i + 2} adults`}
                       className={`${inputCls} !w-16`}
                       value={r.adults}
                       onChange={(e) =>
                         setMoreRooms((rs) =>
-                          rs.map((x, j) => {
-                            if (j !== i) return x
-                            const rt = options?.room_types.find(
-                              (o) => o.name === x.room_type,
-                            )
-                            return {
-                              ...x,
-                              adults: clampGuests(
-                                Number(e.target.value),
-                                1,
-                                sleeps(rt, "adults"),
-                              ),
-                            }
-                          }),
+                          rs.map((x, j) =>
+                            j === i
+                              ? {
+                                  ...x,
+                                  adults: clampGuests(
+                                    Number(e.target.value), 1,
+                                    sleeps(rt, "adults"),
+                                  ),
+                                }
+                              : x,
+                          ),
                         )
                       }
                     />
@@ -1652,7 +1618,8 @@ export function BookingDialog(props: {
                       <Trash2 className="size-4" aria-hidden />
                     </button>
                   </div>
-                ))}
+                  )
+                })}
 
                 {!dayUse && <button
                   type="button"

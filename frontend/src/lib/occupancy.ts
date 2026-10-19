@@ -10,6 +10,8 @@
 export interface RoomCapacity {
   adults_capacity: number
   children_capacity: number
+  /** Beds the house will add to a let room by arrangement. */
+  max_extra_beds?: number
 }
 
 /** Hold a guest count inside its floor and, when there is one, its cap. */
@@ -32,4 +34,21 @@ export function maxCapacity(
 ) {
   const caps = (roomTypes || []).map((rt) => Number(rt[field]) || 0)
   return caps.length && caps.every((c) => c > 0) ? Math.max(...caps) : 0
+}
+
+/** The most guests of one kind a room of this type may be told to sleep:
+ * its stated occupancy plus the beds the house adds by arrangement.
+ *
+ * A bigger party is still bookable - it splits across rooms and each one
+ * carries its own count - but no single room accepts more guests than it has
+ * beds for, because the booking would only be refused on save
+ * (Reservation.validate_occupancy). A stated capacity of 0 means "unset", so
+ * it caps nothing.
+ */
+export function sleeps(
+  rt: RoomCapacity | undefined,
+  kind: "adults" | "children",
+) {
+  const base = Number(rt?.[`${kind}_capacity`] || 0)
+  return base > 0 ? base + Number(rt?.max_extra_beds || 0) : 0
 }

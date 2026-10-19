@@ -454,8 +454,8 @@ def post_room_night(reservation, date, folios=None) -> bool:
 			"posting_date": date,
 			"charge_type": "Extra Guests",
 			"reservation": reservation.name,
-			"description": "Extra guests by arrangement"
-			               + (f" × {guests}" if guests else ""),
+			"description": (f"{guests} extra guests by arrangement"
+			                if guests else "Extra guests by arrangement"),
 			"qty": 1,
 			"rate": over_cap,
 			"amount": over_cap,
