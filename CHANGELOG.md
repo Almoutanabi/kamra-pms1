@@ -28,6 +28,23 @@ upgrade-breaking changes (removed doctypes / API contracts).
 
 ### Features (next release)
 
+* **booking:** pet charge — a property can allow pets and charge per pet,
+  per stay or per night (Settings → Finance → Fees & levies). Guests and the
+  desk enter a pets count; the quote shows the charge as its own line, and
+  it posts to the guest folio once at check-in. Bookings with pets are
+  refused at a property that doesn't allow them ([#222](https://github.com/Kamra-PMS/kamra-pms/pull/222))
+
+### Bug Fixes (next release)
+
+* **pricing:** guests above a room's capacity are billed as their own
+  "Extra Guests" line on the quote and folio, instead of being folded into
+  the room rate ([#221](https://github.com/Kamra-PMS/kamra-pms/pull/221))
+
+## [2.6.15](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.14...v2.6.15) (2026-10-16)
+
+
+### Features
+
 * **night audit:** End of Day — an Opera-style step-by-step screen in the
   Finance menu (also linked from Front Desk; search "night audit", "end of
   day" or "EOD"). It checks open tills, unsettled restaurant bills, pending
@@ -42,7 +59,7 @@ upgrade-breaking changes (removed doctypes / API contracts).
   has no billing rules — room and F&B by default, liquor and personal extras
   to the guest ([#216](https://github.com/Kamra-PMS/kamra-pms/pull/216))
 
-### Bug Fixes (next release)
+### Bug Fixes
 
 * **check-out:** a corporate guest's own charges (liquor, extras) are no
   longer moved to the company's account; only the company or group folio goes
@@ -54,6 +71,7 @@ upgrade-breaking changes (removed doctypes / API contracts).
 * **folio:** a folio can't be closed while money is owed ([#215](https://github.com/Kamra-PMS/kamra-pms/pull/215))
 * **ledger:** advance deposits move to the guest ledger at check-in, so each
   stay balances to zero; a patch fixes existing stays ([#215](https://github.com/Kamra-PMS/kamra-pms/pull/215))
+
 
 ## [2.6.14](https://github.com/Kamra-PMS/kamra-pms/compare/v2.6.13...v2.6.14) (2026-10-15)
 
