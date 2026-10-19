@@ -8700,10 +8700,237 @@
         "kamra.migrate.run_import"
        ]
       },
-      "description": "Import the file. Live rows (confirmed / in-house) go through the\nfull booking validation; history rows (checked-out / cancelled /\nno-show) are stored as records with their status stamped directly, so\nguest history survives the migration.",
+      "description": "Import the file (see _run_import). Migrated stays are not new\nbusiness, so they never reach outbound webhook subscribers.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\",\n  \"csv_text\": \"<csv_text>\",\n  \"preset\": \"auto\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Go-live data (companies, opening balances, reconciliation)",
+   "item": [
+    {
+     "name": "csv_template",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.golive.csv_template",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.golive.csv_template"
+       ]
+      },
+      "description": "The header row of one of Kamra's go-live CSV templates.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"kind\": \"<kind>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "preview_companies",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.golive.preview_companies",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.golive.preview_companies"
+       ]
+      },
+      "description": "Dry run of the companies file: column mapping, which companies are\nnew and which already exist (they are updated, never duplicated).",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"csv_text\": \"<csv_text>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "run_companies",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.golive.run_companies",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.golive.run_companies"
+       ]
+      },
+      "description": "Create or update each company (an upsert, so a re-run changes\nnothing) and, for a company on credit, its city ledger account at this\nproperty with the credit limit.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"csv_text\": \"<csv_text>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "preview_opening",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.golive.preview_opening",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.golive.preview_opening"
+       ]
+      },
+      "description": "Dry run of the opening-balance file: what each row matched, totals\nper category, what is already posted (a re-run skips it) and every row\nthat can't be posted. Nothing is written.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"csv_text\": \"<csv_text>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "run_opening",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.golive.run_opening",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.golive.run_opening"
+       ]
+      },
+      "description": "Post the opening balances. Each item is posted once: a re-run of the\nsame file finds it in Kamra and skips it (and says so). Company bills\ngo in before company credits, so a credit settles the oldest bill.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"csv_text\": \"<csv_text>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "reconcile",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.golive.reconcile",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.golive.reconcile"
+       ]
+      },
+      "description": "Counts and totals in each go-live file against what is now in Kamra,\nper category. `ready` is true only when every category matches and no\nrow of any file was left out - the gate before the hotel goes live.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -11161,6 +11388,414 @@
        ]
       },
       "description": "Per role, the settings pages it may change (admins: all of them)."
+     }
+    }
+   ]
+  },
+  {
+   "name": "Outbound webhooks (subscriptions, delivery log)",
+   "item": [
+    {
+     "name": "webhook_events",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.webhook_events",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.webhook_events"
+       ]
+      },
+      "description": "The events a webhook can subscribe to."
+     }
+    },
+    {
+     "name": "list_webhooks",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.list_webhooks",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.list_webhooks"
+       ]
+      },
+      "description": "This property's webhook subscriptions (never the secrets).",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "save_webhook",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.save_webhook",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.save_webhook"
+       ]
+      },
+      "description": "Create or update a subscription. A new one gets a signing secret,\nreturned once in `secret` - store it on the receiving side now.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"url\": \"<url>\",\n  \"events\": \"<events>\",\n  \"active\": 1\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "rotate_webhook_secret",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.rotate_webhook_secret",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.rotate_webhook_secret"
+       ]
+      },
+      "description": "Issue a new signing secret (returned once); the old one stops working.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"<name>\",\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "delete_webhook",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.delete_webhook",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.delete_webhook"
+       ]
+      },
+      "description": "Remove a subscription and its delivery log.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"<name>\",\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "webhook_deliveries",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.webhook_deliveries",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.webhook_deliveries"
+       ]
+      },
+      "description": "The delivery log, newest first.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"limit\": 50\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "delivery_detail",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.delivery_detail",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.delivery_detail"
+       ]
+      },
+      "description": "One delivery with the exact payload that was (or will be) sent.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"delivery\": \"<delivery>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "resend_delivery",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.resend_delivery",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.resend_delivery"
+       ]
+      },
+      "description": "Send a delivery again now - same event id, so the receiver can tell\nit is the same event.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"delivery\": \"<delivery>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "send_test_event",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.webhooks.send_test_event",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.webhooks.send_test_event"
+       ]
+      },
+      "description": "Send a signed `ping` to one endpoint right now and report the result.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"<name>\",\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "External POS (room charges from a third-party POS)",
+   "item": [
+    {
+     "name": "pos_room_lookup",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.pos_interface.pos_room_lookup",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.pos_interface.pos_room_lookup"
+       ]
+      },
+      "description": "In-house stays matching a room number and/or the guest's last name.\nOnly checked-in guests, only this property, only what a cashier needs to\nconfirm the charge: room, guest name, reservation and departure date.\nAsk with a room or a last name (2+ letters) - never the whole list.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"room\": \"Your Property-101\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "pos_post_room_charge",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.pos_interface.pos_post_room_charge",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.pos_interface.pos_post_room_charge"
+       ]
+      },
+      "description": "Post one POS ticket to an in-house guest's bill.\n\n`ticket_id` is the idempotency key: the same ticket again returns the\nfirst posting with duplicate=true. Name the stay by room (number or id)\nand/or reservation. The billing rules choose the folio; anything with\nalcohol (is_alcohol=1) always goes to the guest's own folio, never the\ncompany's. Tax is the hotel's rule for the charge type, not the POS's.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"ticket_id\": \"<ticket_id>\",\n  \"amount\": 1000,\n  \"description\": \"<description>\",\n  \"room\": \"Your Property-101\",\n  \"reservation\": \"RES-2026-00001\",\n  \"charge_type\": \"Food & Beverage\",\n  \"is_alcohol\": 0,\n  \"tax_rate\": 0\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
      }
     }
    ]
