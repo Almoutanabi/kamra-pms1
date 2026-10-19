@@ -31,6 +31,7 @@ export default defineConfig({
           { text: "Quickstart (Docker)", link: "/quickstart" },
           { text: "Try the live demo", link: "/demo" },
           { text: "Go-live checklist", link: "/go-live" },
+          { text: "Go-live runbook (one night)", link: "/go-live-runbook" },
           { text: "FAQ", link: "/faq" },
         ],
       },
@@ -62,6 +63,7 @@ export default defineConfig({
       {
         text: "AI & integrations",
         items: [
+          { text: "All integrations", link: "/integrations" },
           { text: "Connect your AI (MCP)", link: "/ai-and-mcp" },
           { text: "MCP tool reference", link: "/mcp-tools" },
           { text: "REST API basics", link: "/api" },

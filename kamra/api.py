@@ -1357,11 +1357,20 @@ def add_folio_charge(folio: str, charge_type: str, description: str,
                      amount: float, gst_rate: float = 0,
                      posting_date: str | None = None, is_alcohol: int = 0,
                      reservation: str | None = None):
+	_refuse_opening_balance(charge_type)
 	# check what the caller sent, before the hotel's own rules pick a rate
 	_check_charge_amount_and_tax(
 		frappe.db.get_value("Folio", folio, "property"), amount, gst_rate)
 	return _post_folio_charge(folio, charge_type, description, amount,
 	                          gst_rate, posting_date, is_alcohol, reservation)
+
+
+def _refuse_opening_balance(charge_type: str):
+	"""An opening balance is carried over by the go-live import only - a
+	hand-posted one would look like an old-system balance to the audit."""
+	if charge_type == "Opening Balance":
+		frappe.throw("Opening balances are posted by the go-live import "
+		             "only (Go-live import screen).")
 
 
 def _post_folio_charge(folio: str, charge_type: str, description: str,
@@ -1373,6 +1382,7 @@ def _post_folio_charge(folio: str, charge_type: str, description: str,
 	_check_charge_amount_and_tax on it first. Code that posts rates the
 	hotel itself decided (the agent's post_stay_charge, banquet billing)
 	calls this directly."""
+	_refuse_opening_balance(charge_type)
 	doc = frappe.get_doc("Folio", folio)
 	if doc.status == "Closed":
 		frappe.throw("Folio is closed.")
@@ -1410,6 +1420,8 @@ def _post_folio_charge(folio: str, charge_type: str, description: str,
 	from kamra.savings import log_action
 	log_action("post_charge", "Folio", doc.name, doc.property,
 	           rationale=f"{charge_type}: {description} ₹{amount}")
+	from kamra.webhooks import emit_folio_posted
+	emit_folio_posted(doc, charge)
 	return doc.as_dict()
 
 
