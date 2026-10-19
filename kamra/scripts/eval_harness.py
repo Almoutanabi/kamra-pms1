@@ -475,9 +475,20 @@ def t3j():
 		except frappe.ValidationError:
 			pass
 
-		# the agreed amount rides the room night, so it reaches the folio
+		# the agreed amount is its own line, not folded into the room rate -
+		# the guest is told what the house costs and what the extra beds cost
 		from kamra.folio import _nightly_room_rate
-		assert _nightly_room_rate(r, "2031-04-01") == 22500 + 6 * 1600 + 5000
+		assert _nightly_room_rate(r, "2031-04-01") == 22500 + 6 * 1600, \
+			"the agreed charge must not inflate the room rate"
+
+		from kamra.pricing import quote
+		q = quote(P, villa.name, "2031-04-01", "2031-04-02", 17, 0,
+		          over_capacity_charge=5000)
+		assert q["room_total"] == 22500 + 6 * 1600, q["room_total"]
+		assert q["over_capacity_total"] == 5000, q["over_capacity_total"]
+		assert q["amount_before_tax"] == 22500 + 6 * 1600 + 5000, q
+		components = [li["component"] for li in q["line_items"]]
+		assert "over_capacity" in components, components
 	finally:
 		for n in made:
 			frappe.delete_doc("Reservation", n, force=True,
@@ -6852,6 +6863,100 @@ def t214():
 	assert "acknowledge" in BY_NAME["run_night_audit"].parameters
 
 
+@check("extra beds agreed at the desk bill as their own line, at the night's slab, as accommodation, and to the company billed for the room")
+def t215():
+	"""Extra beds agreed at the desk bill as their own line, and that line
+	behaves like accommodation everywhere it lands.
+
+	Splitting it out of the room rate is a presentation change the guest
+	asked for, but it must not quietly change the tax, the company's share
+	or what the invoice calls it - all three read the charge type."""
+	from kamra import api
+	from kamra.folio import COMPANY_BILLING_DEFAULTS, post_room_night
+	from kamra.ledger import (
+		CHARGE_TYPE_TO_CODE,
+		ensure_default_transaction_codes,
+	)
+	from kamra.localization.india import service_code_for
+	from kamra.pricing import quote
+
+	rt = frappe.get_doc({
+		"doctype": "Room Type", "property": P, "room_type_code": "XBED",
+		"room_type_name": "Eval Extra Bed", "base_price": 7000,
+		"base_occupancy": 2, "extra_adult_price": 0,
+		"adults_capacity": 2, "children_capacity": 0, "max_extra_beds": 3,
+	}).insert(ignore_permissions=True)
+
+	# the slab reads the whole night's tariff: 7,000 alone is the lower
+	# slab, but 7,000 with 2,000 of agreed beds is a 9,000 night
+	plain = quote(P, rt.name, "2031-08-01", "2031-08-03", 2, 0)
+	assert plain["line_items"][0]["tax_rate"] == 5, plain["line_items"][0]
+
+	q = quote(P, rt.name, "2031-08-01", "2031-08-03", 2, 0,
+	          over_capacity_charge=2000)
+	rooms = next(li for li in q["line_items"] if li["component"] == "accommodation")
+	beds = next(li for li in q["line_items"] if li["component"] == "over_capacity")
+	assert rooms["tax_rate"] == 18, rooms
+	assert beds["tax_rate"] == 18, beds
+	assert q["room_total"] == 14000, q["room_total"]
+	assert q["over_capacity_total"] == 4000, q["over_capacity_total"]
+	assert q["amount_before_tax"] == 18000, q["amount_before_tax"]
+	assert round(q["tax_amount"], 2) == 3240, q["tax_amount"]
+
+	g = _guest("Eval Extra Bed", "+91 70000 00099")
+	r = frappe.get_doc({
+		"doctype": "Reservation", "property": P, "guest": g,
+		"room_type": rt.name, "check_in_date": "2031-08-01",
+		"check_out_date": "2031-08-03", "adults": 2, "auto_price": 1,
+		"over_capacity_reason": "two cots in the lounge",
+		"over_capacity_guests": 2, "over_capacity_charge": 2000,
+	}).insert(ignore_permissions=True)
+	assert float(r.amount_before_tax) == 18000, r.amount_before_tax
+	assert round(float(r.tax_amount), 2) == 3240, r.tax_amount
+
+	folio = frappe.get_doc({"doctype": "Folio", "property": P,
+	                        "reservation": r.name, "guest": g})
+	folio.insert(ignore_permissions=True)
+	# a sundry the desk typed as Misc the same day: dedupe is by charge type
+	# and date, so billing the beds as Misc made this suppress them
+	api.add_folio_charge(folio.name, "Misc", "eval sundry", 250)
+	for i in range(2):
+		post_room_night(r, add_days("2031-08-01", i))
+
+	folio.reload()
+	beds_lines = [c for c in folio.charges if c.charge_type == "Extra Guests"]
+	assert len(beds_lines) == 2, [c.charge_type for c in folio.charges]
+	assert all(float(c.amount) == 2000 for c in beds_lines), beds_lines
+	assert all(float(c.gst_rate) == 18 for c in beds_lines), \
+		"the folio must tax the beds at the slab the quote used"
+	assert len([c for c in folio.charges if c.charge_type == "Misc"]) == 1, \
+		"a hand-typed Misc must survive, and must not suppress the beds"
+	# the room rate itself stays clean - the guest sees two numbers
+	room_lines = [c for c in folio.charges if c.charge_type == "Room"]
+	assert all(float(c.amount) == 7000 for c in room_lines), room_lines
+
+	# accommodation on the invoice, not "other services n.e.c."
+	prop = frappe.get_doc("Property", P)
+	assert (service_code_for(prop, "Extra Guests")["value"]
+	        == service_code_for(prop, "Room")["value"] == "996311")
+	# and a company billed for the room is billed for the beds on it
+	assert "Extra Guests" in COMPANY_BILLING_DEFAULTS["Room only"]
+
+	# Every charge type the ledger knows has to be spellable on both doctypes
+	# that store one. Transaction Code keeps its own Select, so a charge type
+	# added to Folio Charge alone passes every test that never seeds the
+	# ledger, then fails the first time a site seeds its codes - which is a
+	# fresh install, not a dev machine that already has them.
+	ensure_default_transaction_codes()
+	for doctype in ("Folio Charge", "Transaction Code"):
+		allowed = set(
+			frappe.get_meta(doctype).get_field("charge_type").options.split("\n"))
+		missing = sorted(set(CHARGE_TYPE_TO_CODE) - allowed)
+		assert not missing, f"{doctype} cannot store: {missing}"
+	code = frappe.get_doc("Transaction Code", "1320")
+	assert code.charge_type == "Extra Guests", code.charge_type
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -6878,7 +6983,8 @@ def execute():
 		           t131, t132, t133, t134, t135, t136, t137, t138, t139, t180, t181, t182,
 		           t183, t184, t185, t186, t190, t191, t192, t193, t194,
 		           t200, t201, t202, t203, t204,
-		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214):
+		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214,
+		           t215):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

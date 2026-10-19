@@ -34,7 +34,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Charge Type",
-   "options": "Room\nMeal Plan\nFood & Beverage\nMinibar\nLaundry\nSpa\nEarly Check-in\nLate Checkout\nCleaning Fee\nRoom Levy\nDiscount\nMisc\nAllowance",
+   "options": "Room\nMeal Plan\nFood & Beverage\nMinibar\nLaundry\nSpa\nEarly Check-in\nLate Checkout\nCleaning Fee\nExtra Guests\nRoom Levy\nDiscount\nMisc\nAllowance",
    "reqd": 1
   },
   {
