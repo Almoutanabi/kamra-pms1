@@ -587,6 +587,22 @@ export default function EndOfDayWizard() {
             empty="No company is over its credit limit."
           />
         </CheckBlock>
+        <CheckBlock check={checks.overdue_ar} state={state} onAck={ack}>
+          <StepTable
+            cols={[
+              { key: "company", label: "Company" },
+              { key: "credit_days", label: "Terms (days)" },
+              { key: "oldest_due_date", label: "Oldest due", kind: "date" },
+              { key: "d1_30", label: "1-30 days", kind: "money" },
+              { key: "d31_60", label: "31-60", kind: "money" },
+              { key: "d61_90", label: "61-90", kind: "money" },
+              { key: "d90p", label: "90+", kind: "money" },
+              { key: "overdue", label: "Overdue", kind: "money" },
+            ]}
+            rows={checks.overdue_ar?.items ?? []}
+            empty="No company has an overdue bill."
+          />
+        </CheckBlock>
       </div>
     )
   } else if (k === "outlets") {
