@@ -45,6 +45,19 @@ class TestCompaniesFile(unittest.TestCase):
 		self.assertFalse(rows[1]["credit_allowed"])
 		self.assertEqual([i["row"] for i in issues], [3, 4])
 
+	def test_credit_days_column(self):
+		csv = ("Company Name,Credit Limit,Payment Terms\n"
+		       "Acme,10000,Net 45\n"
+		       "Beta,5000,\n"                   # blank = property default
+		       "Gamma,5000,30 days\n"
+		       "Delta,5000,forever\n")
+		_h, mapping, rows, issues = golive._normalize_companies(csv)
+		self.assertEqual(mapping["credit_days"], "Payment Terms")
+		self.assertEqual([(r["company_name"], r["credit_days"]) for r in rows],
+		                 [("Acme", 45), ("Beta", None), ("Gamma", 30)])
+		self.assertEqual([i["row"] for i in issues], [4])
+		self.assertIn("Credit Days", golive.TEMPLATES["companies"][1])
+
 	def test_missing_name_column(self):
 		_h, _m, rows, issues = golive._normalize_companies("Phone\n123\n")
 		self.assertEqual(rows, [])
