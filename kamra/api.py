@@ -1054,10 +1054,21 @@ def hk_queue(property: str):
 @frappe.whitelist()
 @require_roles("Housekeeping", "Front Desk", "Kamra Agent")
 def hk_update_task(task: str, status: str):
-	"""Start or complete a housekeeping task from the phone."""
+	"""Start or complete a housekeeping task from the phone.
+
+	An Inspection is completed by passing it: Done on an inspection is taken
+	as Verified, which moves the room to Ready (inspection required by the
+	turnover profile) or Inspected - never back to plain Clean. Verifying -
+	an inspection or anyone's clean - is a supervisor's call, the same rule
+	set_housekeeping_status applies to Inspected / Ready."""
 	if status not in ("In Progress", "Done", "Verified"):
 		frappe.throw("Status must be In Progress, Done or Verified.")
 	doc = frappe.get_doc("Housekeeping Task", task)
+	if doc.task_type == "Inspection" and status == "Done":
+		status = "Verified"
+	if status == "Verified" and not _is_room_supervisor():
+		frappe.throw(_("Only a housekeeping supervisor can pass an inspection "
+		               "or verify a clean."), frappe.PermissionError)
 	doc.status = status
 	doc.save()
 	if status in ("Done", "Verified"):
@@ -1154,11 +1165,55 @@ def hk_room_media(room: str):
 		fields=["file_url"], order_by="creation asc", pluck="file_url")
 
 
+def _hk_staff(property: str) -> list[dict]:
+	"""Enabled staff who can work housekeeping tasks at this property: a
+	Housekeeping or Housekeeping Supervisor role, and no property
+	restriction that leaves this one out."""
+	holders = set(frappe.get_all(
+		"Has Role",
+		filters={"role": ("in", ["Housekeeping", "Housekeeping Supervisor"]),
+		         "parenttype": "User",
+		         "parent": ("not in", ["Administrator", "Guest"])},
+		pluck="parent"))
+	if not holders:
+		return []
+	restricted: dict[str, set] = {}
+	for p in frappe.get_all("User Permission",
+	                        filters={"user": ("in", list(holders)), "allow": "Property"},
+	                        fields=["user", "for_value"]):
+		restricted.setdefault(p.user, set()).add(p.for_value)
+	users = frappe.get_all(
+		"User", filters={"name": ("in", list(holders)), "enabled": 1},
+		fields=["name", "full_name"], order_by="full_name asc")
+	return [{"user": u.name, "full_name": u.full_name or u.name}
+	        for u in users
+	        if u.name not in restricted or property in restricted[u.name]]
+
+
+@frappe.whitelist()
+@require_roles("Housekeeping Supervisor", "Front Desk", "Kamra Agent")
+def hk_staff(property: str):
+	"""Who a supervisor can hand a housekeeping task to at this property."""
+	from kamra.crs import assert_property_access
+	assert_property_access(property)
+	return _hk_staff(property)
+
+
 @frappe.whitelist(methods=["POST"])
 @require_roles("Front Desk", "Housekeeping", "Kamra Agent")
 def hk_assign_task(task: str, user: str):
-	"""A supervisor hands a task to a specific housekeeper (awaits accept)."""
+	"""A supervisor hands a task to a specific housekeeper (awaits accept).
+	Attendants take work from the pool with hk_claim_task; handing a task to
+	someone else is the supervisor's (or desk's) call, and only to a
+	housekeeper who can work this property."""
+	if not _is_room_supervisor():
+		frappe.throw(_("Only a housekeeping supervisor can assign tasks."),
+		             frappe.PermissionError)
 	doc = frappe.get_doc("Housekeeping Task", task)
+	if doc.status not in ("Pending", "In Progress"):
+		frappe.throw(_("Task {0} is already {1}.").format(doc.name, doc.status))
+	if user not in {s["user"] for s in _hk_staff(doc.property)}:
+		frappe.throw(_("{0} is not housekeeping staff at this property.").format(user))
 	doc.assigned_to_user = user
 	doc.assignment_status = "Assigned"
 	doc.save()
@@ -1253,11 +1308,21 @@ def hk_post_consumable(room: str, charge_type: str, description: str,
 	# post through the governed agent user (same pattern as public bookings):
 	# the housekeeper is authorized above and scoped to two charge types, and
 	# GST is still resolved server-side. Attribution is stamped below.
+	# laundry is a taxable service at the country pack's services rate (the
+	# same rate a Laundry Order bills at); minibar resolves to the F&B rate
+	# inside post_stay_charge
+	gst_rate = 0
+	if charge_type == "Laundry":
+		from kamra.localization import pack_for, services_tax_rate
+		gst_rate = services_tax_rate(pack_for(res.property), res.property)
 	with act_as(AGENT_EMAIL):
-		out = post_stay_charge(res.name, charge_type, description, float(amount))
+		out = post_stay_charge(res.name, charge_type, description, float(amount),
+		                       gst_rate=gst_rate)
 	from kamra.savings import log_action
+	from kamra.localization import money_text
 	log_action("hk_charge", "Folio", out.get("folio"), res.property,
-	           rationale=f"{charge_type} ₹{amount} to {room} ({description})")
+	           rationale=f"{charge_type} {money_text(res.property, amount)} "
+	                     f"to {room} ({description})")
 	return {"ok": True, "folio": out.get("folio"), "balance": out.get("balance")}
 
 
@@ -2677,6 +2742,90 @@ def find_invoices(property: str, query: str | None = None, limit: int = 8):
 		limit=int(limit or 8),
 	)
 	return rows
+
+
+STAY_INSTRUCTION_FOR = ("Front Desk", "Housekeeping", "F&B", "Concierge",
+                         "Transport", "Maintenance", "Security")
+
+
+def _stay_instruction_rows(reservation: str) -> list:
+	return frappe.get_all(
+		"Stay Instruction",
+		filters={"parent": reservation, "parenttype": "Reservation",
+		         "parentfield": "instructions"},
+		fields=["name", "department", "instruction", "status", "done_by",
+		        "done_on", "owner", "creation"],
+		order_by="idx asc")
+
+
+@frappe.whitelist()
+@require_roles("Front Desk", "Housekeeping", "Kamra Agent")
+def stay_instructions(reservation: str):
+	"""The special instructions on a stay (a VIP amenity, a 6am wake-up, a
+	no-feather pillow) - each for one department, Open until someone marks
+	it Done."""
+	if not frappe.db.exists("Reservation", reservation):
+		frappe.throw(_("Reservation {0} not found.").format(reservation),
+		             frappe.DoesNotExistError)
+	return _stay_instruction_rows(reservation)
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", "Kamra Agent")
+def add_stay_instruction(reservation: str, department: str, instruction: str):
+	"""Add an instruction to a stay for one department. Written as its own
+	child row so it never re-saves (and re-validates) the whole booking."""
+	instruction = (instruction or "").strip()
+	if not instruction:
+		frappe.throw(_("Write the instruction."))
+	if department not in STAY_INSTRUCTION_FOR:
+		frappe.throw(_("Instruction must be for one of: {0}.").format(
+			", ".join(STAY_INSTRUCTION_FOR)))
+	res = frappe.db.get_value("Reservation", reservation,
+	                          ["name", "property", "status"], as_dict=True)
+	if not res:
+		frappe.throw(_("Reservation {0} not found.").format(reservation),
+		             frappe.DoesNotExistError)
+	if res.status in ("Cancelled", "Checked Out", "No Show"):
+		frappe.throw(_("This stay is {0} - no new instructions.").format(res.status))
+	idx = (frappe.db.sql(
+		"""SELECT MAX(idx) FROM `tabStay Instruction`
+		WHERE parent=%s AND parenttype='Reservation' AND parentfield='instructions'""",
+		reservation)[0][0] or 0) + 1
+	row = frappe.get_doc({
+		"doctype": "Stay Instruction", "parent": reservation,
+		"parenttype": "Reservation", "parentfield": "instructions",
+		"idx": idx, "department": department,
+		"instruction": instruction[:1000], "status": "Open",
+	})
+	row.db_insert()
+	from kamra.savings import log_action
+	log_action("stay_instruction", "Reservation", reservation, res.property,
+	           rationale=f"{department}: {instruction[:120]}")
+	return _stay_instruction_rows(reservation)
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles("Front Desk", "Housekeeping", "Kamra Agent")
+def set_stay_instruction_status(reservation: str, row: str, status: str):
+	"""Mark one instruction Done (stamping who and when), or reopen it."""
+	if status not in ("Open", "Done"):
+		frappe.throw(_("Status must be Open or Done."))
+	if not frappe.db.exists("Stay Instruction", {
+			"name": row, "parent": reservation, "parenttype": "Reservation"}):
+		frappe.throw(_("That instruction is not on this stay."))
+	done = status == "Done"
+	text = frappe.db.get_value("Stay Instruction", row, "instruction") or ""
+	frappe.db.set_value("Stay Instruction", row, {
+		"status": status,
+		"done_by": frappe.session.user if done else None,
+		"done_on": now_datetime() if done else None,
+	})
+	from kamra.savings import log_action
+	log_action("stay_instruction", "Reservation", reservation,
+	           frappe.db.get_value("Reservation", reservation, "property"),
+	           rationale=f"{status}: {text[:120]}")
+	return _stay_instruction_rows(reservation)
 
 
 @frappe.whitelist()

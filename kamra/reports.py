@@ -385,8 +385,13 @@ def sla_report(property: str, from_date: str, to_date: str):
 		end = get_datetime(tk.resolved_on) if tk.resolved_on else now
 		return end > get_datetime(tk.due_by)
 
+	# a ticket is resolved when it is Resolved or Closed - one rule for the
+	# headline and every breakdown. A ticket closed without passing through
+	# Resolved has no resolved_on, so it counts as resolved but adds no
+	# time to the averages.
+	done = ("Resolved", "Closed")
 	total = len(tickets)
-	resolved = [t for t in tickets if t.status in ("Resolved", "Closed")]
+	resolved = [t for t in tickets if t.status in done]
 	breached = [t for t in tickets if is_breached(t)]
 	res_mins = [m for m in (resolve_mins(t) for t in resolved) if m is not None]
 
@@ -399,10 +404,11 @@ def sla_report(property: str, from_date: str, to_date: str):
 			row["count"] += 1
 			if is_breached(t):
 				row["breached"] += 1
-			m = resolve_mins(t)
-			if m is not None:
+			if t.status in done:
 				row["resolved"] += 1
-				row["mins"].append(m)
+				m = resolve_mins(t)
+				if m is not None:
+					row["mins"].append(m)
 		out = []
 		for row in g.values():
 			mins = row.pop("mins")

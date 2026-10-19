@@ -895,7 +895,7 @@
         "kamra.api.hk_update_task"
        ]
       },
-      "description": "Start or complete a housekeeping task from the phone.",
+      "description": "Start or complete a housekeeping task from the phone.\n\nAn Inspection is completed by passing it: Done on an inspection is taken\nas Verified, which moves the room to Ready (inspection required by the\nturnover profile) or Inspected - never back to plain Clean. Verifying -\nan inspection or anyone's clean - is a supervisor's call, the same rule\nset_housekeeping_status applies to Inspected / Ready.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"task\": \"<task>\",\n  \"status\": \"<status>\"\n}",
@@ -1056,6 +1056,43 @@
      }
     },
     {
+     "name": "hk_staff",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.hk_staff",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.hk_staff"
+       ]
+      },
+      "description": "Who a supervisor can hand a housekeeping task to at this property.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
      "name": "hk_assign_task",
      "request": {
       "method": "POST",
@@ -1080,7 +1117,7 @@
         "kamra.api.hk_assign_task"
        ]
       },
-      "description": "A supervisor hands a task to a specific housekeeper (awaits accept).",
+      "description": "A supervisor hands a task to a specific housekeeper (awaits accept).\nAttendants take work from the pool with hk_claim_task; handing a task to\nsomeone else is the supervisor's (or desk's) call, and only to a\nhousekeeper who can work this property.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"task\": \"<task>\",\n  \"user\": \"<user>\"\n}",
@@ -2731,6 +2768,117 @@
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\",\n  \"limit\": 8\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "stay_instructions",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.stay_instructions",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.stay_instructions"
+       ]
+      },
+      "description": "The special instructions on a stay (a VIP amenity, a 6am wake-up, a\nno-feather pillow) - each for one department, Open until someone marks\nit Done.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "add_stay_instruction",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.add_stay_instruction",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.add_stay_instruction"
+       ]
+      },
+      "description": "Add an instruction to a stay for one department. Written as its own\nchild row so it never re-saves (and re-validates) the whole booking.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"department\": \"<department>\",\n  \"instruction\": \"<instruction>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "set_stay_instruction_status",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.api.set_stay_instruction_status",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.api.set_stay_instruction_status"
+       ]
+      },
+      "description": "Mark one instruction Done (stamping who and when), or reopen it.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reservation\": \"RES-2026-00001\",\n  \"row\": \"<row>\",\n  \"status\": \"<status>\"\n}",
        "options": {
         "raw": {
          "language": "json"
