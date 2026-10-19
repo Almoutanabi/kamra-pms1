@@ -7156,14 +7156,12 @@ def t314():
 	from kamra import housekeeping
 	task = frappe._dict(name=_hk_task(), property=P, room=ROOM,
 	                    task_type="Checkout Clean", priority="High")
+	from unittest.mock import patch
 	told = []
-	real = housekeeping._notify_role
-	housekeeping._notify_role = lambda prop, role, body: told.append((role, body))
-	try:
+	with patch("kamra.housekeeping._notify_role",
+	           lambda prop, role, body: told.append((role, body))):
 		housekeeping._escalate(task, 1, 12)
 		housekeeping._escalate(task, 2, 60)
-	finally:
-		housekeeping._notify_role = real
 	assert told[0][0] == "Front Desk" and "front desk" in told[0][1], told
 	assert told[1][0] == "Hotel Admin" and "hotel admin" in told[1][1], told
 	assert "supervisor" not in told[0][1] and "manager" not in told[1][1], told
