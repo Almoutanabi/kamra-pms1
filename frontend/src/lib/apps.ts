@@ -33,6 +33,7 @@ import {
   Plus,
   Receipt,
   ScrollText,
+  FileX2,
   Settings as SettingsIcon,
   Shirt,
   Smartphone,
@@ -254,6 +255,8 @@ export const APPS: AppDef[] = [
       // Books
       { to: "/ledgers", label: "Ledgers", icon: BookOpen, group: "Books" },
       { to: "/reports", label: "Reports", icon: ChartLine, group: "Books" },
+      { to: "/voids-allowances", label: "Voids & Allowances", icon: FileX2, group: "Books",
+        roles: ["Finance", "Hotel Admin", "System Manager", "Administrator"] },
       { to: "/accounting-export", label: "Accounting Export", icon: FileSpreadsheet, group: "Books" },
       { to: "/settings/finance", label: "Settings", icon: SettingsIcon, group: "Books",
         roles: ["Finance", "Hotel Admin", "System Manager", "Administrator"] },
