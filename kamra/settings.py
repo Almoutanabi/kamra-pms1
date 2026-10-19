@@ -181,7 +181,7 @@ MODULES: tuple[Module, ...] = (
 				       "bookings made after this time are kept."),
 			)),
 			Section("auditchecks", "Night audit checklist",
-			        "Checks run before the night audit closes the day (Finance → Billing → Night audit). "
+			        "Checks run before the night audit closes the day (Finance → End of Day). "
 			        "A blocking check stops a manual run until it is resolved or a supervisor "
 			        "acknowledges it with a reason; a warning is listed in the audit pack only.", (
 				S("na_block_open_tills", "Open tills block the audit", "check", 1,
