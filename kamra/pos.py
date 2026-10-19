@@ -198,6 +198,19 @@ def create_order(outlet: str, items, property: str | None = None,
 	so the bill posts to that folio on delivery. A room with nobody in house
 	is refused - take it as a walk-in bill instead. Takeaway and delivery
 	carry the customer's details instead of a table/room."""
+	doc = _build_order(outlet, items, property, room, reservation, table_no,
+	                   source, notes, order_type, guests, customer_name,
+	                   customer_phone, delivery_address, allergy_note)
+	doc.insert()
+	return {"ok": True, "order": doc.name, "order_total": doc.order_total,
+	        "status": doc.status}
+
+
+def _build_order(outlet, items, property=None, room=None, reservation=None,
+                 table_no=None, source="Manual", notes=None, order_type=None,
+                 guests=None, customer_name=None, customer_phone=None,
+                 delivery_address=None, allergy_note=None):
+	"""A new, unsaved POS Order with its lines priced from the menu."""
 	property = property or frappe.db.get_value("POS Outlet", outlet, "property")
 	room, reservation = _in_house_stay(property, room, reservation)
 	lines = _load_items(items)
@@ -226,9 +239,7 @@ def create_order(outlet: str, items, property: str | None = None,
 		"allergy_note": (allergy_note or "").strip() or None,
 		"items": lines,
 	})
-	doc.insert()
-	return {"ok": True, "order": doc.name, "order_total": doc.order_total,
-	        "status": doc.status}
+	return doc
 
 
 @frappe.whitelist()
@@ -659,7 +670,12 @@ def fire_kot(order: str, course: str | None = None):
 	With auto KOT on (the F&B setting, or the outlet's override) this also
 	accepts the ticket, so the kitchen does not press Start, and the
 	response tells the till to print."""
-	doc = frappe.get_doc("POS Order", order)
+	return _fire(frappe.get_doc("POS Order", order), course)
+
+
+def _fire(doc, course: str | None = None) -> dict:
+	"""fire_kot on a loaded order. Saves the order once, so a caller that
+	has just changed it (send_round) pays for one write, not two."""
 	courses = _courses_of(doc) if course else {}
 	now = frappe.utils.now()
 	fired = []
@@ -675,9 +691,9 @@ def fire_kot(order: str, course: str | None = None):
 			fired.append({"item_name": it.item_name, "qty": it.qty,
 			              "instructions": it.instructions})
 			# ...and what the stock engine needs. Kept apart deliberately:
-			# the ticket is a human artefact, this is bookkeeping.
-			fired_rows.append({"row": it.name, "menu_item": it.menu_item,
-			                   "qty": it.qty, "stock_posted": it.stock_posted})
+			# the ticket is a human artefact, this is bookkeeping. Rows, not
+			# dicts: a line send_round just appended has no name until save.
+			fired_rows.append(it)
 	if course and not fired:
 		frappe.throw(_("Nothing is held on that course."))
 	if not doc.kot_no:
@@ -703,7 +719,9 @@ def fire_kot(order: str, course: str | None = None):
 	# nothing. Never blocks; a short count must not stop service, it just
 	# reports itself as stale. See kamra/inventory.py.
 	from kamra.inventory import consume_for_lines
-	alerts = consume_for_lines(doc, fired_rows)
+	alerts = consume_for_lines(doc, [
+		{"row": it.name, "menu_item": it.menu_item, "qty": it.qty,
+		 "stock_posted": it.stock_posted} for it in fired_rows])
 	ticket = {
 		"kot_no": doc.kot_no, "at": now, "round": _next_kot_round(doc),
 		"nc": bool(doc.nc), "nc_by": doc.nc_authorized_by,
@@ -721,6 +739,52 @@ def fire_kot(order: str, course: str | None = None):
 	        "auto_print": bool(auto and fired),
 	        "accepted_at": doc.accepted_at,
 	        "stock_alerts": alerts}
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles(*POS_ROLES)
+def send_order(outlet: str, items, property: str | None = None,
+               room: str | None = None, reservation: str | None = None,
+               table_no: str | None = None, notes: str | None = None,
+               order_type: str | None = None, guests=None,
+               customer_name: str | None = None,
+               customer_phone: str | None = None,
+               delivery_address: str | None = None,
+               allergy_note: str | None = None,
+               discount: float = 0, discount_reason: str = ""):
+	"""A captain's new bill straight to the kitchen, in one call: what
+	create_order, apply_discount, confirm_order and fire_kot do one after
+	another, in one request and one transaction. The till waits for one
+	round trip instead of four, and the kitchen gets a single update."""
+	doc = _build_order(outlet, items, property, room, reservation, table_no,
+	                   "Manual", notes, order_type, guests, customer_name,
+	                   customer_phone, delivery_address, allergy_note)
+	doc.status = "Confirmed"
+	if float(discount or 0) > 0:
+		doc.discount_amount = float(discount)
+		doc.discount_reason = discount_reason or None
+	doc.insert()
+	out = _fire(doc)
+	out.update(order=doc.name, order_total=doc.order_total)
+	return out
+
+
+@frappe.whitelist(methods=["POST"])
+@require_roles(*POS_ROLES)
+def send_round(order: str, items):
+	"""Another round on a running bill, straight to the kitchen: add_items
+	and fire_kot in one call and one save."""
+	doc = frappe.get_doc("POS Order", order)
+	if doc.status in ("Delivered", "Cancelled"):
+		frappe.throw(_("This order is already closed."))
+	lines = _load_items(items)
+	if not lines:
+		frappe.throw(_("Add at least one available item."))
+	for line in lines:
+		doc.append("items", line)
+	out = _fire(doc)
+	out.update(order=doc.name, order_total=doc.order_total)
+	return out
 
 
 def _next_kot_round(doc) -> int:
@@ -1171,3 +1235,49 @@ def outlet_dashboard(outlet: str, date: str | None = None):
 		"top_items": top_items,
 		"avg_fire_to_ready_mins": avg_fire_to_ready,
 	}
+
+
+@frappe.whitelist()
+@require_roles("Hotel Admin", "Finance")
+def speed_check(property: str, outlet: str | None = None, echo: int = 0):
+	"""Why does the POS feel slow here? Times what a till and a kitchen
+	display ask for on every refresh and reports the server's set-up, so
+	support can tell our code from the hosting in a minute. Read-only.
+
+	With echo=1 it also sends a realtime ping to the caller; the browser
+	times how long it takes to arrive, which proves live updates work."""
+	from time import perf_counter
+
+	from kamra.authz import assert_property_access
+	assert_property_access(property)
+	outlet = outlet or frappe.db.get_value(
+		"POS Outlet", {"property": property, "disabled": 0}, "name")
+
+	timings = {}
+	t0 = perf_counter()
+	frappe.db.sql("select 1")
+	timings["database_ms"] = round((perf_counter() - t0) * 1000, 1)
+	if outlet:
+		t0 = perf_counter()
+		open_orders(outlet)
+		timings["open_bills_ms"] = round((perf_counter() - t0) * 1000, 1)
+		t0 = perf_counter()
+		kitchen_queue(property, outlet=outlet)
+		timings["kitchen_display_ms"] = round((perf_counter() - t0) * 1000, 1)
+
+	try:
+		from frappe.utils.background_jobs import get_workers
+		workers = len(get_workers())
+	except Exception:
+		workers = None
+	conf = frappe.conf
+	setup = {
+		"background_workers": workers,
+		"developer_mode": bool(conf.get("developer_mode")),
+		"socketio_configured": bool(conf.get("socketio_port")),
+		"gunicorn_workers": conf.get("gunicorn_workers"),
+	}
+	if int(echo or 0):
+		frappe.publish_realtime("kamra_speed_ping", {"at": frappe.utils.now()},
+		                        user=frappe.session.user)
+	return {"outlet": outlet, "server": timings, "setup": setup}

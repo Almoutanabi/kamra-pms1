@@ -522,10 +522,13 @@ export default function Kitchen() {
     load()
     // live: re-fetch the moment an order fires or a line is marked ready
     // (socket via subscribeRealtime, with its own polling fallback)
-    const unsub = subscribeRealtime(load)
+    const unsub = subscribeRealtime(load, {
+      filter: (e) => e.doctype === "POS Order" && (!outlet || !e.outlet || e.outlet === outlet),
+      fallbackMs: 5000,
+    })
     const t = setInterval(load, 15_000) // safety net
     return () => { unsub(); clearInterval(t) }
-  }, [load])
+  }, [load, outlet])
 
   // Chime only for tickets that arrive after this screen has settled, so a
   // reload or a filter change does not sound like a rush.

@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **337 endpoints**, generated from the source
+the UI and the AI use. **340 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -2165,6 +2165,45 @@ response tells the till to print.
 | `order` | yes |  |
 | `course` | no | `None` |
 
+### `kamra.pos.send_order`
+
+**POST**
+
+A captain's new bill straight to the kitchen, in one call: what
+create_order, apply_discount, confirm_order and fire_kot do one after
+another, in one request and one transaction. The till waits for one
+round trip instead of four, and the kitchen gets a single update.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `outlet` | yes |  |
+| `items` | yes |  |
+| `property` | no | `None` |
+| `room` | no | `None` |
+| `reservation` | no | `None` |
+| `table_no` | no | `None` |
+| `notes` | no | `None` |
+| `order_type` | no | `None` |
+| `guests` | no | `None` |
+| `customer_name` | no | `None` |
+| `customer_phone` | no | `None` |
+| `delivery_address` | no | `None` |
+| `allergy_note` | no | `None` |
+| `discount` | no | `0` |
+| `discount_reason` | no | `''` |
+
+### `kamra.pos.send_round`
+
+**POST**
+
+Another round on a running bill, straight to the kitchen: add_items
+and fire_kot in one call and one save.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `order` | yes |  |
+| `items` | yes |  |
+
 ### `kamra.pos.kitchen_queue`
 
 **GET/POST**
@@ -2331,6 +2370,23 @@ fast the kitchen is turning tickets. Defaults to today.
 | --- | --- | --- |
 | `outlet` | yes |  |
 | `date` | no | `None` |
+
+### `kamra.pos.speed_check`
+
+**GET/POST** · roles: `Hotel Admin`, `Finance`
+
+Why does the POS feel slow here? Times what a till and a kitchen
+display ask for on every refresh and reports the server's set-up, so
+support can tell our code from the hosting in a minute. Read-only.
+
+With echo=1 it also sends a realtime ping to the caller; the browser
+times how long it takes to arrive, which proves live updates work.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `outlet` | no | `None` |
+| `echo` | no | `0` |
 
 
 ## Laundry (housekeeping)
