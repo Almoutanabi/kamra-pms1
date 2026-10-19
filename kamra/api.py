@@ -1420,6 +1420,8 @@ def _post_folio_charge(folio: str, charge_type: str, description: str,
 	from kamra.savings import log_action
 	log_action("post_charge", "Folio", doc.name, doc.property,
 	           rationale=f"{charge_type}: {description} ₹{amount}")
+	from kamra.webhooks import emit_folio_posted
+	emit_folio_posted(doc, charge)
 	return doc.as_dict()
 
 

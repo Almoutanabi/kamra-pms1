@@ -1298,6 +1298,37 @@ TOOLS: tuple[ToolSpec, ...] = (
 		mutating=True,
 		group="F&B",
 	),
+	# ── External POS (third-party till posting to a room) ────────────────
+	_t(
+		"pos_room_lookup",
+		"pos_interface.pos_room_lookup",
+		"""Find an in-house guest to charge: by room number and/or last name
+		(2+ letters). Only checked-in stays at this property; returns room,
+		guest name, reservation and departure date.""",
+		{"room": _p("string"), "last_name": _p("string")},
+		property=True,
+		group="F&B",
+	),
+	_t(
+		"pos_post_room_charge",
+		"pos_interface.pos_post_room_charge",
+		"""Post an outlet ticket (bar, spa, restaurant on another POS) to an
+		in-house guest's bill. ticket_id is the POS check number and makes the
+		call safe to retry: the same ticket is never posted twice. The billing
+		rules pick the folio; alcohol (is_alcohol=true) always goes to the
+		guest's own folio. Confirm the amount with staff before calling.""",
+		{"ticket_id": _p("string"), "amount": _p("number"),
+		 "description": _p("string"), "room": _p("string"),
+		 "reservation": _p("string"),
+		 "charge_type": _p("string", enum=["Food & Beverage", "Minibar",
+		                                   "Laundry", "Spa", "Misc"]),
+		 "is_alcohol": _p("boolean"), "outlet_name": _p("string")},
+		required=("ticket_id", "amount", "description"),
+		property=True,
+		mutating=True,
+		bools=("is_alcohol",),
+		group="F&B",
+	),
 	# ── Laundry ──────────────────────────────────────────────────────────
 	_t(
 		"laundry_board",
