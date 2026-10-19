@@ -221,6 +221,16 @@ class DeliveryTestCase(_WebhookCase):
 			self.assertEqual(wh.deliver(name)["status"], "Delivered")
 		self.assertEqual(post.call_args.kwargs["headers"]["X-Kamra-Event-Id"], event_id)
 
+	def test_failed_test_ping_is_failed_on_the_hook_too(self):
+		sub = self.subscribe(events=("folio.posted",))
+		with patch("requests.post", return_value=_resp(405, "nope")):
+			out = wh.send_test_event(sub["name"], PROP_A)
+		self.assertEqual(out["status"], "Failed")
+		self.assertEqual(frappe.db.get_value(wh.DELIVERY, out["delivery"], "status"), "Failed")
+		# the endpoint card must not claim a retry is coming
+		self.assertEqual(frappe.db.get_value(wh.WEBHOOK, sub["name"], "last_status"),
+		                 "Failed (405)")
+
 	def test_dns_rebinding_to_private_ip_fails_without_retry(self):
 		self.subscribe(events=("folio.posted",))
 		name = wh.emit("folio.posted", PROP_A, {"folio": "F-1"})[0]

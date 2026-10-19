@@ -597,4 +597,8 @@ def send_test_event(name: str, property: str | None = None) -> dict:
 	if out["status"] == "Retrying":  # a test is one shot - don't keep retrying it
 		frappe.db.set_value(DELIVERY, d.name, {"status": "Failed", "next_retry_at": None})
 		out["status"] = "Failed"
+		code = out.get("response_code")
+		frappe.db.set_value(WEBHOOK, doc.name, "last_status",
+		                    f"Failed ({code})" if code else "Failed",
+		                    update_modified=False)
 	return {"delivery": d.name, **out}
