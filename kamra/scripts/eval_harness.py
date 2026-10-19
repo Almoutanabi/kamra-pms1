@@ -1768,15 +1768,32 @@ def t39():
 
 @check("POS: auto KOT accepts the ticket and tells the till to print")
 def t39b():
-	from kamra import pos
+	from kamra import pos, settings
 	manual = frappe.get_doc({
 		"doctype": "POS Outlet", "property": P, "outlet_name": "Manual Pass",
-		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 0,
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Kitchen presses Start",
 	}).insert(ignore_permissions=True).name
 	auto = frappe.get_doc({
 		"doctype": "POS Outlet", "property": P, "outlet_name": "Auto Pass",
-		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 1,
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Auto-accept and print",
 	}).insert(ignore_permissions=True).name
+	follow = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Follow Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5,
+	}).insert(ignore_permissions=True).name
+
+	# The F&B setting drives outlets left on "Use F&B setting"; the
+	# outlet's own choice beats it in both directions.
+	def _flags():
+		return {o.name: o.auto_kot for o in pos.outlets(P)}
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 0})
+	f = _flags()
+	assert (f[manual], f[auto], f[follow]) == (0, 1, 0), f
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 1})
+	f = _flags()
+	assert (f[manual], f[auto], f[follow]) == (0, 1, 1), f
+	assert pos.outlet_auto_kot(follow) and not pos.outlet_auto_kot(manual)
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 0})
 
 	def _mi(outlet, name):
 		return frappe.get_doc({
@@ -1808,6 +1825,182 @@ def t39b():
 	assert fa2["auto_print"] is True, fa2
 	assert frappe.db.get_value("POS Order", oa["order"], "accepted_at") == stamp, \
 		"second fire reset the accept time"
+
+
+@check("POS: send_order / send_round = the multi-call path in one request and one save")
+def t39c():
+	from kamra import pos
+	outlet = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Speed Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Kitchen presses Start",
+	}).insert(ignore_permissions=True).name
+	auto = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Speed Auto",
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Auto-accept and print",
+	}).insert(ignore_permissions=True).name
+
+	def _mi(o, name, price):
+		return frappe.get_doc({
+			"doctype": "Menu Item", "property": P, "outlet": o, "item_name": name,
+			"category": "Food", "price": price, "is_veg": 1, "available": 1,
+			"prep_station": "Kitchen", "course": "Main",
+		}).insert(ignore_permissions=True).name
+	dal, roti = _mi(outlet, "Speed Dal", 100), _mi(outlet, "Speed Roti", 20)
+
+	# the old path: four calls
+	old = pos.create_order(outlet, [{"menu_item": dal, "qty": 2}], table_no="S1")["order"]
+	pos.apply_discount(old, 30, "")
+	pos.confirm_order(old)
+	f_old = pos.fire_kot(old)
+	# the new path: one call
+	r = pos.send_order(outlet, [{"menu_item": dal, "qty": 2}], table_no="S2",
+	                   discount=30)
+	new = frappe.get_doc("POS Order", r["order"])
+	ref = frappe.get_doc("POS Order", old)
+	for f in ("status", "order_total", "discount_amount", "kot_fired", "captain"):
+		assert new.get(f) == ref.get(f), (f, new.get(f), ref.get(f))
+	assert new.status == "Preparing" and new.order_total == 170, (new.status, new.order_total)
+	assert r["kot_no"] == f_old["kot_no"] + 1, (r["kot_no"], f_old["kot_no"])
+	assert r["fired_items"] == f_old["fired_items"], r["fired_items"]
+	assert all(it.kot_status == "Fired" and it.fired_at for it in new.items)
+	assert not new.accepted_at and r["auto_print"] is False, "manual outlet accepted itself"
+	assert frappe.db.count("Version", {"ref_doctype": "POS Order", "docname": new.name}) <= 1, \
+		"send_order saved the order more than once"
+
+	# a round: add + fire in one save, the new line named and fired
+	before = frappe.db.count("Version", {"ref_doctype": "POS Order", "docname": new.name})
+	rr = pos.send_round(new.name, [{"menu_item": roti, "qty": 3}])
+	assert [i["item_name"] for i in rr["fired_items"]] == ["Speed Roti"], rr["fired_items"]
+	assert rr["order_total"] == 230, rr["order_total"]
+	new.reload()
+	roti_row = next(it for it in new.items if it.menu_item == roti)
+	assert roti_row.name and roti_row.kot_status == "Fired" and roti_row.fired_at, roti_row.as_dict()
+	assert frappe.db.count("Version", {"ref_doctype": "POS Order", "docname": new.name}) - before <= 1, \
+		"send_round saved the order more than once"
+	try:
+		pos.send_round(new.name, [])
+		raise AssertionError("an empty round was sent")
+	except frappe.ValidationError:
+		pass
+
+	# auto KOT is honoured on the fast path too
+	ra = pos.send_order(auto, [{"menu_item": _mi(auto, "Speed Auto Dal", 90), "qty": 1}], table_no="A9")
+	assert ra["auto_print"] is True and ra["accepted_at"], ra
+
+	# the speed check is read-only and answers
+	sc = pos.speed_check(P, outlet=outlet)
+	assert "kitchen_display_ms" in sc["server"] and "background_workers" in sc["setup"], sc
+
+
+@check("kitchen printers: KOTs split by outlet and station, stations claim and ack, fallback, void slips")
+def t39d():
+	import json as _json
+
+	from kamra import pos, printing, settings
+
+	def _outlet(name):
+		return frappe.get_doc({"doctype": "POS Outlet", "property": P, "outlet_name": name,
+		                       "outlet_type": "Restaurant", "gst_rate": 5,
+		                       "kot_mode": "Kitchen presses Start"}).insert(ignore_permissions=True).name
+
+	def _mi(o, name, station):
+		return frappe.get_doc({"doctype": "Menu Item", "property": P, "outlet": o, "item_name": name,
+		                       "category": "Food", "price": 50, "is_veg": 1, "available": 1,
+		                       "prep_station": station, "course": "Main"}).insert(ignore_permissions=True).name
+
+	# start from a property with no printers: the till prints everything
+	for name in frappe.get_all("Kitchen Printer", filters={"property": P}, pluck="name"):
+		frappe.delete_doc("Kitchen Printer", name, ignore_permissions=True, force=True)
+	a, b = _outlet("Print A"), _outlet("Print B")
+	dal, beer = _mi(a, "PA Dal", "Kitchen"), _mi(a, "PA Beer", "Bar")
+	roti, juice = _mi(b, "PB Roti", "Kitchen"), _mi(b, "PB Juice", "Bar")
+	r0 = pos.send_order(a, [{"menu_item": dal, "qty": 1}], table_no="X0")
+	assert r0["print_jobs"] == [] and len(r0["till_ticket"]["items"]) == 1, r0
+
+	# Main Kitchen serves all of A and B's kitchen; Bar serves A's bar only
+	bar = printing.save_printer(P, {"printer_name": "Eval Bar", "routes": [
+		{"outlet": a, "prep_station": "Bar"}]})["name"]
+	main = printing.save_printer(P, {"printer_name": "Eval Main", "copies": 2, "routes": [
+		{"outlet": a, "prep_station": ""}, {"outlet": b, "prep_station": "Kitchen"}]})["name"]
+	printing.save_printer(P, {"printer_name": "Eval Bar", "fallback_printer": main, "routes": [
+		{"outlet": a, "prep_station": "Bar"}]}, name=bar)
+
+	ra = pos.send_order(a, [{"menu_item": dal, "qty": 2}, {"menu_item": beer, "qty": 1}], table_no="X1")
+	got = {j["printer"]: j["items"] for j in ra["print_jobs"]}
+	# Main serves ALL stations at A, so it gets the beer too; Bar gets the beer
+	assert got == {main: 2, bar: 1}, got
+	assert ra["till_ticket"]["items"] == [] and ra["auto_print"] is False, ra
+
+	rb = pos.send_order(b, [{"menu_item": roti, "qty": 1}, {"menu_item": juice, "qty": 1}], table_no="X2")
+	assert [j["printer"] for j in rb["print_jobs"]] == [main], rb["print_jobs"]
+	assert [i["item_name"] for i in rb["till_ticket"]["items"]] == ["PB Juice"], rb["till_ticket"]
+
+	# the station claims Main's work once; a second claim gets nothing
+	jobs = printing.claim_jobs(main)
+	assert len(jobs) == 2, [j["ticket"]["items"] for j in jobs]
+	t0 = jobs[0]["ticket"]
+	assert t0["outlet"] and t0["copies"] == 2 and t0["kot_no"], t0
+	assert printing.claim_jobs(main) == [], "a claimed job was handed out twice"
+	printing.ack_jobs(main, printed=_json.dumps([j["job"] for j in jobs]))
+	assert all(frappe.db.get_value("Print Job", j["job"], "status") == "Printed" for j in jobs)
+	ps = {p.name: p for p in printing.printers(P)}
+	assert ps[main].online is True and ps[main].queued == 0, ps[main]
+	assert ps[bar].online is False and ps[bar].queued == 1, ps[bar]
+
+	# Bar fails: its ticket moves to Main, marked as being for the Bar
+	bj = printing.claim_jobs(bar)
+	printing.ack_jobs(bar, failed=_json.dumps([bj[0]["job"]]), error="paper out")
+	assert frappe.db.get_value("Print Job", bj[0]["job"], "status") == "Failed"
+	moved = printing.claim_jobs(main)
+	assert len(moved) == 1 and moved[0]["ticket"]["fallback_from"] == "Eval Bar", moved
+	printing.ack_jobs(main, printed=_json.dumps([moved[0]["job"]]))
+
+	# a fired line voided prints a VOID slip where it was cooked
+	row = next(it.name for it in frappe.get_doc("POS Order", ra["order"]).items if it.menu_item == dal)
+	pos.void_item(ra["order"], row, "guest changed mind")
+	void = printing.claim_jobs(main)
+	assert [j["kind"] for j in void] == ["Void"], void
+	assert void[0]["ticket"]["items"][0]["item_name"] == "PA Dal", void[0]["ticket"]
+	# ...unless the property turned void slips off
+	settings.save_settings(P, "fnb", {"pos_print_void_slips": 0})
+	pos.cancel_order(rb["order"], "walked out")
+	assert printing.claim_jobs(main) == [], "void slip printed with the setting off"
+	settings.save_settings(P, "fnb", {"pos_print_void_slips": 1})
+
+	# test page, reprint, guards
+	printing.test_print(main)
+	tj = printing.claim_jobs(main)
+	assert [j["kind"] for j in tj] == ["Test"], tj
+	rp = printing.reprint(jobs[0]["job"], printer=bar)["job"]
+	assert _json.loads(frappe.db.get_value("Print Job", rp, "payload"))["reprint"] is True
+	for bad, msg in (({"printer_name": ""}, "no name"),
+	                 ({"printer_name": "X", "connection": "Direct IP"}, "Direct IP without an address"),
+	                 ({"printer_name": "X", "routes": [{"outlet": "nope"}]}, "a foreign outlet"),
+	                 ({"printer_name": "Eval Main"}, "a duplicate name")):
+		try:
+			printing.save_printer(P, bad)
+			raise AssertionError(f"saved a printer with {msg}")
+		except frappe.ValidationError:
+			pass
+	try:
+		printing.claim_jobs(frappe.get_doc({"doctype": "Kitchen Printer", "property": P,
+		                                    "printer_name": "Eval IP", "connection": "Direct IP",
+		                                    "ip_address": "127.0.0.1"}).insert(ignore_permissions=True).name)
+		raise AssertionError("a Direct IP printer was claimed by a screen")
+	except frappe.ValidationError:
+		pass
+
+	# Direct IP: ESC/POS bytes, and an unreachable printer fails over
+	raw = printing.escpos({"outlet": "A", "kot_no": 7, "items": [{"item_name": "Dal", "qty": 2}]})
+	assert raw.startswith(b"\x1b@") and b"KOT 7" in raw and b"Dal" in raw and raw.endswith(b"\x1dV\x41\x03"), raw
+	ip = printing.save_printer(P, {"printer_name": "Eval Dead IP", "connection": "Direct IP",
+	                               "ip_address": "127.0.0.1", "port": 9, "fallback_printer": main})["name"]
+	job = frappe.get_doc({"doctype": "Print Job", "property": P, "printer": ip, "kind": "KOT",
+	                      "status": "Queued", "payload": frappe.as_json({"kot_no": 1, "items": []})}
+	                     ).insert(ignore_permissions=True).name
+	printing.print_direct(job)
+	assert frappe.db.get_value("Print Job", job, "status") == "Failed", "unreachable printer printed"
+	assert len(printing.claim_jobs(main)) == 1, "the failed IP job did not move to the fallback"
 
 
 @check("kitchen stock: fire deducts per outlet, shortage never blocks, ledger reconciles")
@@ -7263,6 +7456,279 @@ def t318():
 	}).insert(ignore_permissions=True)
 
 
+def _other_property(name):
+	"""A second, minimal property - for checks about what crosses a
+	property boundary."""
+	if not frappe.db.exists("Property", name):
+		frappe.get_doc({
+			"doctype": "Property", "property_name": name, "city": "Testville",
+			"gst_mode": "Slab", "gst_slab_threshold": 7500,
+			"gst_rate_low": 5, "gst_rate_high": 18,
+		}).insert(ignore_permissions=True)
+	return name
+
+
+@check("booking engine: /stay/<property-slug> resolves, and /book scopes to the chosen property")
+def t330():
+	from kamra import public_api
+	from kamra.booking_slugs import resolve_public_slug
+
+	other = _other_property("EVAL Slug Two")
+	frappe.db.set_value("Property", P, {"booking_engine_enabled": 1,
+	                                     "page_slug": "eval-hotel-page"})
+	frappe.db.set_value("Property", other, {"booking_engine_enabled": 1,
+	                                         "page_slug": None})
+	r = resolve_public_slug("eval-hotel-page")
+	assert r == {"kind": "property", "property": P,
+	             "property_slug": "eval-hotel-page"}, r
+	# no page_slug: the slug of the name, as the chooser advertises it
+	assert resolve_public_slug("eval-slug-two")["property"] == other
+
+	idx = public_api.catalog_index()
+	assert idx["mode"] == "properties", idx["mode"]
+	slugs = {p["property_slug"]: p["name"] for p in idx["properties"]}
+	assert slugs.get("eval-hotel-page") == P and slugs.get("eval-slug-two") == other, slugs
+
+	scoped = public_api.catalog_index(property_slug="eval-hotel-page")
+	assert scoped["mode"] in ("catalog", "sites", "single_listing"), scoped
+	assert scoped["property"] == P, scoped
+	try:
+		public_api.catalog_index(property_slug="no-such-place")
+		raise AssertionError("an unknown property slug resolved")
+	except frappe.DoesNotExistError:
+		pass
+	# a property off the booking engine is not reachable by its slug
+	frappe.db.set_value("Property", other, "booking_engine_enabled", 0)
+	try:
+		resolve_public_slug("eval-slug-two")
+		raise AssertionError("a property off the booking engine resolved")
+	except frappe.DoesNotExistError:
+		pass
+
+
+@check("banquet: a new enquiry keeps the session it was sold as")
+def t331():
+	from kamra.kamra.doctype.venue_booking.venue_booking import SESSION_HOURS
+
+	fn = _function(day_offset=91, session="Evening")
+	doc = frappe.get_doc("Venue Booking", fn)
+	assert doc.session == "Evening", doc.session
+	want = SESSION_HOURS["Evening"]
+	assert (str(doc.start_time).zfill(8), str(doc.end_time).zfill(8)) == want, (
+		doc.start_time, doc.end_time)
+	# the form sends its clock too - a named session still wins
+	fn = _function(day_offset=92, session="Morning",
+	               start_time="19:00", end_time="23:00")
+	doc = frappe.get_doc("Venue Booking", fn)
+	assert doc.session == "Morning", doc.session
+	assert str(doc.start_time).zfill(8) == SESSION_HOURS["Morning"][0], doc.start_time
+	# Custom Hours, or times with no session, keep the times
+	fn = _function(day_offset=93, session="Custom Hours")
+	doc = frappe.get_doc("Venue Booking", fn)
+	assert doc.session == "Custom Hours", doc.session
+	assert str(doc.start_time).zfill(8) == "19:00:00", doc.start_time
+	try:
+		_function(day_offset=94, session="Midnight Feast")
+		raise AssertionError("an unknown session was accepted")
+	except frappe.ValidationError:
+		pass
+
+
+@check("banquet: a function ties to a group at its own property, and then posts to its bill")
+def t332():
+	from kamra import banquet as bq
+
+	other = _other_property("EVAL Link Two")
+	fn = _function(day_offset=95)
+	day = add_days(nowdate(), 95)
+	gb = frappe.get_doc({
+		"doctype": "Group Booking", "property": P, "group_name": "EVAL Wedding Party",
+		"check_in_date": day, "check_out_date": add_days(day, 2),
+		"status": "Confirmed"}).insert(ignore_permissions=True).name
+	far = frappe.get_doc({
+		"doctype": "Group Booking", "property": other, "group_name": "EVAL Elsewhere",
+		"check_in_date": day, "check_out_date": add_days(day, 2),
+		"status": "Confirmed"}).insert(ignore_permissions=True).name
+
+	assert any(g["name"] == gb for g in bq.linkable_groups(fn))
+	assert not any(g["name"] == far for g in bq.linkable_groups(fn))
+	try:
+		bq.link_group(fn, far)
+		raise AssertionError("tied a function to another property's group")
+	except (frappe.ValidationError, frappe.PermissionError):
+		pass
+	out = bq.link_group(fn, gb)
+	assert out["group_booking"] == gb, out
+	assert frappe.db.get_value("Group Booking", gb, "event") == fn
+	assert bq.function_sheet(fn)["group_detail"]["name"] == gb
+	assert frappe.db.exists("Agent Action Log", {
+		"action_type": "banquet_group_link", "reference_name": fn})
+
+	# the group has a guest, the function is sold: Post to the bill works
+	res = _res(_guest("Eval Bride", "+91 70000 03320"), add_days(day, 0),
+	           add_days(day, 1))
+	res.group_booking = gb
+	res.save(ignore_permissions=True)
+	bq.set_status(fn, "Confirmed")
+	posted = bq.post_to_folio(fn)
+	assert posted["posted"], posted
+	assert frappe.db.get_value("Folio", posted["folio"], "group_booking") == gb
+	# once billed, the group can't be swapped out from under the bill
+	try:
+		bq.link_group(fn, None)
+		raise AssertionError("untied a billed function from its group")
+	except frappe.ValidationError:
+		pass
+
+
+@check("banquet: Completed only through close-out; a guarded, logged reopen; re-close never refunds twice")
+def t333():
+	from kamra import banquet as bq
+
+	b = _banquet_setup()
+	fn = _function(day_offset=96)
+	bq.update_function(fn, {"pax_guaranteed": 100})
+	bq.add_menu(fn, b["menu"])
+	bq.set_status(fn, "Confirmed")
+	try:
+		bq.set_status(fn, "Completed")
+		raise AssertionError("Completed without the close-out")
+	except frappe.ValidationError:
+		pass
+	bq.record_receipt(fn, 10000, kind="Security Deposit", mode="Cash")
+	out = bq.close_out(fn, pax_actual=110)
+	assert out["status"] == "Completed" and out["refunded"] == 10000, out
+	try:
+		bq.update_function(fn, {"beo_notes": "late change"})
+		raise AssertionError("edited a closed function")
+	except frappe.ValidationError:
+		pass
+
+	me = frappe.session.user
+	try:
+		frappe.set_user("frontdesk@kamra.local")  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		try:
+			bq.reopen_function(fn, "guest disputes covers")
+			raise AssertionError("Front Desk reopened a closed function")
+		except frappe.PermissionError:
+			pass
+	finally:
+		frappe.set_user(me)  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+	try:
+		bq.reopen_function(fn, "  ")
+		raise AssertionError("reopened without a reason")
+	except frappe.ValidationError:
+		pass
+	out = bq.reopen_function(fn, "Guest disputes the cover count")
+	assert out["status"] == "Confirmed", out
+	assert frappe.db.exists("Agent Action Log", {
+		"action_type": "banquet_reopen", "reference_name": fn})
+	bq.update_function(fn, {"beo_notes": "recounted"})   # editable again
+
+	# the money settled at the first close-out stands
+	try:
+		bq.close_out(fn, damage_amount=500, damage_note="a glass")
+		raise AssertionError("deducted damages twice")
+	except frappe.ValidationError:
+		pass
+	out = bq.close_out(fn, pax_actual=105)
+	assert out["status"] == "Completed" and out.get("reclosed"), out
+	assert out["refunded"] == 0, out
+	doc = frappe.get_doc("Venue Booking", fn)
+	assert sum(1 for r in doc.receipts if r.kind == "Refund") == 1, \
+		[r.as_dict() for r in doc.receipts]
+	assert doc.pax_actual == 105, doc.pax_actual
+
+
+@check("pricing: a company's negotiated rate plan prices its stays; an explicit plan wins")
+def t334():
+	from kamra import api
+	from kamra.pricing import negotiated_rate_plan, quote
+
+	rp = frappe.get_doc({
+		"doctype": "Rate Plan", "property": P, "rate_plan_name": "EVAL Corp 20",
+		"code": "EVCORP", "modifier_type": "Percent", "modifier_value": -20,
+	}).insert(ignore_permissions=True).name
+	bar = frappe.get_doc({
+		"doctype": "Rate Plan", "property": P, "rate_plan_name": "EVAL BAR",
+		"code": "EVBAR", "modifier_type": "Percent", "modifier_value": 0,
+	}).insert(ignore_permissions=True).name
+	comp = frappe.get_doc({
+		"doctype": "Corporate Account", "company_name": "EVAL Negotiated Co",
+		"negotiated_rate_plan": rp,
+	}).insert(ignore_permissions=True).name
+
+	ci, co = "2031-04-01", "2031-04-03"
+	base = quote(P, RT, ci, co, 2, 0)
+	q = quote(P, RT, ci, co, 2, 0, company=comp)
+	assert q["rate_plan"] == rp, q["rate_plan"]
+	assert round(q["room_total"], 2) == round(base["room_total"] * 0.8, 2), (
+		q["room_total"], base["room_total"])
+	# a plan the desk picked beats the contract
+	q2 = quote(P, RT, ci, co, 2, 0, rate_plan=bar, company=comp)
+	assert q2["rate_plan"] == bar and q2["room_total"] == base["room_total"], q2
+	# the desk endpoint quotes the same number
+	dq = api.get_quote(P, RT, ci, co, 2, 0, company=comp)
+	assert dq["amount_after_tax"] == q["amount_after_tax"], (dq, q)
+
+	# the booking stores the plan, so its nights and folio agree with the quote
+	res = frappe.get_doc({
+		"doctype": "Reservation", "property": P,
+		"guest": _guest("Eval Corp Guest", "+91 70000 03340"),
+		"room_type": RT, "check_in_date": ci, "check_out_date": co,
+		"adults": 2, "auto_price": 1, "company": comp,
+		"booking_type": "Corporate",
+	}).insert(ignore_permissions=True)
+	assert res.rate_plan == rp, res.rate_plan
+	assert round(res.amount_after_tax, 2) == round(q["amount_after_tax"], 2), (
+		res.amount_after_tax, q["amount_after_tax"])
+
+	# at a sister property the plan with the same code stands in; none, none
+	other = _other_property("EVAL Rate Two")
+	assert negotiated_rate_plan(other, comp) is None
+	twin = frappe.get_doc({
+		"doctype": "Rate Plan", "property": other, "rate_plan_name": "EVAL Corp 20",
+		"code": "EVCORP", "modifier_type": "Percent", "modifier_value": -20,
+	}).insert(ignore_permissions=True).name
+	assert negotiated_rate_plan(other, comp) == twin
+	# a disabled contract plan applies nowhere
+	frappe.db.set_value("Rate Plan", rp, "disabled", 1)
+	assert negotiated_rate_plan(P, comp) is None
+
+
+@check("hurdle tiers can target one room type, and only this property's")
+def t335():
+	from kamra import api
+	from kamra.pricing import quote
+
+	suite = frappe.get_doc({
+		"doctype": "Room Type", "property": P, "room_type_code": "EVHS",
+		"room_type_name": "EVAL Hurdle Suite", "base_price": 6000,
+		"base_occupancy": 2, "adults_capacity": 3, "children_capacity": 1,
+		"tax_percent": 18,
+	}).insert(ignore_permissions=True).name
+	out = api.save_hurdle_rate(P, 0, premium_pct=10, room_type=suite)
+	row = next(r for r in api.hurdle_rates(P) if r["name"] == out["name"])
+	assert row["room_type"] == suite, row
+	assert row["room_type_name"] == "EVAL Hurdle Suite", row
+
+	day_in, day_out = "2031-05-05", "2031-05-06"
+	assert quote(P, suite, day_in, day_out, 2, 0)["nightly"][0]["demand_premium_pct"] == 10
+	assert quote(P, RT, day_in, day_out, 2, 0)["nightly"][0]["demand_premium_pct"] == 0
+
+	other = _other_property("EVAL Hurdle Two")
+	far = frappe.get_doc({
+		"doctype": "Room Type", "property": other, "room_type_code": "EVFAR",
+		"room_type_name": "EVAL Far Room", "base_price": 3000,
+		"base_occupancy": 2, "adults_capacity": 2, "tax_percent": 5,
+	}).insert(ignore_permissions=True).name
+	try:
+		api.save_hurdle_rate(P, 50, premium_pct=5, room_type=far)
+		raise AssertionError("a tier targeted another property's room type")
+	except frappe.ValidationError:
+		pass
+
+
 # ── go-live data (#228) ─────────────────────────────────────────────────────
 
 GL = "EVAL GoLive Hotel"
@@ -7521,6 +7987,39 @@ def t224():
 		pass
 
 
+@check("budget vs actual: occupancy over nights elapsed; unposted in-house nights are counted and explained")
+def t336():
+	from frappe.utils import date_diff
+
+	from kamra.reports import budget_vs_actual
+
+	period = nowdate()[:7]
+	before = budget_vs_actual(P, period)
+	start = period + "-01"
+	assert 0 <= before["days_elapsed"] <= before["total_days"], before
+	rooms = frappe.db.count("Room", {"property": P})
+	assert before["elapsed_room_nights"] == rooms * before["days_elapsed"], before
+	assert before["basis"] == "posted"
+
+	# an in-house stay nobody has run End of Day for yet
+	ci, co = add_days(nowdate(), -1), add_days(nowdate(), 2)
+	_res(_guest("Eval Inhouse", "+91 70000 03360"), ci, co, allow_past=1)
+	after = budget_vs_actual(P, period)
+	window_end = add_days(start, after["days_elapsed"])
+	expect = max(0, date_diff(min(str(co), str(window_end)), max(str(ci), start)))
+	assert after["on_books_nights"] - before["on_books_nights"] == expect, (
+		before["on_books_nights"], after["on_books_nights"], expect)
+	assert after["unposted_nights"] - before["unposted_nights"] == expect, (before, after)
+	# nothing posted, nothing claimed as actual
+	assert after["posted_nights"] == before["posted_nights"], (before, after)
+
+	# a month that hasn't started has no elapsed nights; a past one has all
+	future = budget_vs_actual(P, "2031-01")
+	assert future["days_elapsed"] == 0 and future["rows"][1]["actual"] == 0, future
+	past = budget_vs_actual(P, "2020-02")
+	assert past["days_elapsed"] == past["total_days"] == 29, past
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -7535,7 +8034,7 @@ def execute():
 		for fn in (t1, t2, t3, t3b, t3c, t3d, t3f, t3g, t3h, t3i, t3j, t4,
 		           t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16,
 		           t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28,
-		           t29, t30, t31, t32, t33, t34, t35, t36, t37, t38, t39, t39b,
+		           t29, t30, t31, t32, t33, t34, t35, t36, t37, t38, t39, t39b, t39c, t39d,
 		           t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48,
 		           t49, t50, t51, t53, t54, t55, t56, t57, t58, t59, t60, t61,
 		           t62, t63, t64, t65, t66, t67, t68, t69, t70, t71, t72, t73,
@@ -7549,7 +8048,7 @@ def execute():
 		           t200, t201, t202, t203, t204,
 		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214,
 		           t215, t216, t310, t311, t312, t313, t314, t315, t316, t317, t318, t220, t221,
-		           t223, t222, t224):
+		           t223, t222, t224, t330, t331, t332, t333, t334, t335, t336):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

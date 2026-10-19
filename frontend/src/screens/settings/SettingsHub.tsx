@@ -43,6 +43,8 @@ import {
   KamraVerifyCard,
   LaundryRatesCard,
   PaymentsSection,
+  SpeedCheckCard,
+  KitchenPrintersCard,
   TIMEZONES,
   ZatcaCard,
 } from "./cards"
@@ -421,6 +423,8 @@ export default function SettingsHub() {
           >
             {mod.id === "housekeeping" && <LaundryRatesCard property={property} />}
             {mod.id === "revenue" && <HurdleRatesCard property={property} />}
+            {mod.id === "fnb" && <KitchenPrintersCard property={property} />}
+            {mod.id === "fnb" && <SpeedCheckCard property={property} />}
           </ModulePage>
         ) : (
           <CustomPageBody

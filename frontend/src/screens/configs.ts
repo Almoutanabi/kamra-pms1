@@ -191,6 +191,38 @@ export const mealPlansConfig: ScreenConfig = {
   ],
 }
 
+export const experiencesConfig: ScreenConfig = {
+  doctype: "Experience",
+  title: "Experiences",
+  description:
+    "Add-ons sold with a stay - spa, tours, dinners, transfers. Ticked ones show on /book.",
+  searchFields: ["experience_name"],
+  filters: [
+    { field: "category", label: "Category", options: ["Spa", "Tour", "Dining", "Activity", "Transport", "Other"] },
+  ],
+  pageSize: 25,
+  propertyScoped: true,
+  orderBy: "experience_name asc",
+  columns: [
+    { field: "experience_name", label: "Experience" },
+    { field: "category", label: "Category", badge: true },
+    { field: "price", label: `Price ${cur()}` },
+    { field: "duration", label: "Duration" },
+    { field: "show_on_booking_page", label: "On booking page" },
+  ],
+  form: [
+    { field: "experience_name", label: "Name", type: "data", required: true },
+    { field: "category", label: "Category", type: "select", options: ["Spa", "Tour", "Dining", "Activity", "Transport", "Other"] },
+    { field: "price", label: "Price", type: "currency" },
+    { field: "gst_rate", label: "Tax %", type: "float" },
+    { field: "duration", label: "Duration (e.g. 90 min, half day)", type: "data" },
+    { field: "description", label: "Description (shown to guests)", type: "data" },
+    { field: "image_url", label: "Photo", type: "image" },
+    { field: "show_on_booking_page", label: "Show on the public booking page", type: "check" },
+    { field: "disabled", label: "Disabled", type: "check" },
+  ],
+}
+
 export const travelAgentsConfig: ScreenConfig = {
   doctype: "Travel Agent",
   title: "Travel Agents",
@@ -605,10 +637,11 @@ export const outletsConfig: ScreenConfig = {
     { field: "gst_rate", label: "GST %", type: "float" },
     { field: "disabled", label: "Disabled", type: "check" },
     {
-      field: "auto_kot",
-      label: "Auto-accept and print KOT",
-      type: "check",
-      hint: "When a captain sends an order, the kitchen ticket prints immediately and the order shows on the kitchen display as started. Leave this off if the kitchen must press Start.",
+      field: "kot_mode",
+      label: "KOT on send",
+      type: "select",
+      options: ["Use F&B setting", "Auto-accept and print", "Kitchen presses Start"],
+      hint: "Auto-accept and print: sending an order prints the KOT and shows it on the kitchen display as started. Kitchen presses Start: the pass accepts each ticket. Use F&B setting follows Settings > F&B.",
     },
   ],
 }

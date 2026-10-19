@@ -159,6 +159,123 @@ ingredients with a stock ledger, recipes per menu item, consumption
 posted as KOTs fire; and the **menu imports in bulk** from a spreadsheet
 with a preview.
 
+### Auto-accept and print KOT
+
+Busy kitchens that don't want the pass pressing **Start** on every ticket
+can turn on **Settings → F&B → Kitchen orders (KOT) → Auto-accept and
+print KOT**. When a captain sends an order, the KOT prints at once and the
+ticket appears on the kitchen display already started, so the cook's clock
+runs from the moment it was punched. With it off (the default), the
+kitchen presses Start on each ticket and each till chooses whether to
+print.
+
+Each outlet can override the property setting under **F&B → Outlets →
+KOT on send**:
+
+| KOT on send | What happens when an order is sent |
+| --- | --- |
+| Use F&B setting (default) | Follows Settings → F&B |
+| Auto-accept and print | Prints the KOT and marks the ticket started, whatever the F&B setting |
+| Kitchen presses Start | The pass accepts each ticket; the till's printer switch decides printing |
+
+So a hotel can auto-accept in the bar and room service while the main
+restaurant's pass still starts each ticket by hand. A later round on the
+same bill prints its own KOT but doesn't reset the original start time.
+Outlets that had the old per-outlet checkbox ticked are moved to
+**Auto-accept and print** on upgrade, so nothing changes on the floor.
+
+### Kitchen printers and routing
+
+By default each till prints its own KOTs. Set up **kitchen printers** to
+send each KOT to the printer that cooks it, whichever till sent the order:
+two restaurants can share one kitchen printer, the bar's drinks can print
+at the bar, and room service can print a copy in two kitchens.
+
+**Set up:** Settings → F&B → **Kitchen printers** → *Add printer*.
+
+| Field | What it does |
+| --- | --- |
+| Printer name | "Main kitchen", "Bar", "Tandoor" |
+| Connection | **Print station** or **Direct IP** (below) |
+| Paper width | 80 mm or 58 mm |
+| Copies | 1–3 copies of every ticket |
+| Fallback printer | Where a ticket goes if this printer fails |
+| Prints KOTs for | A grid of outlets × stations. Tick **All stations** for everything an outlet sends, or single stations (Kitchen, Tandoor, Grill, Fryer, Bar). A dish's station comes from its menu item. |
+
+When an order is sent, the round is split by station and each printer
+gets only its own lines, with the outlet name, the station and the KOT
+number at the top. Lines no printer is set up for print at the till as
+before (if its printer switch or auto-KOT is on). The till shows where
+the ticket went: *"KOT 14 sent to Main kitchen, Bar."*
+
+**Print station (any printer, any hosting).** Put a device next to the
+printer (a tablet, mini-PC or old laptop) and connect the printer to it
+over USB, network or Bluetooth. Make that printer the device's **default
+printer**, start Chrome with `--kiosk-printing` (see *Fast silent printing*
+below), open the **kitchen display** and choose **Print for → Main kitchen**
+in its header. That screen now prints Main kitchen's tickets the moment
+they're sent, and keeps working as a kitchen display. The choice is saved
+on that device. A green dot means it's printing; Settings shows whether a
+screen is printing for each printer. One device prints for one printer, so
+three printers need three devices (or three Chrome profiles on one
+computer, each with its own default printer).
+
+This works with Kamra in the cloud, because the kitchen screen connects
+out to Kamra; nothing has to reach into the hotel's network. The printer
+can be anywhere: a central kitchen in another building works the same
+way as one next door.
+
+**Direct IP (Kamra on the hotel's own network).** When the Kamra server
+runs on-site, it can send the ticket straight to a network thermal
+printer's address (ESC/POS on port 9100) with no device in between. Enter
+the printer's IP address and port. A Kamra server in the cloud can't reach
+a printer on a private network (`192.168.x.x`), so use a print station
+there.
+
+**When something goes wrong.**
+- A ticket a printer couldn't print moves to its **fallback printer**,
+  marked *"for Bar"*. Otherwise it stays *failed* for a reprint.
+- A ticket a print station took but never confirmed is offered again after
+  a minute.
+- **Test print** on each printer sends a test page.
+- With **Settings → F&B → Print void slips in the kitchen** on (the
+  default), a line voided or an order cancelled after its KOT was sent
+  prints a **VOID** slip on the same printer, so the cook stops.
+- Finished print jobs are kept for 7 days (for reprints and disputes),
+  then deleted, because tickets carry guest names and delivery addresses.
+
+### Fast silent printing
+
+A browser normally shows a print dialog for every KOT, and someone has to
+click Print. On a till, start Chrome with `--kiosk-printing` so tickets go
+straight to the default printer. The POS shows a one-time tip if it sees a
+print waiting on a dialog.
+
+- **Windows:** right-click the Chrome shortcut → *Properties* → at the end
+  of *Target* add ` --kiosk-printing https://your-hotel/kamra/pos`. Close
+  every Chrome window, then start it from that shortcut.
+- **macOS:** in Terminal, `open -a "Google Chrome" --args --kiosk-printing`,
+  with Chrome fully quit first.
+- Set the thermal printer as the system's **default printer**, with 80 mm
+  (or 58 mm) paper and no margins.
+
+### When the POS feels slow
+
+Open **Settings → F&B → POS speed check** on the till that feels slow and
+press **Check speed**. It reports:
+
+| Line | Slow means |
+| --- | --- |
+| Network round trip | Over 300 ms: the server is far from the hotel or the connection is weak. Every POS action waits this long. Host in a region near the hotel. |
+| Server work | Over 300 ms: the server is busy or under-sized. Add CPU or gunicorn workers. |
+| Live updates | Not arriving: the kitchen display and other tills only refresh every few seconds. socket.io isn't running or isn't proxied by nginx (`/socket.io`). |
+| Background workers / developer mode | No workers or developer mode on: fix the bench set-up. |
+
+Sending an order is a single request (create, confirm and fire together),
+so the till is free as soon as the server answers. The kitchen display
+updates live over the socket, and falls back to checking every 5 seconds
+when the socket is down.
+
 ## Housekeeping
 
 A phone app for floor staff: task assignment *and* a self-claim pool,

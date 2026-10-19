@@ -246,6 +246,10 @@ export default function App() {
             path="meal-plans"
             element={<ConfiguredScreen config="mealPlansConfig" />}
           />
+          <Route
+            path="experiences"
+            element={<ConfiguredScreen config="experiencesConfig" />}
+          />
           <Route path="billing" element={<Billing />} />
           <Route path="end-of-day" element={<EndOfDay />} />
           <Route path="end-of-day/pack/:audit" element={<AuditPack />} />

@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **337 endpoints**, generated from the source
+the UI and the AI use. **351 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -1127,6 +1127,7 @@ booking, not a walk-in.
 | `voucher_code` | no | `None` |
 | `company` | no | `None` |
 | `id_type` | no | `None` |
+| `rate_plan` | no | `None` |
 | `id_number` | no | `None` |
 | `nationality` | no | `None` |
 | `payment_mode` | no | `None` |
@@ -1325,10 +1326,11 @@ back-to-back conflicts, the demand tier pricing is applying, and a
 
 ### `kamra.api.hurdle_rates`
 
-**GET/POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**GET/POST**
 
 The demand tiers: at each occupancy threshold, the premium applied
-and the minimum sell rate enforced.
+and the minimum sell rate enforced. A row with a room type applies to
+that type only and beats the property-wide row at the same threshold.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1336,7 +1338,7 @@ and the minimum sell rate enforced.
 
 ### `kamra.api.save_hurdle_rate`
 
-**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**POST**
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1349,7 +1351,7 @@ and the minimum sell rate enforced.
 
 ### `kamra.api.delete_hurdle_rate`
 
-**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**POST**
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1494,6 +1496,9 @@ Everything the booking form needs to render its dropdowns.
 
 **GET/POST** · roles: `Front Desk`, `Kamra Agent`
 
+Price a stay. With a company and no rate plan, the company's
+negotiated plan applies - the same plan create_booking stores.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -1507,6 +1512,7 @@ Everything the booking form needs to render its dropdowns.
 | `voucher_code` | no | `None` |
 | `over_capacity_charge` | no | `0` |
 | `pets` | no | `0` |
+| `company` | no | `None` |
 
 ### `kamra.api.create_booking`
 
@@ -1968,6 +1974,9 @@ An OTA request must also be declined on the OTA's side.
 
 **GET/POST**
 
+Open outlets, each with `auto_kot` already resolved against the F&B
+setting, so the till never has to know where the answer came from.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -2195,13 +2204,53 @@ orders once, the kitchen cooks the mains when the starters are cleared.
 Each line is stamped with the moment it was fired: that, not when the
 captain opened the tab, is when the cook's clock starts.
 
-Outlets with auto KOT on also accept the ticket here, so the kitchen
-does not press Start, and the response tells the till to print.
+With auto KOT on (the F&B setting, or the outlet's override) this also
+accepts the ticket, so the kitchen does not press Start, and the
+response tells the till to print.
 
 | Param | Required | Default |
 | --- | --- | --- |
 | `order` | yes |  |
 | `course` | no | `None` |
+
+### `kamra.pos.send_order`
+
+**POST**
+
+A captain's new bill straight to the kitchen, in one call: what
+create_order, apply_discount, confirm_order and fire_kot do one after
+another, in one request and one transaction. The till waits for one
+round trip instead of four, and the kitchen gets a single update.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `outlet` | yes |  |
+| `items` | yes |  |
+| `property` | no | `None` |
+| `room` | no | `None` |
+| `reservation` | no | `None` |
+| `table_no` | no | `None` |
+| `notes` | no | `None` |
+| `order_type` | no | `None` |
+| `guests` | no | `None` |
+| `customer_name` | no | `None` |
+| `customer_phone` | no | `None` |
+| `delivery_address` | no | `None` |
+| `allergy_note` | no | `None` |
+| `discount` | no | `0` |
+| `discount_reason` | no | `''` |
+
+### `kamra.pos.send_round`
+
+**POST**
+
+Another round on a running bill, straight to the kitchen: add_items
+and fire_kot in one call and one save.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `order` | yes |  |
+| `items` | yes |  |
 
 ### `kamra.pos.kitchen_queue`
 
@@ -2369,6 +2418,114 @@ fast the kitchen is turning tickets. Defaults to today.
 | --- | --- | --- |
 | `outlet` | yes |  |
 | `date` | no | `None` |
+
+### `kamra.pos.speed_check`
+
+**GET/POST** · roles: `Hotel Admin`, `Finance`
+
+Why does the POS feel slow here? Times what a till and a kitchen
+display ask for on every refresh and reports the server's set-up, so
+support can tell our code from the hosting in a minute. Read-only.
+
+With echo=1 it also sends a realtime ping to the caller; the browser
+times how long it takes to arrive, which proves live updates work.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `outlet` | no | `None` |
+| `echo` | no | `0` |
+
+
+## Kitchen printers (routing, print stations, print queue)
+
+### `kamra.printing.claim_jobs`
+
+**POST**
+
+A print station asks for its printer's work. Hands over every queued
+job (and any claimed one nobody confirmed within a minute) and marks
+them Printing. The station prints them and calls ack_jobs.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `printer` | yes |  |
+
+### `kamra.printing.ack_jobs`
+
+**POST**
+
+The station's answer. Printed jobs are done; failed ones move to the
+printer's fallback, or stay Failed for a reprint.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `printer` | yes |  |
+| `printed` | no | `None` |
+| `failed` | no | `None` |
+| `error` | no | `None` |
+
+### `kamra.printing.printers`
+
+**GET/POST**
+
+Every printer with its routes and whether it's online - for the
+settings card and for a kitchen screen choosing what to print for.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
+### `kamra.printing.save_printer`
+
+**POST**
+
+Add or change a printer and its routes. Logged to the Activity log.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `printer` | yes |  |
+| `name` | no | `None` |
+
+### `kamra.printing.delete_printer`
+
+**POST**
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `name` | yes |  |
+
+### `kamra.printing.test_print`
+
+**POST**
+
+Queue a test page on one printer.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `name` | yes |  |
+
+### `kamra.printing.reprint`
+
+**POST**
+
+Print a job again - on its own printer or another one.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `job` | yes |  |
+| `printer` | no | `None` |
+
+### `kamra.printing.order_print_status`
+
+**GET/POST**
+
+Where an order's tickets went and whether they printed - for the till.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `order` | yes |  |
 
 
 ## Laundry (housekeeping)
@@ -2601,6 +2758,10 @@ Open a function sheet from an enquiry. The hall's rack rental goes on
 as the first line (that's the number the conversation starts from), and
 a follow-up lands in the diary so the enquiry doesn't go quiet.
 
+session is how the hall is sold (Morning / Afternoon / Evening / Full
+Day): a named session sets the clock itself, so times sent alongside it
+are ignored. Custom Hours, or no session with times, keeps the times.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -2620,6 +2781,7 @@ a follow-up lands in the diary so the enquiry doesn't go quiet.
 | `follow_up_days` | no | `None` |
 | `with_venue_line` | no | `1` |
 | `sales_owner` | no | `None` |
+| `session` | no | `None` |
 
 ### `kamra.banquet.function_sheet`
 
@@ -2643,6 +2805,29 @@ calls, because each one means something different).
 | --- | --- | --- |
 | `function` | yes |  |
 | `fields` | yes |  |
+
+### `kamra.banquet.linkable_groups`
+
+**GET/POST**
+
+Group bookings this function could ride: same property, not
+cancelled, staying within a month either side of the event.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `function` | yes |  |
+
+### `kamra.banquet.link_group`
+
+**POST**
+
+Tie a function to a group booking so its bill can ride the group's
+master folio (post_to_folio), or untie it (group_booking empty).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `function` | yes |  |
+| `group_booking` | no | `None` |
 
 ### `kamra.banquet.set_status`
 
@@ -2964,6 +3149,20 @@ three people remembering to do three things.
 | `refund_deposit` | no | `1` |
 | `refund_mode` | no | `'Bank Transfer'` |
 | `pax_actual` | no | `None` |
+
+### `kamra.banquet.reopen_function`
+
+**POST**
+
+Reopen a closed (Completed) function so its sheet can be corrected.
+It goes back to Confirmed; receipts, refunds and the damage line stay
+as they were, and closing it again re-counts covers only. Needs a
+reason, and lands on the activity log.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `function` | yes |  |
+| `reason` | yes |  |
 
 ### `kamra.banquet.receipt_document`
 
@@ -3721,6 +3920,15 @@ movement, collections by mode, and the 7-day outlook.
 Monthly target vs actual: room revenue, occupancy %, ADR, RevPAR - with
 variance. period is 'YYYY-MM' (defaults to the current month).
 
+"Actual" is posted money: Room charges on folios, dated inside the month.
+A room night reaches a folio when End of Day (night audit) posts it, so a
+stay in-house tonight counts once its night is audited - not before.
+Occupancy and RevPAR divide by the room nights elapsed so far (to the
+business date), not the whole month, so a month-to-date figure compares
+with a monthly occupancy target. `on_books_nights` / `unposted_nights`
+say how many sold nights in the same window are still waiting for End
+of Day, so a zero is explained rather than mysterious.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -4390,6 +4598,14 @@ company's. Tax is the hotel's rule for the charge type, not the POS's.
 **GET/POST**
 
 Entry point for /book — how many properties, sites, or listings to show.
+
+Several properties live: mode "properties" lists them, and the guest
+picks one - /book?property=&lt;slug> (or /stay/&lt;slug>) calls back with
+that property's slug and gets its own sites / listings / catalog.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property_slug` | no | `None` |
 
 ### `kamra.public_api.resolve_slug` <Badge type='tip' text='public' />
 
