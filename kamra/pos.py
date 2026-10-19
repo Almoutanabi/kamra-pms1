@@ -6,9 +6,10 @@ it -> firing the KOT sends it to the kitchen display -> the kitchen marks
 items prepared -> delivering the order posts it to the guest's room folio
 (handled by the POS Order controller) or it's settled at the outlet.
 
-An outlet can turn on auto KOT. Firing then also accepts the ticket, so
-the kitchen display shows it as started, and the till prints the slip
-without a separate Start or a per-browser printer switch.
+Auto KOT is an F&B setting (`pos_auto_kot`) that an outlet can override
+with its `kot_mode`. When it's on, firing also accepts the ticket, so the
+kitchen display shows it as started, and the till prints the slip without
+a separate Start or a per-browser printer switch.
 """
 
 import frappe
@@ -25,10 +26,31 @@ COURSE_ORDER = ("Starter", "Main", "Dessert", "Drink")
 @frappe.whitelist()
 @require_roles(*POS_ROLES)
 def outlets(property: str):
-	return frappe.get_all(
+	"""Open outlets, each with `auto_kot` already resolved against the F&B
+	setting, so the till never has to know where the answer came from."""
+	rows = frappe.get_all(
 		"POS Outlet", filters={"property": property, "disabled": 0},
-		fields=["name", "outlet_name", "outlet_type", "gst_rate", "auto_kot"],
+		fields=["name", "outlet_name", "outlet_type", "gst_rate", "kot_mode"],
 		order_by="outlet_name")
+	for r in rows:
+		r["auto_kot"] = 1 if _auto_kot(property, r.kot_mode) else 0
+	return rows
+
+
+def _auto_kot(property: str, kot_mode: str | None) -> bool:
+	"""Does sending an order accept and print the KOT? The outlet's own
+	choice wins; "Use F&B setting" (or blank) falls back to the property."""
+	if kot_mode == "Auto-accept and print":
+		return True
+	if kot_mode == "Kitchen presses Start":
+		return False
+	from kamra.settings import get_setting
+	return bool(get_setting(property, "pos_auto_kot"))
+
+
+def outlet_auto_kot(outlet: str) -> bool:
+	prop, mode = frappe.db.get_value("POS Outlet", outlet, ["property", "kot_mode"]) or (None, None)
+	return _auto_kot(prop, mode)
 
 
 @frappe.whitelist()
@@ -634,14 +656,15 @@ def fire_kot(order: str, course: str | None = None):
 	Each line is stamped with the moment it was fired: that, not when the
 	captain opened the tab, is when the cook's clock starts.
 
-	Outlets with auto KOT on also accept the ticket here, so the kitchen
-	does not press Start, and the response tells the till to print."""
+	With auto KOT on (the F&B setting, or the outlet's override) this also
+	accepts the ticket, so the kitchen does not press Start, and the
+	response tells the till to print."""
 	doc = frappe.get_doc("POS Order", order)
 	courses = _courses_of(doc) if course else {}
 	now = frappe.utils.now()
 	fired = []
 	fired_rows = []
-	auto = bool(frappe.db.get_value("POS Outlet", doc.outlet, "auto_kot"))
+	auto = outlet_auto_kot(doc.outlet)
 	for it in doc.items:
 		if it.kot_status == "New" and not it.voided:
 			if course and courses.get(it.menu_item) != course:

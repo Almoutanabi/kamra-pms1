@@ -1912,6 +1912,9 @@ An OTA request must also be declined on the OTA's side.
 
 **GET/POST**
 
+Open outlets, each with `auto_kot` already resolved against the F&B
+setting, so the till never has to know where the answer came from.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -2139,8 +2142,9 @@ orders once, the kitchen cooks the mains when the starters are cleared.
 Each line is stamped with the moment it was fired: that, not when the
 captain opened the tab, is when the cook's clock starts.
 
-Outlets with auto KOT on also accept the ticket here, so the kitchen
-does not press Start, and the response tells the till to print.
+With auto KOT on (the F&B setting, or the outlet's override) this also
+accepts the ticket, so the kitchen does not press Start, and the
+response tells the till to print.
 
 | Param | Required | Default |
 | --- | --- | --- |

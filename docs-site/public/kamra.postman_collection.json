@@ -5133,7 +5133,7 @@
         "kamra.pos.outlets"
        ]
       },
-      "description": "",
+      "description": "Open outlets, each with `auto_kot` already resolved against the F&B\nsetting, so the till never has to know where the answer came from.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\"\n}",
@@ -5762,7 +5762,7 @@
         "kamra.pos.fire_kot"
        ]
       },
-      "description": "Send the order to the kitchen: new lines become Fired and show on the\nkitchen display. Stamps the KOT number (a daily sequence per outlet) and\nreturns just-fired lines so the till can print the thermal KOT ticket.\n\nPass a course to send only that course and hold the rest - the table\norders once, the kitchen cooks the mains when the starters are cleared.\nEach line is stamped with the moment it was fired: that, not when the\ncaptain opened the tab, is when the cook's clock starts.\n\nOutlets with auto KOT on also accept the ticket here, so the kitchen\ndoes not press Start, and the response tells the till to print.",
+      "description": "Send the order to the kitchen: new lines become Fired and show on the\nkitchen display. Stamps the KOT number (a daily sequence per outlet) and\nreturns just-fired lines so the till can print the thermal KOT ticket.\n\nPass a course to send only that course and hold the rest - the table\norders once, the kitchen cooks the mains when the starters are cleared.\nEach line is stamped with the moment it was fired: that, not when the\ncaptain opened the tab, is when the cook's clock starts.\n\nWith auto KOT on (the F&B setting, or the outlet's override) this also\naccepts the ticket, so the kitchen does not press Start, and the\nresponse tells the till to print.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"order\": \"ORD-2026-00001\"\n}",
