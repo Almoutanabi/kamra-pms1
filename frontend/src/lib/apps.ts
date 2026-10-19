@@ -64,6 +64,7 @@ import {
   Calculator,
   QrCode,
   MoonStar,
+  FileUp,
 } from "lucide-react"
 
 /** "Night audit" is what most hotels call End of Day; EOD is what they type. */
@@ -308,6 +309,11 @@ export const APPS: AppDef[] = [
         label: "Developers",
         icon: Code2,
         roles: ["System Manager", "Administrator"],
+      },
+      {
+        to: "/go-live",
+        label: "Go-live Import",
+        icon: FileUp,
       },
       {
         to: "/setup",

@@ -39,6 +39,7 @@ export default defineConfig({
           { text: "Try the live demo", link: "/demo" },
           { text: "Quickstart (Docker)", link: "/quickstart" },
           { text: "Go-live checklist", link: "/go-live" },
+          { text: "Go-live runbook (one night)", link: "/go-live-runbook" },
         ],
       },
       {
@@ -62,6 +63,7 @@ export default defineConfig({
       {
         text: "Connect",
         items: [
+          { text: "All integrations", link: "/integrations" },
           { text: "Country setup & e-invoicing", link: "/country-setup" },
           { text: "WhatsApp on your number", link: "/whatsapp" },
           { text: "Channel manager (OTA sync)", link: "/channel-manager" },

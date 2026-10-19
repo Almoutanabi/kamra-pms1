@@ -28,6 +28,7 @@ const Guests = lazy(() => import("./screens/Guests"))
 const RegistrationCard = lazy(() => import("./screens/RegistrationCard"))
 const CancellationLetter = lazy(() => import("./screens/CancellationLetter"))
 const Setup = lazy(() => import("./screens/Setup"))
+const GoLiveImport = lazy(() => import("./screens/GoLiveImport"))
 const HousekeepingBoard = lazy(() => import("./screens/HousekeepingBoard"))
 const Settings = lazy(() => import("./screens/settings/SettingsHub"))
 const SystemHealth = lazy(() => import("./screens/SystemHealth"))
@@ -307,6 +308,7 @@ export default function App() {
             element={<ConfiguredScreen config="shiftsConfig" />}
           />
           <Route path="setup" element={<Setup />} />
+          <Route path="go-live" element={<GoLiveImport />} />
           <Route path="settings" element={<Settings />} />
           <Route path="settings/:section" element={<Settings />} />
           <Route path="health" element={<SystemHealth />} />

@@ -33,6 +33,10 @@ CHARGE_TYPE_TO_CODE = {
 	"Discount": ("9000", "Discount", "Adjustment", "Discount"),
 	"Misc": ("8000", "Miscellaneous", "Other", "Misc"),
 	"Allowance": ("9100", "Allowance", "Adjustment", "Allowance"),
+	# a balance carried over from the previous PMS at go-live (kamra.golive):
+	# not revenue of the day - the old system already counted it
+	"Opening Balance": ("8900", "Opening Balance (go-live)", "Opening Balance",
+	                    "Opening Balance"),
 }
 
 PAYMENT_CODES = {
@@ -52,7 +56,8 @@ def ensure_default_transaction_codes(property: str | None = None) -> None:
 			"code": code,
 			"description": desc,
 			"property": property,
-			"txn_type": "Adjustment" if charge_type in ("Discount", "Allowance")
+			"txn_type": "Adjustment" if charge_type in (
+				"Discount", "Allowance", "Opening Balance")
 			            else "Tax" if charge_type == "Room Levy" else "Revenue",
 			"revenue_group": group,
 			"subgroup": charge_type,
@@ -482,8 +487,12 @@ def company_payer_of(folio) -> str | None:
 	return None
 
 
-def transfer_to_city_ledger(folio: str, company: str | None = None) -> dict:
-	"""Move an unpaid folio balance to company AR at checkout."""
+def transfer_to_city_ledger(folio: str, company: str | None = None,
+                            invoice_date: str | None = None) -> dict:
+	"""Move an unpaid folio balance to company AR at checkout.
+	`invoice_date` dates the AR invoice when it is older than today - an
+	unpaid bill carried over from the old system at go-live, so aging
+	counts from when the company was really billed."""
 	doc = frappe.get_doc("Folio", folio)
 	balance = float(doc.balance or 0)
 	if balance <= 0:
@@ -532,7 +541,7 @@ def transfer_to_city_ledger(folio: str, company: str | None = None) -> dict:
 		"doctype": "City Ledger Entry",
 		"account": account,
 		"property": doc.property,
-		"posting_date": bd,
+		"posting_date": invoice_date or bd,
 		"kind": "Invoice",
 		"folio": doc.name,
 		"invoice_number": doc.invoice_number,
@@ -1096,6 +1105,8 @@ def batch_post_charge(folios: str | list, charge_type: str, amount: float,
 		folios = _json.loads(folios)
 	if not folios:
 		frappe.throw("Pick at least one folio.")
+	from kamra.api import _refuse_opening_balance
+	_refuse_opening_balance(charge_type)
 	from kamra.authz import require_cashier_pin
 	prop = frappe.db.get_value("Folio", folios[0], "property")
 	require_cashier_pin(prop, pin)
