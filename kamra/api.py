@@ -2981,6 +2981,7 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
             guest: str | None = None, adults: int = 2, children: int = 0,
             meal_plan: str | None = None, voucher_code: str | None = None,
             company: str | None = None, id_type: str | None = None,
+            rate_plan: str | None = None,
             id_number: str | None = None, nationality: str | None = None,
             payment_mode: str | None = None, payment_amount: float = 0,
             payment_reference: str | None = None, pin: str | None = None,
@@ -3034,6 +3035,7 @@ def walk_in(property: str, room_type: str, room: str, check_out_date: str,
 		check_in_date=check_in_date, check_out_date=check_out_date,
 		guest_name=guest_name, phone=phone, guest=guest,
 		adults=adults, children=children, meal_plan=meal_plan,
+		rate_plan=rate_plan,
 		voucher_code=voucher_code, company=company,
 		booking_type="Corporate" if company else "Individual",
 		source="Walk-in", room=room, assign_room=0,
@@ -3912,20 +3914,33 @@ def position_briefing(property: str, date: str | None = None):
 	}
 
 
+# Demand tiers are a revenue control: the revenue manager sets them (the
+# Settings -> Revenue card), the desk and finance keep the access they had.
+HURDLE_ROLES = ("Front Desk", "Finance", "Revenue Manager", "Kamra Agent")
+
+
 @frappe.whitelist()
-@require_roles("Front Desk", "Finance", "Kamra Agent")
+@require_roles(*HURDLE_ROLES)
 def hurdle_rates(property: str):
 	"""The demand tiers: at each occupancy threshold, the premium applied
-	and the minimum sell rate enforced."""
-	return frappe.get_all(
+	and the minimum sell rate enforced. A row with a room type applies to
+	that type only and beats the property-wide row at the same threshold."""
+	rows = frappe.get_all(
 		"Hurdle Rate", filters={"property": property, "disabled": 0},
 		fields=["name", "room_type", "occupancy_from", "premium_pct",
 		        "min_rate"],
 		order_by="occupancy_from asc")
+	names = {r.room_type for r in rows if r.room_type}
+	labels = dict(frappe.get_all(
+		"Room Type", filters={"name": ("in", list(names))},
+		fields=["name", "room_type_name"], as_list=True)) if names else {}
+	for r in rows:
+		r["room_type_name"] = labels.get(r.room_type) if r.room_type else None
+	return rows
 
 
 @frappe.whitelist(methods=["POST"])
-@require_roles("Front Desk", "Finance", "Kamra Agent", scope={"name": "Hurdle Rate"})
+@require_roles(*HURDLE_ROLES, scope={"name": "Hurdle Rate"})
 def save_hurdle_rate(property: str, occupancy_from: float,
                      premium_pct: float = 0, min_rate: float = 0,
                      room_type: str | None = None, name: str | None = None):
@@ -3933,6 +3948,9 @@ def save_hurdle_rate(property: str, occupancy_from: float,
 		frappe.throw("Occupancy threshold must be between 0 and 100.")
 	if float(premium_pct or 0) < 0 or float(min_rate or 0) < 0:
 		frappe.throw("Premium and hurdle must not be negative.")
+	if room_type:
+		from kamra.booking_refs import resolve_room_type
+		room_type = resolve_room_type(property, room_type)
 	doc = (frappe.get_doc("Hurdle Rate", name) if name
 	       else frappe.new_doc("Hurdle Rate"))
 	doc.update({
@@ -3941,14 +3959,15 @@ def save_hurdle_rate(property: str, occupancy_from: float,
 		"premium_pct": float(premium_pct or 0),
 		"min_rate": float(min_rate or 0),
 	})
-	doc.save()
+	# the role gate above is the permission; Revenue Manager has no DocPerm
+	doc.save(ignore_permissions=True)
 	return {"ok": True, "name": doc.name}
 
 
 @frappe.whitelist(methods=["POST"])
-@require_roles("Front Desk", "Finance", "Kamra Agent", scope={"name": "Hurdle Rate"})
+@require_roles(*HURDLE_ROLES, scope={"name": "Hurdle Rate"})
 def delete_hurdle_rate(name: str):
-	frappe.delete_doc("Hurdle Rate", name)
+	frappe.delete_doc("Hurdle Rate", name, ignore_permissions=True)
 	return {"ok": True}
 
 
@@ -4366,7 +4385,10 @@ def get_quote(property: str, room_type: str, check_in_date: str,
               check_out_date: str, adults: int = 2, children: int = 0,
               meal_plan: str | None = None, rate_plan: str | None = None,
               voucher_code: str | None = None,
-              over_capacity_charge: float = 0, pets: int = 0):
+              over_capacity_charge: float = 0, pets: int = 0,
+              company: str | None = None):
+	"""Price a stay. With a company and no rate plan, the company's
+	negotiated plan applies - the same plan create_booking stores."""
 	from kamra.booking_refs import (resolve_meal_plan, resolve_rate_plan,
 	                                resolve_room_type)
 	from kamra.pricing import quote
@@ -4380,7 +4402,7 @@ def get_quote(property: str, room_type: str, check_in_date: str,
 	             int(adults), int(children), meal_plan or None,
 	             rate_plan or None, voucher_code or None,
 	             over_capacity_charge=float(over_capacity_charge or 0),
-	             pets=int(pets or 0))
+	             pets=int(pets or 0), company=company or None)
 
 
 def _find_or_create_guest(guest_name: str, phone: str | None,

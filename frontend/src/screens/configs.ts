@@ -191,6 +191,38 @@ export const mealPlansConfig: ScreenConfig = {
   ],
 }
 
+export const experiencesConfig: ScreenConfig = {
+  doctype: "Experience",
+  title: "Experiences",
+  description:
+    "Add-ons sold with a stay - spa, tours, dinners, transfers. Ticked ones show on /book.",
+  searchFields: ["experience_name"],
+  filters: [
+    { field: "category", label: "Category", options: ["Spa", "Tour", "Dining", "Activity", "Transport", "Other"] },
+  ],
+  pageSize: 25,
+  propertyScoped: true,
+  orderBy: "experience_name asc",
+  columns: [
+    { field: "experience_name", label: "Experience" },
+    { field: "category", label: "Category", badge: true },
+    { field: "price", label: `Price ${cur()}` },
+    { field: "duration", label: "Duration" },
+    { field: "show_on_booking_page", label: "On booking page" },
+  ],
+  form: [
+    { field: "experience_name", label: "Name", type: "data", required: true },
+    { field: "category", label: "Category", type: "select", options: ["Spa", "Tour", "Dining", "Activity", "Transport", "Other"] },
+    { field: "price", label: "Price", type: "currency" },
+    { field: "gst_rate", label: "Tax %", type: "float" },
+    { field: "duration", label: "Duration (e.g. 90 min, half day)", type: "data" },
+    { field: "description", label: "Description (shown to guests)", type: "data" },
+    { field: "image_url", label: "Photo", type: "image" },
+    { field: "show_on_booking_page", label: "Show on the public booking page", type: "check" },
+    { field: "disabled", label: "Disabled", type: "check" },
+  ],
+}
+
 export const travelAgentsConfig: ScreenConfig = {
   doctype: "Travel Agent",
   title: "Travel Agents",
