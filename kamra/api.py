@@ -5787,7 +5787,13 @@ def property_locale(property: str):
 	prop = frappe.get_cached_doc("Property", property)
 	pack = pack_for(property)
 	return {**pack.locale(prop), **front_desk_vocabulary(pack),
-	        "integrations": integrations(pack)}
+	        "integrations": integrations(pack),
+	        # the rate the server puts on any food & beverage charge, whatever
+	        # rate the caller picked (_resolve_charge_gst) - so the folio's
+	        # charge form shows the rate that will apply instead of a choice
+	        # that is ignored
+	        "fnb_tax_rate": float(pack.fnb_tax_rate(property)),
+	        "fnb_charge_words": list(_FNB_WORDS)}
 
 
 @frappe.whitelist(methods=["POST"])

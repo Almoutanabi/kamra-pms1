@@ -7640,6 +7640,158 @@ def t318():
 
 
 
+# --- billing / cashier / end-of-day / reports fixes (t320-t328) ---------------
+
+@check("cashier: reading the till writes nothing (no 1020 race on load); a drifted total is refreshed")
+def t320():
+	from kamra import cashier
+	frappe.db.set_value("Property", P, "business_date", nowdate())
+	sess = _na_till()
+	m0 = frappe.db.get_value("Cashier Session", sess, "modified")
+	out = cashier.current_session(P)
+	assert out["open"] and out["name"] == sess, out
+	assert frappe.db.get_value("Cashier Session", sess, "modified") == m0, \
+		"current_session rewrote an unchanged till"
+	true_expected = float(out["totals"]["expected_cash"])
+	frappe.db.set_value("Cashier Session", sess, "expected_cash", true_expected + 7,
+	                    update_modified=False)
+	cashier.current_session(P)
+	got = float(frappe.db.get_value("Cashier Session", sess, "expected_cash"))
+	assert abs(got - true_expected) < 0.01, (got, true_expected)
+
+
+@check("End of Day: a lost create race is recognised and the wizard reuses one draft")
+def t321():
+	from kamra import night_audit
+	assert night_audit._lost_create_race(frappe.QueryDeadlockError("1020"))
+	assert night_audit._lost_create_race(frappe.DuplicateEntryError("Night Audit Run", "x"))
+	assert not night_audit._lost_create_race(frappe.ValidationError("x"))
+	frappe.db.set_value("Property", P, "business_date", nowdate())
+	a = night_audit.eod_session(P)
+	b = night_audit.eod_session(P)
+	if not a["ran"]:
+		assert a["audit"] == b["audit"], (a["audit"], b["audit"])
+		assert frappe.db.count("Night Audit Run", {
+			"property": P, "business_date": a["business_date"],
+			"status": "Draft"}) == 1
+
+
+@check("folio: a food & beverage charge carries the pack's F&B rate whatever is picked; the locale says so")
+def t322():
+	from kamra import api
+	res, folio = _in_house("Eval Minibar Rate", "+91 70000 00320", "2037-01-05",
+	                       "2037-01-07", _ledger_room("L320"))
+	loc = api.property_locale(P)
+	assert "minibar" in loc["fnb_charge_words"], loc["fnb_charge_words"]
+	fnb = float(loc["fnb_tax_rate"])
+	api.add_folio_charge(folio, "Minibar", "Minibar", 500, gst_rate=18)
+	api.add_folio_charge(folio, "Spa", "Massage", 1000, gst_rate=18)
+	rows = frappe.get_doc("Folio", folio).charges
+	mini = [c for c in rows if c.charge_type == "Minibar"][-1]
+	spa = [c for c in rows if c.charge_type == "Spa"][-1]
+	assert abs(float(mini.gst_rate) - fnb) < 0.001, (mini.gst_rate, fnb)
+	assert abs(float(spa.gst_rate) - 18) < 0.001, spa.gst_rate
+
+
+@check("cashier PIN: the unlock status reports the property's own unlock window")
+def t323():
+	from kamra.authz import cashier_unlock_status
+	_na_setting("pin_lock_minutes", 7)
+	try:
+		assert cashier_unlock_status(P)["unlock_minutes"] == 7
+	finally:
+		frappe.db.delete("Property Setting", {"property": P, "setting_key": "pin_lock_minutes"})
+		from kamra import settings
+		settings.clear_cache(P)
+
+
+@check("portfolio: money rounds half up once per property; the tiles are the sum of the rows")
+def t324():
+	from kamra.dashboards import _whole, portfolio_dashboard
+	assert _whole(11792.5) == 11793 and _whole(0.5) == 1 and _whole(2.49) == 2
+	out = portfolio_dashboard()
+	for key in ("collections_today", "revenue_today", "outstanding"):
+		rows = [r[key] for r in out["properties"]]
+		assert all(float(v).is_integer() for v in rows), (key, rows)
+		assert out["totals"][key] == sum(rows), (key, out["totals"][key], sum(rows))
+
+
+@check("ledgers: an open folio's balance is not an imbalance; a folio the ledger disagrees with is")
+def t325():
+	from kamra import api
+	from kamra.business_date import get_business_date
+	from kamra.ledger import folio_reconciliation, ledger_balances
+	res, folio = _in_house("Eval Ledger Recon", "+91 70000 00325", "2037-01-10",
+	                       "2037-01-12", _ledger_room("L325"))
+	api.add_folio_charge(folio, "Misc", "eval recon", 1000, gst_rate=0)
+	_assert_folio_on_ledger(folio)
+	tb = ledger_balances(P)
+	assert tb["total_debit"] > tb["total_credit"], "guest owes, so debits lead"
+	recon = tb["reconciliation"]
+	assert tb["in_balance"] == (recon["folios_out"] == 0), tb["in_balance"]
+	assert folio not in {f["folio"] for f in folio_reconciliation(P, limit=10000)["folios"]}
+	bal = float(frappe.db.get_value("Folio", folio, "balance"))
+	frappe.db.set_value("Folio", folio, "balance", bal + 250)
+	r2 = folio_reconciliation(P, limit=10000)
+	hit = next((f for f in r2["folios"] if f["folio"] == folio), None)
+	assert hit and abs(hit["difference"] - 250) < 0.01, hit
+	assert ledger_balances(P)["in_balance"] is False
+	assert ledger_balances(P, add_days(get_business_date(P), -1))["in_balance"] is None
+	frappe.db.set_value("Folio", folio, "balance", bal)
+
+
+@check("accounting export: each invoice line keeps its own service code, amounts conserved")
+def t326():
+	from kamra import api
+	from kamra.accounting import _lines_by_code, export_invoices
+	from kamra.localization import pack_for
+	res, folio = _in_house("Eval Export Codes", "+91 70000 00326", "2037-01-14",
+	                       "2037-01-16", _ledger_room("L326"))
+	api.add_folio_charge(folio, "Laundry", "Laundry bag", 300, gst_rate=18)
+	api.add_folio_charge(folio, "Food & Beverage", "Dinner", 1000, gst_rate=5)
+	api.add_folio_charge(folio, "Spa", "Massage", 2000, gst_rate=18)
+	inv = api.folio_invoice(folio)
+	ctx = pack_for(P).invoice_context(frappe.get_cached_doc("Property", P))
+	comps = [c for c, _ in ctx["split"]]
+	ratios = {c: float(r) for c, r in ctx["split"]}
+	lines = _lines_by_code(inv, comps, ratios)
+	line_codes = {ln["service_code"] or "" for ln in inv["lines"]}
+	assert {g["service_code"] for g in lines} == line_codes, (lines, line_codes)
+	if len(line_codes - {""}) > 1:
+		assert len({g["service_code"] for g in lines} - {""}) > 1, "codes collapsed"
+	charges = frappe.get_doc("Folio", folio).charges
+	assert abs(sum(g["taxable"] for g in lines) - sum(float(c.amount) for c in charges)) < 0.02
+	assert abs(sum(g["total_tax"] for g in lines) - sum(float(c.gst_amount) for c in charges)) < 0.02
+	out = export_invoices(P, "2000-01-01", "2099-12-31")
+	assert all("lines" in r for r in out["rows"])
+
+
+@check("End of Day: Manage and the wizard count open POS bills from the same check")
+def t327():
+	from kamra import night_audit
+	from kamra.business_date import get_business_date
+	frappe.db.set_value("Property", P, "business_date", nowdate())
+	row = next(r for r in night_audit.eod_overview() if r["property"] == P)
+	live = {c["key"]: c for c in night_audit.run_checks(P, get_business_date(P))}
+	assert row["open_pos_bills"] == live["open_pos_bills"]["count"]
+	st = night_audit.eod_session(P)
+	if not st["ran"]:
+		wiz = {c["key"]: c for c in st["checks"]}
+		assert wiz["open_pos_bills"]["count"] == row["open_pos_bills"]
+
+
+@check("voids & allowances report lists an allowance with its folio and reason")
+def t328():
+	from kamra import api
+	from kamra.reports import void_allowance_report
+	res, folio = _in_house("Eval Void Report", "+91 70000 00328", "2037-01-18",
+	                       "2037-01-20", _ledger_room("L328"))
+	api.add_folio_charge(folio, "Misc", "eval void report", 500, gst_rate=0)
+	api.post_allowance(folio, 100, "eval void report reason")
+	rows = void_allowance_report(P, nowdate(), nowdate())
+	assert any(r["folio"] == folio and r["action"] == "Allowance" for r in rows), rows[:3]
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -7668,7 +7820,7 @@ def execute():
 		           t200, t201, t202, t203, t204,
 		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214,
 		           t215, t216, t300, t301, t302, t303, t304, t305, t310, t311, t312, t313, t314,
-		           t315, t316, t317, t318):
+		           t315, t316, t317, t318, t320, t321, t322, t323, t324, t325, t326, t327, t328):
 			fn()
 	finally:
 		frappe.db.commit = real_commit
