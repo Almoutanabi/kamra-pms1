@@ -672,28 +672,36 @@ def run_opening(property: str, csv_text: str):
 	order = sorted(items, key=lambda i: (
 		{"in_house": 0, "deposit": 1, "ar": 2}[i["category"]],
 		i["amount"] < 0))
-	for n, it in enumerate(order, start=1):
-		if it["posted"]:
-			already += 1
-			continue
-		sp = f"golive_ob_{n}"
-		frappe.db.savepoint(sp)
-		try:
-			if it["category"] == "in_house":
-				_post_in_house(property, it, bd)
-			elif it["category"] == "deposit":
-				_post_deposit(property, it, bd)
-			elif it["amount"] > 0:
-				_post_ar_invoice(property, it, bd)
-			else:
-				_post_ar_credit(property, it)
-			posted[it["category"]] += 1
-			totals[it["category"]] += it["amount"]
-		except Exception as e:
-			frappe.db.rollback(save_point=sp)
-			errors.append({"row": it["rows"][0], "type": LABELS[it["category"]],
-			               "who": it.get("guest_name") or it.get("company") or "",
-			               "error": str(e)[:200]})
+	# carried-forward balances are bookkeeping, not new business: the
+	# placeholder stays and opening lines must not reach outbound webhook
+	# subscribers as reservation.created / folio.posted events
+	was_muted = frappe.flags.kamra_mute_webhooks
+	frappe.flags.kamra_mute_webhooks = True
+	try:
+		for n, it in enumerate(order, start=1):
+			if it["posted"]:
+				already += 1
+				continue
+			sp = f"golive_ob_{n}"
+			frappe.db.savepoint(sp)
+			try:
+				if it["category"] == "in_house":
+					_post_in_house(property, it, bd)
+				elif it["category"] == "deposit":
+					_post_deposit(property, it, bd)
+				elif it["amount"] > 0:
+					_post_ar_invoice(property, it, bd)
+				else:
+					_post_ar_credit(property, it)
+				posted[it["category"]] += 1
+				totals[it["category"]] += it["amount"]
+			except Exception as e:
+				frappe.db.rollback(save_point=sp)
+				errors.append({"row": it["rows"][0], "type": LABELS[it["category"]],
+				               "who": it.get("guest_name") or it.get("company") or "",
+				               "error": str(e)[:200]})
+	finally:
+		frappe.flags.kamra_mute_webhooks = was_muted
 	from kamra.savings import log_action
 	log_action("import_opening_balances", "Property", property, property,
 	           minutes_saved=sum(posted.values()),
