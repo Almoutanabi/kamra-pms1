@@ -236,17 +236,33 @@ def budget_vs_actual(property: str, period: str | None = None):
 		{"p": property, "s": start, "n": nxt}, as_dict=True)[0]
 	sold = int(agg.rooms_sold or 0)
 	room_rev = float(agg.room_revenue or 0)
-	# sold nights in the same elapsed window, whether posted yet or not
-	on_books = int(frappe.db.sql(
+	# sold nights in the same elapsed window, whether posted yet or not -
+	# and, stay by stay, how many of them End of Day hasn't posted. Per stay,
+	# not house totals: a no-show or cancellation fee posts a Room charge for
+	# a stay that isn't on the books, and must not hide another stay's gap.
+	stays = frappe.db.sql(
 		"""
-		SELECT COALESCE(SUM(DATEDIFF(LEAST(check_out_date, %(e)s),
-		                             GREATEST(check_in_date, %(s)s))), 0)
+		SELECT name, DATEDIFF(LEAST(check_out_date, %(e)s),
+		                      GREATEST(check_in_date, %(s)s)) AS nights
 		FROM `tabReservation`
 		WHERE property=%(p)s
 		  AND status IN ('Confirmed', 'Checked In', 'Checked Out')
 		  AND check_in_date < %(e)s AND check_out_date > %(s)s
 		""",
-		{"p": property, "s": start, "e": window_end})[0][0] or 0)
+		{"p": property, "s": start, "e": window_end}, as_dict=True)
+	on_books = sum(int(r.nights or 0) for r in stays)
+	posted_by_stay = dict(frappe.db.sql(
+		"""
+		SELECT COALESCE(fc.reservation, f.reservation) AS res,
+		       COUNT(DISTINCT fc.posting_date)
+		FROM `tabFolio Charge` fc JOIN `tabFolio` f ON fc.parent=f.name
+		WHERE f.property=%(p)s AND fc.charge_type='Room'
+		  AND fc.posting_date>=%(s)s AND fc.posting_date<%(e)s
+		GROUP BY res
+		""",
+		{"p": property, "s": start, "e": window_end})) if stays else {}
+	unposted = sum(max(0, int(r.nights or 0) - int(posted_by_stay.get(r.name) or 0))
+	               for r in stays)
 
 	actual = {
 		"room_revenue": round(room_rev, 0),
@@ -280,7 +296,7 @@ def budget_vs_actual(property: str, period: str | None = None):
 	        "posted_nights": sold,
 	        "posted_through": str(agg.posted_through) if agg.posted_through else None,
 	        "on_books_nights": on_books,
-	        "unposted_nights": max(0, on_books - sold),
+	        "unposted_nights": unposted,
 	        "elapsed_room_nights": room_nights}
 
 
