@@ -4014,6 +4014,10 @@ Before check-out: the credit check for each company the stay's bills
 would move to, so the desk can warn, or ask Finance / a Hotel Admin to
 override a block. Check-out re-runs the same check itself.
 
+Check-out first posts any night not yet on the folio, so the preview
+does the same inside a savepoint it rolls back - the amounts match
+what check-out will move, and nothing is written.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `reservation` | yes |  |

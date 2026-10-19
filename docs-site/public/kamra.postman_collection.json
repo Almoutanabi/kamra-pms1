@@ -10724,7 +10724,7 @@
         "kamra.credit.checkout_credit_preview"
        ]
       },
-      "description": "Before check-out: the credit check for each company the stay's bills\nwould move to, so the desk can warn, or ask Finance / a Hotel Admin to\noverride a block. Check-out re-runs the same check itself.",
+      "description": "Before check-out: the credit check for each company the stay's bills\nwould move to, so the desk can warn, or ask Finance / a Hotel Admin to\noverride a block. Check-out re-runs the same check itself.\n\nCheck-out first posts any night not yet on the folio, so the preview\ndoes the same inside a savepoint it rolls back - the amounts match\nwhat check-out will move, and nothing is written.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"reservation\": \"RES-2026-00001\"\n}",
