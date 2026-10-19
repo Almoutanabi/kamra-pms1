@@ -43,6 +43,7 @@ def open_folio(reservation) -> str:
 	)
 	if existing:
 		_post_addons(reservation, existing)
+		_post_pet_charge(reservation, existing)
 		return existing
 	folio = frappe.get_doc({
 		"doctype": "Folio",
@@ -68,11 +69,43 @@ def open_folio(reservation) -> str:
 	save_folio(folio)
 	_post_addons(reservation, folio.name)
 	_post_cleaning_fee(reservation, folio.name)
+	_post_pet_charge(reservation, folio.name)
 	return folio.name
 
 
 def _post_cleaning_fee(reservation, folio_name: str):
 	"""Post one-time cleaning fee from quote snapshot / property (ADR-008)."""
+	fallback = float(
+		frappe.db.get_value("Property", reservation.property, "cleaning_fee") or 0
+	)
+	_post_stay_fee(reservation, folio_name, "cleaning_fee", "Cleaning Fee",
+	               "Cleaning fee", fallback)
+
+
+def _post_pet_charge(reservation, folio_name: str):
+	"""Post the pet charge once per stay, at what the guest was quoted."""
+	pets = int(reservation.get("pets") or 0)
+	if pets <= 0:
+		return
+	from frappe.utils import date_diff
+
+	from kamra.pricing import pet_charge_amount
+	prop = frappe.get_cached_doc("Property", reservation.property)
+	# a property that has since stopped taking pets must not block check-in;
+	# the quoted line in the snapshot still posts
+	fallback = float(pet_charge_amount(
+		prop, pets,
+		date_diff(reservation.check_out_date, reservation.check_in_date),
+	)) if prop.get("pets_allowed") else 0.0
+	_post_stay_fee(reservation, folio_name, "pet_charge", "Pet Charge",
+	               f"Pets × {pets}", fallback)
+
+
+def _post_stay_fee(reservation, folio_name: str, component: str,
+                   charge_type: str, description: str, fallback: float):
+	"""Post a one-time stay fee at the amount and tax in the booking's quote
+	snapshot, so a later price change never re-bills the guest. Without a
+	snapshot line it posts `fallback` untaxed. Idempotent per folio."""
 	import json
 	amount = 0.0
 	tax_rate = 0.0
@@ -81,25 +114,20 @@ def _post_cleaning_fee(reservation, folio_name: str):
 		try:
 			data = json.loads(snap) if isinstance(snap, str) else snap
 			for li in data.get("line_items") or []:
-				if li.get("component") == "cleaning_fee":
+				if li.get("component") == component:
 					amount = float(li.get("amount") or 0)
 					tax = float(li.get("tax_amount") or 0)
 					tax_rate = (tax / amount * 100) if amount else 0
 					break
 		except Exception:
-			pass  # snapshot unreadable; fall back to the property's current cleaning fee
+			pass  # snapshot unreadable; fall back to the property's current fee
 	if amount <= 0:
-		amount = float(
-			frappe.db.get_value(
-				"Property", reservation.property, "cleaning_fee"
-			)
-			or 0
-		)
+		amount = fallback
 	if amount <= 0:
 		return
 	if frappe.db.exists(
 		"Folio Charge",
-		{"parent": folio_name, "charge_type": "Cleaning Fee", "auto_posted": 1},
+		{"parent": folio_name, "charge_type": charge_type, "auto_posted": 1},
 	):
 		return
 	doc = frappe.get_doc("Folio", folio_name)
@@ -109,8 +137,8 @@ def _post_cleaning_fee(reservation, folio_name: str):
 		"charges",
 		{
 			"posting_date": nowdate(),
-			"charge_type": "Cleaning Fee",
-			"description": "Cleaning fee",
+			"charge_type": charge_type,
+			"description": description,
 			"qty": 1,
 			"rate": amount,
 			"amount": amount,

@@ -307,6 +307,12 @@ MODULES: tuple[Module, ...] = (
 				S("room_levy_taxable", "Tax applies to the levy", "check", 1, P),
 				S("cleaning_fee", "Cleaning fee per stay", "number", 0, P, min=0),
 				S("cleaning_fee_taxable", "Cleaning fee is taxable", "check", 1, P),
+				S("pets_allowed", "Pets allowed", "check", 0, P,
+				  hint="Shows a Pets count on the booking pages and the desk booking form."),
+				S("pet_charge", "Pet charge", "number", 0, P, min=0,
+				  hint="Per pet, taxed at the room's rate. 0 lets pets stay free."),
+				S("pet_charge_basis", "Pet charge applies", "select", "Per stay", P,
+				  options=("Per stay", "Per night")),
 			)),
 			Section("corporate", "Corporate billing",
 			        "Who pays what on a credit company's stay when that company has no billing rules of its own. "

@@ -26,6 +26,7 @@ import {
 } from "../lib/phone"
 import { clampGuests, sleeps } from "../lib/occupancy"
 import { useT } from "../lib/i18n"
+import { petChargeBasis } from "../lib/pets"
 import { useCashierAuth } from "../lib/cashierAuth"
 import DepositPanel, { type DepositState } from "./DepositPanel"
 
@@ -176,6 +177,7 @@ export function BookingDialog(props: {
     over_capacity_reason: "",
     over_capacity_guests: 0,
     over_capacity_charge: 0,
+    pets: 0,
     company: "",
     travel_agent: "",
     booked_by_name: "",
@@ -372,6 +374,7 @@ export function BookingDialog(props: {
         meal_plan: form.meal_plan || undefined,
         voucher_code: form.voucher_code || undefined,
         over_capacity_charge: form.over_capacity_charge || undefined,
+        pets: form.pets || undefined,
       })
         .then((q) => {
           setQuote(q)
@@ -396,6 +399,7 @@ export function BookingDialog(props: {
     // change to it has to re-quote - without this the panel kept showing the
     // rate card total while the desk typed the price they had agreed
     form.over_capacity_charge,
+    form.pets,
     checkOut,
   ])
 
@@ -496,6 +500,7 @@ export function BookingDialog(props: {
           children: form.children,
           meal_plan: form.meal_plan || undefined,
           voucher_code: form.voucher_code || undefined,
+          pets: form.pets || undefined,
           company: form.company || undefined,
           waitlist: 1,
           ...slotArgs,
@@ -562,6 +567,7 @@ export function BookingDialog(props: {
         children: form.children,
         meal_plan: form.meal_plan || undefined,
         voucher_code: form.voucher_code || undefined,
+        pets: form.pets || undefined,
         company: form.company || undefined,
         travel_agent: form.travel_agent || undefined,
         booking_type: form.company ? "Corporate" : undefined,
@@ -1368,6 +1374,29 @@ export function BookingDialog(props: {
                   </Field>
                 </div>
 
+                {options?.property.pets_allowed ? (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <Field label={t("Pets")}>
+                      <input
+                        type="number"
+                        min={0}
+                        className={inputCls}
+                        value={form.pets}
+                        onChange={(e) =>
+                          set("pets", Math.max(0, Number(e.target.value)))
+                        }
+                      />
+                    </Field>
+                    {options.property.pet_charge > 0 && (
+                      <p className="col-span-1 self-end pb-2 text-xs text-zinc-500 sm:col-span-3">
+                        {cur()}
+                        {inr(options.property.pet_charge)}{" "}
+                        {t(petChargeBasis(options.property.pet_charge_basis))}
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+
                 {selectedRt && overCapacity && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
                     {selectedRt.room_type_name} sleeps up to{" "}
@@ -1977,6 +2006,17 @@ export function BookingDialog(props: {
                         <span className="tabular-nums">
                           {cur()}
                           {inr(quote.meal_total)}
+                        </span>
+                      </div>
+                    )}
+                    {(quote.pet_charge || 0) > 0 && (
+                      <div className="flex justify-between text-zinc-600">
+                        <span>
+                          {t("Pets")} × {form.pets}
+                        </span>
+                        <span className="tabular-nums">
+                          {cur()}
+                          {inr(quote.pet_charge || 0)}
                         </span>
                       </div>
                     )}

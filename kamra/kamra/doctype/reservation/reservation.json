@@ -93,6 +93,7 @@
   "over_capacity_guests",
   "over_capacity_charge",
   "over_capacity_reason",
+  "pets",
   "infants",
   "cb_extras",
   "valet_parking",
@@ -742,6 +743,13 @@
    "description": "Required to book above the room type's capacity. Allowed only up to the extra beds the room type permits."
   },
   {
+   "default": "0",
+   "description": "Pets travelling with the party. Priced from the property's pet charge.",
+   "fieldname": "pets",
+   "fieldtype": "Int",
+   "label": "Pets"
+  },
+  {
    "fieldname": "infants",
    "fieldtype": "Int",
    "label": "Infants"
@@ -780,7 +788,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-15 10:00:00.000000",
+ "modified": "2026-10-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kamra",
  "name": "Reservation",

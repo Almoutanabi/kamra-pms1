@@ -18,6 +18,7 @@ import { Button } from "../components/ui/button"
 import { Sheet } from "../components/ui/sheet"
 import { cur, moneyLocale, adoptUiLocale } from "../lib/money"
 import { formatPhoneDisplay, formatPhoneTel } from "../lib/phone"
+import { petChargeBasis } from "../lib/pets"
 
 const inr = (n: number) =>
   n.toLocaleString(moneyLocale(), { maximumFractionDigits: 0 })
@@ -42,6 +43,9 @@ interface Showcase {
     brand_accent: string | null
     payment_mode: string
     cleaning_fee: number
+    pets_allowed?: number
+    pet_charge?: number
+    pet_charge_basis?: string
     security_deposit_amount: number
     minimum_nights: number
     booking_mode: string
@@ -98,6 +102,7 @@ interface StayResult {
     nights: number
     amount_after_tax: number
     cleaning_fee?: number
+    pet_charge?: number
     totals?: { deposit_required?: number }
   } | null
 }
@@ -221,6 +226,7 @@ export default function PublicListing() {
       check_in_date,
       check_out_date: checkout ?? addDays(check_in_date, 2),
       adults: Number(adultsParam ?? 2) || 2,
+      pets: 0,
       children: Number(childrenParam ?? 0) || 0,
     }
   })
@@ -329,6 +335,7 @@ export default function PublicListing() {
       check_out_date: checkOut,
       adults: search.adults,
       children: search.children,
+      pets: search.pets,
       listing_slug: listingSlug,
       location_slug: locationSlug,
     }).then((rows) => {
@@ -359,6 +366,7 @@ export default function PublicListing() {
           check_out_date: checkOut,
           adults: search.adults,
           children: search.children,
+          pets: search.pets,
           ...form,
         },
       )
@@ -618,6 +626,12 @@ export default function PublicListing() {
                 {p.pets_policy && (
                   <p className="mt-3 text-zinc-600">Pets: {p.pets_policy}</p>
                 )}
+                {!!p.pets_allowed && (p.pet_charge || 0) > 0 && (
+                  <p className="mt-1 text-zinc-600">
+                    Pet charge {cur()}
+                    {inr(p.pet_charge || 0)} {petChargeBasis(p.pet_charge_basis)}
+                  </p>
+                )}
                 {p.children_policy && (
                   <p className="mt-2 text-zinc-600">Children: {p.children_policy}</p>
                 )}
@@ -653,6 +667,13 @@ export default function PublicListing() {
                     ? `${results[primary!.name].quote!.nights} nights · taxes in`
                     : "from / night"}
                 </p>
+                {!isSite && (results[primary?.name ?? ""]?.quote?.pet_charge || 0) > 0 && (
+                  <p className="text-xs text-zinc-500">
+                    Includes {cur()}
+                    {inr(results[primary!.name].quote!.pet_charge || 0)} for{" "}
+                    {search.pets} pet{search.pets === 1 ? "" : "s"}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -737,6 +758,31 @@ export default function PublicListing() {
                     </span>
                   )}
                 </label>
+                {!!p.pets_allowed && (
+                  <label className="block">
+                    <span className="mb-1 block text-sm font-medium text-zinc-600">
+                      Pets
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      className={inputCls}
+                      value={search.pets}
+                      onChange={(e) =>
+                        setSearch({
+                          ...search,
+                          pets: Math.max(0, Number(e.target.value) || 0),
+                        })
+                      }
+                    />
+                    {(p.pet_charge || 0) > 0 && (
+                      <span className="mt-1 block text-xs text-zinc-500">
+                        {cur()}
+                        {inr(p.pet_charge || 0)} {petChargeBasis(p.pet_charge_basis)}
+                      </span>
+                    )}
+                  </label>
+                )}
               </div>
               <p className="text-center text-xs text-zinc-400">
                 {nightsBetween(search.check_in_date, search.check_out_date)} night

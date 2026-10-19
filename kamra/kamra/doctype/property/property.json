@@ -89,6 +89,9 @@
   "gallery",
   "house_rules",
   "pets_policy",
+  "pets_allowed",
+  "pet_charge",
+  "pet_charge_basis",
   "children_policy",
   "extra_bed_policy",
   "faqs",
@@ -600,6 +603,29 @@
    "label": "Pets Policy"
   },
   {
+   "default": "0",
+   "description": "Lets guests and the desk add pets to a booking. Unchecked, a booking with pets is refused.",
+   "fieldname": "pets_allowed",
+   "fieldtype": "Check",
+   "label": "Pets Allowed"
+  },
+  {
+   "default": "0",
+   "depends_on": "pets_allowed",
+   "description": "Charge per pet, added to the quote as its own line. 0 = pets stay free.",
+   "fieldname": "pet_charge",
+   "fieldtype": "Currency",
+   "label": "Pet Charge"
+  },
+  {
+   "default": "Per stay",
+   "depends_on": "pets_allowed",
+   "fieldname": "pet_charge_basis",
+   "fieldtype": "Select",
+   "label": "Pet Charge Basis",
+   "options": "Per stay\nPer night"
+  },
+  {
    "fieldname": "children_policy",
    "fieldtype": "Small Text",
    "label": "Children Policy"
@@ -646,7 +672,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-15 18:00:00.000000",
+ "modified": "2026-10-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kamra",
  "name": "Property",
