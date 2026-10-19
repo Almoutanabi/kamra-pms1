@@ -19,12 +19,15 @@
 {label}: all,{label}: all,{label}: الكل,components/ResourceScreen.tsx,label,translated
 {n} A4 pages,{n} A4 pages,{n} صفحات A4,screens/QrCodes.tsx,n,translated
 {n} ad,{n} ad,{n} بالغ,components/BookingRequests.tsx; screens/Today.tsx,n,translated
+{n} adult,{n} adult,,components/BookingDialog.tsx,n,needs_translation
 {n} adult{s},{n} adult{s},{n} بالغ{s},components/CheckInDialog.tsx; screens/PublicCheckin.tsx; screens/RegistrationCard.tsx; screens/Today.tsx,n s,translated
+{n} adults,{n} adults,,components/BookingDialog.tsx,n,needs_translation
 {n} bill(s) were taken for a different room than the folio they posted to.,{n} bill(s) were taken for a different room than the folio they posted to.,{n} فاتورة أُخذت لغرفة غير التي رُحّلت إلى فاتورتها.,screens/EndOfDayWizard.tsx,n,translated
 {n} blocker(s),{n} blocker(s),{n} عائق,screens/EndOfDay.tsx; screens/EndOfDayWizard.tsx,n,translated
 {n} booking{s} imported{history},{n} booking{s} imported{history},تم استيراد {n} حجز{s}{history},screens/Setup.tsx,n s history,translated
 {n} changeover conflict{s},{n} changeover conflict{s},{n} تعارض تبديل{s},screens/TapeChart.tsx,n s,translated
-{n} child,{n} child,{n} طفل,screens/PublicCheckin.tsx; screens/RegistrationCard.tsx,n,translated
+{n} child,{n} child,{n} طفل,components/BookingDialog.tsx; screens/PublicCheckin.tsx; screens/RegistrationCard.tsx,n,translated
+{n} children,{n} children,,components/BookingDialog.tsx,n,needs_translation
 {n} codes,{n} codes,{n} رمز,screens/QrCodes.tsx,n,translated
 {n} day{s} before arrival.,{n} day{s} before arrival.,{n} يوم{s} قبل الوصول.,components/CancelPanel.tsx,n s,translated
 {n} documents issued · last ICV {icv} · Phase 2: {status}.,{n} documents issued · last ICV {icv} · Phase 2: {status}.,صدر {n} مستند · آخر عداد {icv} · المرحلة الثانية: {status}.,screens/settings/cards.tsx,n icv status,translated
@@ -484,6 +487,8 @@ Folios,Folios,الفواتير,screens/Billing.tsx,,translated
 For {name},For {name},لـ {name},screens/FolioView.tsx,name,translated
 "for guests under {age} the hotel records only what registration law requires, usually name and age, and never uses it for marketing.","for guests under {age} the hotel records only what registration law requires, usually name and age, and never uses it for marketing.",للنزلاء دون {age} عامًا يسجّل الفندق فقط ما يتطلبه نظام التسجيل، وعادةً الاسم والعمر، ولا يستخدمه أبدًا للتسويق.,components/PrivacyNotice.tsx,age,translated
 Free,Free,,screens/TapeChart.tsx,,needs_translation
+Free cancellation until {date}; after that {fee} is charged.,Free cancellation until {date}; after that {fee} is charged.,,components/BookingDialog.tsx,date fee,needs_translation
+Free cancellation.,Free cancellation.,,components/BookingDialog.tsx,,needs_translation
 Free Child Age Limit (Years),Free Child Age Limit (Years),حد عمر الطفل المجاني (سنوات),screens/Setup.tsx,,translated
 from,from,من,components/ResourceScreen.tsx,,translated
 From,From,من,components/BookingDialog.tsx; screens/Banquet.tsx,,translated
@@ -724,6 +729,8 @@ No unassigned rooms right now.,No unassigned rooms right now.,لا غرف غير
 No-shows,No-shows,لم يحضروا,screens/AuditPack.tsx; screens/EndOfDay.tsx; screens/Reports.tsx,,translated
 Nobody is checked in right now.,Nobody is checked in right now.,لا أحد مسجّل وصوله الآن.,screens/Today.tsx,,translated
 Non AC,Non AC,بدون مكيف,screens/Setup.tsx,,translated
+Non-refundable dates ({season}): the full stay is charged on cancellation.,Non-refundable dates ({season}): the full stay is charged on cancellation.,,components/BookingDialog.tsx,season,needs_translation
+Non-refundable from now: {fee} is charged on cancellation.,Non-refundable from now: {fee} is charged on cancellation.,,components/BookingDialog.tsx,fee,needs_translation
 Non-veg,Non-veg,غير نباتي,screens/Kitchen.tsx; screens/POS.tsx,,translated
 None taken,None taken,لم يُحصّل,components/SecurityDepositPanel.tsx,,translated
 Not a corporate booking,Not a corporate booking,ليس حجز شركات,screens/Banquet.tsx,,translated
@@ -840,6 +847,7 @@ Payment mode,Payment mode,طريقة الدفع,components/BookingDialog.tsx; co
 Payments,Payments,المدفوعات,screens/FolioView.tsx; screens/settings/cards.tsx,,translated
 Payments are handled by the hotel's payment gateway; the hotel does not see your card.,Payments are handled by the hotel's payment gateway; the hotel does not see your card.,تتم المدفوعات عبر بوابة الدفع الخاصة بالفندق؛ ولا يطّلع الفندق على بطاقتك.,components/PrivacyNotice.tsx,,translated
 Per-item prices the app quotes and bills from. A blank express price uses the multiplier in Settings → Housekeeping.,Per-item prices the app quotes and bills from. A blank express price uses the multiplier in Settings → Housekeeping.,,screens/Laundry.tsx,,needs_translation
+Pets,Pets,,components/BookingDialog.tsx,,needs_translation
 Pets Policy:,Pets Policy:,سياسة الحيوانات الأليفة:,screens/PublicCheckin.tsx,,translated
 Petty cash,Petty cash,النثرية,screens/CashierTill.tsx,,translated
 Petty cash →,Petty cash →,النثرية ←,screens/CashierTill.tsx,,translated
@@ -1084,6 +1092,7 @@ Simulate payment (test mode),Simulate payment (test mode),محاكاة الدف�
 Site,Site,الموقع,screens/SystemHealth.tsx,,translated
 Skip the paperwork at the desk - just show your ID on arrival and pick up the key. See you soon!,Skip the paperwork at the desk - just show your ID on arrival and pick up the key. See you soon!,لا حاجة للأوراق عند الاستقبال - فقط أظهر هويتك عند الوصول واستلم المفتاح. نراك قريبًا!,screens/PublicCheckin.tsx,,translated
 SLA breached,SLA breached,خُرق مستوى الخدمة,screens/Tickets.tsx,,translated
+Sleeps up to {guests},Sleeps up to {guests},,components/BookingDialog.tsx,guests,needs_translation
 Smaller than the pax count,Smaller than the pax count,أصغر من عدد الضيوف,screens/Banquet.tsx,,translated
 Soft hold you can sell over,Soft hold you can sell over,حجز مرن يمكن البيع فوقه,screens/Banquet.tsx,,translated
 Sold out,Sold out,نفدت,components/BookingRequests.tsx,,translated
