@@ -7792,6 +7792,248 @@ def t328():
 	assert any(r["folio"] == folio and r["action"] == "Allowance" for r in rows), rows[:3]
 
 
+def _as_user(user):
+	"""Run a block as `user`, always returning to Administrator."""
+	from contextlib import contextmanager
+
+	@contextmanager
+	def cm():
+		frappe.set_user(user)  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+		try:
+			yield
+		finally:
+			frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- controlled user context switch; target user is validated and scope-limited in this flow
+	return cm()
+
+
+def _hk_task(task_type="Checkout Clean", **kw):
+	return frappe.get_doc({
+		"doctype": "Housekeeping Task", "property": P, "room": ROOM,
+		"task_type": task_type, "priority": "High", "status": "Pending", **kw,
+	}).insert(ignore_permissions=True).name
+
+
+@check("housekeeping: an inspection passes as Verified (Inspected / Ready), never back to Clean; only a supervisor passes it")
+def t310():
+	from kamra import api
+	from kamra.turnover import ensure_default_profile
+
+	# hotel default: no inspection required -> a passed inspection = Inspected
+	frappe.db.set_value("Room", ROOM, "housekeeping_status", "Clean")
+	insp = _hk_task("Inspection")
+	# the attendant cannot pass it
+	with _as_user("hk@kamra.local"):
+		try:
+			api.hk_update_task(insp, "Done")
+			raise AssertionError("an attendant passed an inspection")
+		except frappe.PermissionError:
+			pass
+	assert frappe.db.get_value("Housekeeping Task", insp, "status") == "Pending"
+	out = api.hk_update_task(insp, "Done")  # Done on an inspection = Verified
+	assert out["status"] == "Verified", out
+	assert frappe.db.get_value("Room", ROOM, "housekeeping_status") == "Inspected"
+
+	# inspection required by the turnover profile -> passing it = Ready
+	name = ensure_default_profile(P)
+	frappe.db.set_value("Turnover Profile", name, "requires_inspection", 1)
+	frappe.clear_document_cache("Turnover Profile", name)
+	frappe.db.set_value("Room", ROOM, "housekeeping_status", "Dirty")
+	clean = _hk_task("Checkout Clean")
+	with _as_user("hk@kamra.local"):
+		api.hk_update_task(clean, "Done")  # an attendant still finishes cleans
+	assert frappe.db.get_value("Room", ROOM, "housekeeping_status") == "Clean"
+	spawned = frappe.get_all("Housekeeping Task", filters={
+		"room": ROOM, "task_type": "Inspection", "status": "Pending"}, pluck="name")
+	assert spawned, "no inspection spawned after the checkout clean"
+	api.hk_update_task(spawned[0], "Verified")
+	assert frappe.db.get_value("Room", ROOM, "housekeeping_status") == "Ready"
+
+	# an inspection closed as Done from the desk form never downgrades the room
+	other = _hk_task("Inspection")
+	d = frappe.get_doc("Housekeeping Task", other)
+	d.status = "Done"
+	d.save(ignore_permissions=True)
+	assert frappe.db.get_value("Room", ROOM, "housekeeping_status") == "Ready"
+	frappe.db.set_value("Turnover Profile", name, "requires_inspection", 0)
+	frappe.clear_document_cache("Turnover Profile", name)
+
+
+@check("housekeeping: only a supervisor assigns, and only to housekeeping staff of the property")
+def t311():
+	from kamra import api
+	staff = [s["user"] for s in api.hk_staff(P)]
+	assert "hk@kamra.local" in staff, staff
+	assert "frontdesk@kamra.local" not in staff, staff
+	task = _hk_task()
+	with _as_user("hk@kamra.local"):
+		try:
+			api.hk_assign_task(task, "hk@kamra.local")
+			raise AssertionError("an attendant assigned a task")
+		except frappe.PermissionError:
+			pass
+	try:
+		api.hk_assign_task(task, "frontdesk@kamra.local")
+		raise AssertionError("assigned a task to someone who is not housekeeping")
+	except frappe.ValidationError:
+		pass
+	out = api.hk_assign_task(task, "hk@kamra.local")
+	assert out["assigned_to_user"] == "hk@kamra.local", out
+	with _as_user("hk@kamra.local"):
+		row = next(t for t in api.hk_queue(P)["tasks"] if t["name"] == task)
+		assert row["mine"] and row["assignment_status"] == "Assigned", row
+
+
+@check("settings: turnover page shows only knobs code acts on, with the doctype's defaults")
+def t312():
+	from kamra.settings import SETTINGS
+	for key in ("clean_duration_minutes", "buffer_after_ready_minutes",
+	            "same_day_turn_allowed"):
+		assert key not in SETTINGS, f"{key} is offered but nothing reads it"
+	meta = frappe.get_meta("Turnover Profile")
+	for key in ("requires_inspection", "inspect_duration_minutes"):
+		reg = SETTINGS[key][1].default
+		doc_default = meta.get_field(key).default
+		assert str(reg) == str(doc_default), (key, reg, doc_default)
+	# a hotel's auto-created profile matches the doctype defaults
+	from kamra.turnover import ensure_default_profile
+	tp = frappe.get_doc("Turnover Profile", ensure_default_profile(P))
+	for key in ("clean_duration_minutes", "inspect_duration_minutes",
+	            "buffer_after_ready_minutes", "same_day_turn_allowed"):
+		assert str(tp.get(key)) == str(meta.get_field(key).default), (
+			key, tp.get(key), meta.get_field(key).default)
+
+
+@check("SLA report: Resolved counts Resolved + Closed the same way in the headline and every breakdown")
+def t313():
+	from kamra.api import create_ticket
+	from kamra.reports import sla_report
+	today = frappe.utils.nowdate()
+	a = create_ticket(P, "eval sla resolved", "Maintenance", "High")
+	b = create_ticket(P, "eval sla closed", "Maintenance", "High")
+	create_ticket(P, "eval sla open", "Maintenance", "High")
+	for name, status in ((a["ticket"], "Resolved"), (b["ticket"], "Closed")):
+		d = frappe.get_doc("Service Ticket", name)
+		d.status = status
+		d.save(ignore_permissions=True)
+	r = sla_report(P, today, today)
+	assert sum(c["resolved"] for c in r["by_category"]) == r["resolved"], r
+	assert sum(c["resolved"] for c in r["by_priority"]) == r["resolved"], r
+	cat = next(c for c in r["by_category"] if c["label"] == "Maintenance")
+	assert cat["resolved"] >= 2, cat
+
+
+@check("HK escalation alert names who was actually notified")
+def t314():
+	from kamra import housekeeping
+	task = frappe._dict(name=_hk_task(), property=P, room=ROOM,
+	                    task_type="Checkout Clean", priority="High")
+	from unittest.mock import patch
+	told = []
+	with patch("kamra.housekeeping._notify_role",
+	           lambda prop, role, body: told.append((role, body))):
+		housekeeping._escalate(task, 1, 12)
+		housekeeping._escalate(task, 2, 60)
+	assert told[0][0] == "Front Desk" and "front desk" in told[0][1], told
+	assert told[1][0] == "Hotel Admin" and "hotel admin" in told[1][1], told
+	assert "supervisor" not in told[0][1] and "manager" not in told[1][1], told
+
+
+@check("copilot raise_ticket files an AI Agent ticket, like MCP create_ticket")
+def t315():
+	from kamra.assistant import _run_tool
+	out = _run_tool("raise_ticket", {
+		"subject": "eval copilot towels", "category": "Housekeeping",
+		"priority": "Low", "source": "Manual"}, P)
+	name = out["ticket"]
+	assert frappe.db.get_value("Service Ticket", name, "source") == "AI Agent", name
+
+
+@check("laundry & HK charges: services tax from the country pack, currency from the property")
+def t316():
+	from kamra.localization import money_text, pack_for_country, services_tax_rate
+	# India keeps 18% GST on services; every pack's services rate is one it allows
+	assert services_tax_rate(pack_for_country("India"), P) == 18.0
+	for country in ("India", "Saudi Arabia", "United Arab Emirates", "Malaysia",
+	                "Thailand", "Indonesia"):
+		# no property: the pack's statutory default (P is an Indian hotel
+		# whose 5% room types would otherwise steer the VAT packs)
+		pack = pack_for_country(country)
+		rate = services_tax_rate(pack, None)
+		assert rate in [float(x) for x in pack.tax_rate_options(None)], (country, rate)
+	assert services_tax_rate(pack_for_country("Saudi Arabia"), None) == 15.0
+	assert services_tax_rate(pack_for_country("Malaysia"), None) == 8.0
+	import kamra.laundry as laundry
+	assert not hasattr(laundry, "LAUNDRY_GST"), "laundry still hardcodes a GST rate"
+	# activity-log money follows the property's currency, not a fixed rupee
+	cur = frappe.db.get_value("Property", P, "currency")
+	frappe.db.set_value("Property", P, "currency", "USD")
+	frappe.db.set_value("Property", P, "country", "United States")
+	frappe.clear_document_cache("Property", P)
+	try:
+		txt = money_text(P, 1250)
+		assert "₹" not in txt and "1,250" in txt, txt
+	finally:
+		frappe.db.set_value("Property", P, {"currency": cur, "country": "India"})
+		frappe.clear_document_cache("Property", P)
+
+
+@check("stay instructions: desk adds, housekeeping reads and marks done, attendants can't add")
+def t317():
+	from kamra import api
+	g = _guest("Eval Instr", "+91 70000 00317")
+	res = _res(g, "2031-09-01", "2031-09-03").name
+	rows = api.add_stay_instruction(res, "Housekeeping", "Extra pillows, no feathers")
+	assert len(rows) == 1 and rows[0]["status"] == "Open", rows
+	api.add_stay_instruction(res, "Front Desk", "Wake-up call 6am")
+	with _as_user("hk@kamra.local"):
+		try:
+			api.add_stay_instruction(res, "Housekeeping", "nope")
+			raise AssertionError("an attendant added an instruction")
+		except frappe.PermissionError:
+			pass
+		rows = api.stay_instructions(res)
+		assert len(rows) == 2 and rows[0]["department"] == "Housekeeping", rows
+		out = api.set_stay_instruction_status(res, rows[0]["name"], "Done")
+		done = next(r for r in out if r["name"] == rows[0]["name"])
+		assert done["status"] == "Done" and done["done_by"] == "hk@kamra.local", done
+	try:
+		api.add_stay_instruction(res, "Spa", "x")
+		raise AssertionError("unknown department accepted")
+	except frappe.ValidationError:
+		pass
+	# the booking itself still loads with both rows in its table
+	doc = frappe.get_doc("Reservation", res)
+	assert len(doc.instructions) == 2, doc.instructions
+
+
+@check("OTA mapping: a room type of another property is refused")
+def t318():
+	other = frappe.get_doc({
+		"doctype": "Property", "property_name": "Eval Other Mapping Hotel",
+		"city": "Elsewhere"}).insert(ignore_permissions=True).name
+	rt2 = frappe.get_doc({
+		"doctype": "Room Type", "property": other, "room_type_code": "EOM",
+		"room_type_name": "Other Mapping Room", "base_price": 3000,
+		"base_occupancy": 2}).insert(ignore_permissions=True).name
+	conn = frappe.get_doc({
+		"doctype": "Channel Manager Connection", "property": P,
+		"provider": "Channex", "active": 0, "api_key": "eval-key-318",
+		"external_property_id": "chx-prop-318",
+	}).insert(ignore_permissions=True).name
+	try:
+		frappe.get_doc({
+			"doctype": "Channel Room Mapping", "connection": conn,
+			"room_type": rt2, "external_room_id": "x-318",
+		}).insert(ignore_permissions=True)
+		raise AssertionError("mapped another property's room type")
+	except frappe.ValidationError:
+		pass
+	frappe.get_doc({
+		"doctype": "Channel Room Mapping", "connection": conn,
+		"room_type": RT, "external_room_id": "ok-318",
+	}).insert(ignore_permissions=True)
+
+
 def _other_property(name):
 	"""A second, minimal property - for checks about what crosses a
 	property boundary."""

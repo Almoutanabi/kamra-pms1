@@ -120,8 +120,8 @@ def _queue(property: str, printer: dict, kind: str, payload: dict, order=None,
 		frappe.enqueue("kamra.printing.print_direct", queue="short", job=job.name,
 		               enqueue_after_commit=True)
 	else:
-		frappe.publish_realtime("kamra_print", {"printer": printer["name"]},
-		                        after_commit=True)
+		frappe.publish_realtime(  # nosemgrep: frappe-realtime-pick-room -- carries only a printer id; every print-station screen filters for its own printer, as realtime.notify does for change pings
+			"kamra_print", {"printer": printer["name"]}, after_commit=True)
 	return job.name
 
 
@@ -278,14 +278,14 @@ def print_direct(job: str):
 			s.sendall(data)
 	except Exception as e:
 		_fail(job, f"{p.ip_address}:{p.port or 9100} - {e}")
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job (print_direct / daily purge) runs outside a request; its result must persist
 		return
 	now = now_datetime()
 	frappe.db.set_value("Print Job", job, {"status": "Printed", "printed_at": now, "error": None},
 	                    update_modified=False)
 	frappe.db.set_value("Kitchen Printer", j.printer, {"last_printed": now, "last_seen": now,
 	                                                 "last_error": None}, update_modified=False)
-	frappe.db.commit()
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job (print_direct / daily purge) runs outside a request; its result must persist
 
 
 # --- settings endpoints -----------------------------------------------------------
@@ -450,4 +450,4 @@ def purge_old_jobs():
 	frappe.db.delete("Print Job", {
 		"status": ["in", ["Printed", "Failed"]],
 		"creation": ["<", add_to_date(now_datetime(), days=-KEEP_DAYS)]})
-	frappe.db.commit()
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job (print_direct / daily purge) runs outside a request; its result must persist
