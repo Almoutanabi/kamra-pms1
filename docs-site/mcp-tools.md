@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Kamra exposes **96 governed tools** on the hosted MCP
+Kamra exposes **98 governed tools** on the hosted MCP
 endpoint (`/mcp`) and the stdio sidecar (`mcp/kamra_mcp.py`). Every
 call runs as the connected user — **role** permissions apply, tools
 are further filtered by the property's **enabled modules**, prices
@@ -785,6 +785,25 @@ Settle a POS check. mode: Cash, UPI, Card, Room Charge, etc.
 Confirm the total with staff before calling.
 
 Endpoint: `kamra.pos.pay_order`.
+Mutating — logged to the activity ledger.
+
+### `pos_room_lookup(room, last_name)`
+
+Find an in-house guest to charge: by room number and/or last name
+(2+ letters). Only checked-in stays at this property; returns room,
+guest name, reservation and departure date.
+
+Endpoint: `kamra.pos_interface.pos_room_lookup`.
+
+### `pos_post_room_charge(ticket_id, amount, description, room, reservation, charge_type, is_alcohol, outlet_name)`
+
+Post an outlet ticket (bar, spa, restaurant on another POS) to an
+in-house guest's bill. ticket_id is the POS check number and makes the
+call safe to retry: the same ticket is never posted twice. The billing
+rules pick the folio; alcohol (is_alcohol=true) always goes to the
+guest's own folio. Confirm the amount with staff before calling.
+
+Endpoint: `kamra.pos_interface.pos_post_room_charge`.
 Mutating — logged to the activity ledger.
 
 ## Laundry
