@@ -23,7 +23,8 @@ def _day_stats(property: str, date: str, total_rooms: int) -> dict:
 		        'Meal Plan', 'Minibar') THEN fc.amount ELSE 0 END), 0)
 		        AS fnb_revenue,
 		  COALESCE(SUM(CASE WHEN fc.charge_type NOT IN ('Room',
-		        'Food & Beverage', 'Meal Plan', 'Minibar', 'Discount')
+		        'Food & Beverage', 'Meal Plan', 'Minibar', 'Discount',
+		        'Opening Balance')
 		        THEN fc.amount ELSE 0 END), 0) AS other_revenue
 		FROM `tabFolio Charge` fc
 		JOIN `tabFolio` f ON fc.parent = f.name
