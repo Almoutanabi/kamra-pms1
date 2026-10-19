@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **316 endpoints**, generated from the source
+the UI and the AI use. **322 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -1450,6 +1450,7 @@ Everything the booking form needs to render its dropdowns.
 | `rate_plan` | no | `None` |
 | `voucher_code` | no | `None` |
 | `over_capacity_charge` | no | `0` |
+| `pets` | no | `0` |
 
 ### `kamra.api.create_booking`
 
@@ -1510,6 +1511,7 @@ ETA / ETD.
 | `check_in_time` | no | `None` |
 | `check_out_time` | no | `None` |
 | `blacklist_override_reason` | no | `None` |
+| `pets` | no | `0` |
 
 ### `kamra.api.waitlist`
 
@@ -3239,11 +3241,97 @@ full booking validation; history rows (checked-out / cancelled /
 no-show) are stored as records with their status stamped directly, so
 guest history survives the migration.
 
+Re-running the same file is safe: every row carries an import key
+(the old reservation number, or a fingerprint of the stay) and a row
+already in Kamra is skipped. In-house rows need their room; they are
+checked in as carried forward - the nights before go-live were billed
+by the old system and arrive as an opening balance (kamra.golive), so
+check-in posts no one-time fees and checkout bills only Kamra's nights.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
 | `csv_text` | yes |  |
 | `preset` | no | `'auto'` |
+
+
+## Go-live data (companies, opening balances, reconciliation)
+
+### `kamra.golive.csv_template`
+
+**GET/POST** · roles: `Finance`
+
+The header row of one of Kamra's go-live CSV templates.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `kind` | yes |  |
+
+### `kamra.golive.preview_companies`
+
+**POST** · roles: `Finance`
+
+Dry run of the companies file: column mapping, which companies are
+new and which already exist (they are updated, never duplicated).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `csv_text` | yes |  |
+
+### `kamra.golive.run_companies`
+
+**POST** · roles: `Finance`
+
+Create or update each company (an upsert, so a re-run changes
+nothing) and, for a company on credit, its city ledger account at this
+property with the credit limit.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `csv_text` | yes |  |
+
+### `kamra.golive.preview_opening`
+
+**POST** · roles: `Finance`
+
+Dry run of the opening-balance file: what each row matched, totals
+per category, what is already posted (a re-run skips it) and every row
+that can't be posted. Nothing is written.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `csv_text` | yes |  |
+
+### `kamra.golive.run_opening`
+
+**POST** · roles: `Finance`
+
+Post the opening balances. Each item is posted once: a re-run of the
+same file finds it in Kamra and skips it (and says so). Company bills
+go in before company credits, so a credit settles the oldest bill.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `csv_text` | yes |  |
+
+### `kamra.golive.reconcile`
+
+**POST** · roles: `Finance`
+
+Counts and totals in each go-live file against what is now in Kamra,
+per category. `ready` is true only when every category matches and no
+row of any file was left out - the gate before the hotel goes live.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+| `opening_csv` | no | `None` |
+| `companies_csv` | no | `None` |
+| `bookings_csv` | no | `None` |
 
 
 ## Inventory & recipes
@@ -4169,6 +4257,7 @@ Availability + real quoted price per room type for the stay.
 | `children` | no | `0` |
 | `listing_slug` | no | `None` |
 | `location_slug` | no | `None` |
+| `pets` | no | `0` |
 
 ### `kamra.public_api.precheckin_info` <Badge type='tip' text='public' />
 
@@ -4282,6 +4371,7 @@ inventory) until the host approves.
 | `addons` | no | `None` |
 | `voucher_code` | no | `''` |
 | `idempotency_key` | no | `''` |
+| `pets` | no | `0` |
 
 ### `kamra.public_api.access_info` <Badge type='tip' text='public' />
 
