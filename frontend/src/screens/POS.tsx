@@ -165,6 +165,8 @@ function ago(ts?: string) {
   return `${Math.round(mins / 60)}h` // keep long-running tags compact
 }
 
+const OUTLET_KEY = "kamra_pos_outlet"
+
 export default function POS() {
   const { t } = useT()
   const { ensureUnlocked } = useCashierAuth()
@@ -240,7 +242,15 @@ export default function POS() {
 
   useEffect(() => {
     call<Outlet[]>("kamra.pos.outlets", { property: getCurrentProperty() })
-      .then((o) => { setOutlets(o); if (o[0]) setOutlet(o[0].name) })
+      .then((o) => {
+        setOutlets(o)
+        // a till belongs to one outlet: reopen on the one it used last, and
+        // never override a choice made while the list was loading
+        let saved = ""
+        try { saved = localStorage.getItem(OUTLET_KEY) || "" } catch { /* private mode */ }
+        setOutlet((cur) => o.some((x) => x.name === cur) ? cur
+          : o.some((x) => x.name === saved) ? saved : (o[0]?.name ?? ""))
+      })
       .catch((e) => setError(serverError(e)))
     loadRooms()
   }, [])
@@ -937,7 +947,10 @@ export default function POS() {
         <h1 className="flex items-center gap-2 text-xl font-bold text-zinc-800">
           <UtensilsCrossed className="size-5 text-brand-600" />
           <span className="hidden sm:inline">{t("Restaurant POS")}</span>
-          <select className={inputCls + " !w-auto font-normal"} value={outlet} onChange={(e) => { setOutlet(e.target.value); newOrder() }}>
+          <select className={inputCls + " !w-auto font-normal"} value={outlet} onChange={(e) => {
+            setOutlet(e.target.value); newOrder()
+            try { localStorage.setItem(OUTLET_KEY, e.target.value) } catch { /* private mode */ }
+          }}>
             {outlets.map((o) => <option key={o.name} value={o.name}>{o.outlet_name}</option>)}
           </select>
         </h1>
