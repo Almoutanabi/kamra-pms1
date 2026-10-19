@@ -232,12 +232,10 @@ The journey shows every stay and event, with:
   booking.
 - A booking needs a room before check-in. Whole-villa stays check in as
   one unit.
-- The balance on **Today** comes from the folio. Nights the night audit has
-  not posted yet are not in it, so a guest can show ₹0 and still owe money
-  at check-out.
-- The room lists count a room as free from its guest's departure date,
-  even if that guest has not checked out yet. Look at the room board
-  before you hand over a key on a busy morning.
+- The balance on **Today** includes nights the night audit has not posted
+  yet, so it matches what the guest owes at check-out.
+- A room whose guest is due out today but still checked in is not offered
+  for a check-in or a walk-in until that guest checks out.
 - **Blacklist guest** is for Hotel Admins. A reason is needed both to add
   and to lift it, and it goes to the activity log.
 
@@ -256,6 +254,10 @@ the room in the same step.
 tried to take money (a walk-in payment or a deposit) without an open till.
 Open it under **Finance → Cashier → My Till**, or set the walk-in's
 **Amount collected** to 0.
+
+**"Room … is still occupied by … Check them out first, or choose another
+room."** The guest before is still checked in to that room. Check them out
+on **Today** (under **Departures**), or pick another room.
 
 **The check-in panel says "No free room of this type for these dates".**
 Every room of the type is taken. Open the [tape chart](/reservations#move-a-stay-on-the-tape-chart)

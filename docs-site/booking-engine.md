@@ -100,13 +100,12 @@ The dates and guest count are part of the address, for example
 ## Offer experiences
 
 Experiences are add-ons such as a spa ritual, a safari or a candlelit
-dinner. Each has a name, a category, a price, a duration, a description
-and a photo. Tick **Show On Booking Page** to offer it on `/book`. The
-guest only picks how many; the price is always yours. Experiences are
-added to the guest's bill at the hotel.
-
-Kamra has no screen for experiences yet. Add and edit them in the Frappe
-desk at `/app/experience`.
+dinner. Add and edit them in **Revenue → Experiences** (see
+[Revenue](/revenue#add-experiences)). Each has a name, a category, a
+price, a duration, a description and a photo. Tick **Show on the public
+booking page** to offer it on `/book`. The guest only picks how many; the
+price is always yours. Experiences are added to the guest's bill at the
+hotel.
 
 ## Listing pages (/stay)
 
@@ -125,6 +124,21 @@ refundable deposit.
 
 When a property has only one listing with a slug, `/book` goes straight
 to its `/stay` page.
+
+## Several properties on one booking page
+
+When more than one property on the same Kamra has its booking page live,
+`/book` first shows **Places to stay**: a card per property with its
+photo, city, type, description and lowest base price per night. The guest
+clicks **View & book →** to open that property's page, with any dates
+already in the address kept.
+
+![Places to stay: cards for Kamra Beach Homestay and Kamra Demo Palace, each with its city, type and price from per night, and initials where no photo is set](/img/booking-engine/properties.png)
+
+To link straight to one property, use `/book?property=<slug>` or
+`/stay/<slug>`. The slug is the **Page Slug Prefix** under **Booking
+Engine → SEO**, or, when that is empty, the property's name in lower case
+with dashes (for example `kamra-demo-palace`).
 
 ## Online check-in (/checkin)
 
@@ -156,11 +170,8 @@ the details as submitted and verifies them on arrival.
 - Prices on the page come from the same pricing as the desk: seasons,
   demand pricing, meal plans and vouchers apply. Rate plans don't; see
   [Revenue](/revenue#create-a-rate-plan).
-- A guest can only add experiences you have ticked **Show On Booking
-  Page**, at your price.
-- If more than one property on the same Kamra has its booking page live,
-  `/book` shows only one of them. Link guests to each property's room
-  pages under `/stay/…` instead.
+- A guest can only add experiences you have ticked **Show on the public
+  booking page**, and that aren't disabled, at your price.
 - Kamra stores the guest's ID photo privately. Under the **Verify &
   Discard** retention setting it is deleted at checkout.
 
@@ -168,7 +179,8 @@ the details as submitted and verifies them on arrival.
 
 **`/stay/...` says "Listing not found."** Check that the room type has
 that **Public listing URL slug**, isn't disabled, and that its property's
-booking page is live.
+booking page is live. `/stay/<slug>` also accepts a property's slug, but
+only for a property whose booking page is live.
 
 **The booking stays Pending Payment.** An advance is due and no gateway
 took it. Collect it at the desk and confirm the booking, or it is

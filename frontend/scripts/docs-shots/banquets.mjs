@@ -110,16 +110,27 @@ try {
   await shot(page, "banquets/group")
   await page.keyboard.press("Escape")
 
+  // the group picker on the Money step: the group chosen, not tied (not saved)
+  await open(page, `/banquet/${CONFIRMED}`, 2500)
+  await step(3).click(); await page.waitForTimeout(1500)
+  {
+    const settle = cardWith("Settlement")
+    await settle.scrollIntoViewIfNeeded()
+    await settle.getByLabel("Group booking").selectOption(g.name)
+    await page.waitForTimeout(400)
+    await shot(page, "banquets/group-link", { locator: settle })
+  }
+
   // ── GIF: take an enquiry and price it ────────────────────────────────
   // The enquiry it opens stays as sample data; one left by an earlier run
   // is cancelled as a duplicate so the pipeline doesn't fill up.
   const old = await api(ctx, "frappe.client.get_list", { doctype: "Venue Booking",
     filters: { property: P, customer_name: "Kavya Reddy", status: ["in", ["Enquiry", "Tentative"]] }, pluck: "name" })
-  for (const row of old) {
+  for (const row of process.env.SKIP_GIFS ? [] : old) {
     const name = typeof row === "string" ? row : row.name
     await api(ctx, "kamra.banquet.set_status", { function: name, status: "Cancelled", reason: "Duplicate enquiry" })
   }
-  await gif("banquets/enquiry-to-quote", async (pg, gctx) => {
+  if (!process.env.SKIP_GIFS) await gif("banquets/enquiry-to-quote", async (pg, gctx) => {
     await open(pg, "/banquet", 1500)
     await pg.getByRole("button", { name: "New enquiry" }).click()
     await pg.waitForTimeout(600)

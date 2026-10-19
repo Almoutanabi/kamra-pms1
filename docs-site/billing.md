@@ -47,10 +47,14 @@ A folio opens by itself at check-in. Until it is settled it is a
    **Spa**, **Early Check-in**, **Late Checkout**, **Pet Charge**,
    **Discount** or **Misc**).
 3. Type a description and the amount before tax.
-4. Pick the tax rate. Tick **Alcohol** for drinks with alcohol.
+4. Pick the tax rate. For food, drink and minibar charges there is no
+   choice: the form shows the F&B rate from your country pack, for
+   example **GST 5% (F&B rate)**. Tick **Alcohol** for drinks with
+   alcohol; they take a rate you pick. The tax name (GST, VAT…) follows
+   your country pack.
 5. Press **Post**.
 
-![The Post a charge and Record a payment cards under the bill, with the allowance row below the charge form](/img/billing/post-charge.png)
+![The Post a charge and Record a payment cards under the bill: a minibar charge shows the fixed GST 5% F&B rate, with the allowance row below](/img/billing/post-charge.png)
 
 Room nights, meal plans and room levies are not posted by hand: the
 [night audit](/night-audit) posts them every night. Restaurant bills
@@ -205,6 +209,8 @@ Other buttons in the action bar:
 - **Settle & continue stay** appears when an open folio is fully paid. It
   issues an interim invoice for what is on it and opens a fresh folio for
   the rest of the stay: the long-stay pattern of settling every few days.
+  The settled folio's tab then shows **Guest ·** followed by its invoice
+  number; the new folio's tab is **Guest**.
 - **Group folio** (group stays) opens one consolidated company bill for
   every room of the group.
 
@@ -289,10 +295,33 @@ Finance and Hotel Admin set the buy and sell rates in **Set rate**
 held), **AR** (what companies owe) and **Package**. Below them are the
 journal by transaction code and the city ledger aging.
 
-![The Ledgers screen: the trial balance banner, the four ledgers, the journal by transaction code and the city ledger aging](/img/billing/ledgers.png)
+![The Ledgers screen: the green banner saying the ledgers agree with folios, the four ledgers, the journal by transaction code and the city ledger aging](/img/billing/ledgers.png)
+
+The banner at the top checks the ledgers against the folios for the
+current business date. **Ledgers agree with folios** means the Guest and
+Deposit ledgers add up to what the folios carry. Debits are higher than
+credits by what guests owe; that is expected. If a folio doesn't match,
+the banner turns amber and lists it (see
+[Troubleshooting](#troubleshooting)). For any other date it shows the totals
+only.
 
 Every charge, payment, void, transfer and allowance writes a ledger entry.
 A void or a move does not delete history: it posts a reversal.
+
+## Review voids and allowances
+
+**Finance → Voids & Allowances** (also linked from **Finance → Reports**)
+lists every void, allowance and cancelled invoice on the property: when,
+which folio, who did it and the reason. Finance and Hotel Admin users see
+it.
+
+1. Set the dates. It shows the last 30 days to start with.
+2. Click **Void**, **Allowance** or **Invoice cancelled** to see one kind;
+   **All** shows them all, with the count on each.
+3. Search by folio, staff name or reason. Click a folio to open it.
+4. Press **Print** for a paper copy.
+
+![Voids & Allowances: the date range, the filters with their counts, and each void, allowance and cancelled invoice with its folio, who did it and the reason](/img/billing/voids-allowances.png)
 
 ## Settings
 
@@ -309,12 +338,13 @@ A void or a move does not delete history: it posts a reversal.
 - **A folio closes only at zero.** Kamra refuses to close a folio while
   money is owed, or while the guest is owed a refund.
 - **Taxes are the hotel's rule, not the cashier's.** Food, beverage and
-  minibar charges take the F&B rate from your country pack, whatever rate
-  is picked on the form. A charge must be a positive amount at one of your
-  pack's tax rates; to reduce a bill, void or pass an allowance.
+  minibar charges take the F&B rate from your country pack, so the form
+  shows that rate instead of a choice. A charge must be a positive amount
+  at one of your pack's tax rates; to reduce a bill, void or pass an
+  allowance.
 - **Every void, allowance and invoice cancellation needs a reason** and is
-  logged with who did it. Finance can list them all (see
-  [For developers](#for-developers)).
+  logged with who did it. Finance can list them all on
+  [Voids & Allowances](#review-voids-and-allowances).
 - **Charges move only within a stay** (or within a group), and only
   between open folios.
 - **A Guest or Group folio can't be deleted**, and no folio with charges
@@ -338,10 +368,14 @@ it says no gateway is configured, set one up under **Settings → Payments**.
 **"Alcohol cannot be billed to a company folio."** Post or move the drink
 to the guest's own folio.
 
-**Trial balance says "Out of balance".** The banner compares all debits
-with all credits across the four ledgers, so it shows out of balance
-whenever guests still owe money on open folios. It reads in balance once
-every posted charge is matched by a payment, transfer or allowance.
+**The Ledgers banner says "Ledger differs from folios".** The banner
+checks that the Guest and Deposit ledgers agree with every folio's
+balance, for the current business date. When they don't, it lists each
+folio that differs, with the folio balance and the ledger balance: a
+posting reached the folio but not the ledger, or the other way round.
+Open the folio from the link and compare its lines with the journal.
+Debits being higher than credits is not a problem on its own: it is what
+guests still owe.
 
 ## For developers
 
@@ -352,7 +386,7 @@ The folio actions are MCP tools for AI agents (`get_folio`,
 The REST endpoints live in `kamra.api` (folios, payments, deposits),
 `kamra.cashier` (till sessions, petty cash, shift report) and
 `kamra.ledger` (ledgers, city ledger, credit notes, proforma, FX desk). The
-void and allowance register is `kamra.reports.void_allowance_report`
-(Finance, Hotel Admin), which has no screen yet. See the
+**Voids & Allowances** screen reads `kamra.reports.void_allowance_report`
+(Finance, Hotel Admin). See the
 [API reference](/api-reference#core-front-desk-folios-guests-rooms) and
 [Ledgers](/api-reference#ledgers-trial-balance-city-ledger-ar-fx-desk).

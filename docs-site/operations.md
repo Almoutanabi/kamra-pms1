@@ -66,16 +66,17 @@ Tickets made on this screen have no badge.
 
 | Source | How it gets there |
 | --- | --- |
-| *(none)* | Staff pressed **New ticket**, Kamra's built-in assistant raised it, or a WhatsApp message made it (below) |
-| **AI Agent** | An AI agent connected over MCP logged the request (the `create_ticket` tool) |
+| *(none)* | Staff pressed **New ticket** |
+| **AI Agent** | **Kamra Agent**, the in-app assistant, raised it, or an AI agent connected over MCP logged it (the `create_ticket` tool) |
 | **Voice** | A voice agent on the hotel's phone line logged it |
-| **WhatsApp** | An integration logged a WhatsApp request with this source |
+| **WhatsApp** | A guest's WhatsApp message made it (below), or an integration logged a WhatsApp request |
 | **QR** | An integration logged a request from a QR code |
 
 **WhatsApp messages from in-house guests.** When a guest who is checked
 in, or has a confirmed booking, writes to your WhatsApp number, Kamra adds a ticket on its
 own: subject *WhatsApp: …* with the start of the message, category
-**Front Desk**, priority **Medium**, linked to the booking. The full
+**Front Desk**, priority **Medium**, the **WhatsApp** badge, linked to
+the booking. The full
 conversation is in **Operations → WhatsApp** (see
 [WhatsApp](/whatsapp)).
 
@@ -94,7 +95,8 @@ resolved inside their deadline?
 1. Pick the dates at the top right. The default is the last 30 days.
    Tickets count by the day they were created.
 2. Read the four numbers: **Tickets**, **Resolved**, **Breach rate** and
-   **Avg resolve** (time from creation to resolved).
+   **Avg resolve** (time from creation to resolved). **Resolved** counts
+   **Resolved** and **Closed** tickets.
 3. **By category** and **By priority** show the same numbers per team and
    per priority.
 4. **Overdue now** lists open tickets past their deadline and by how many
@@ -103,7 +105,9 @@ resolved inside their deadline?
 ![The Operations SLA report: 10 tickets, 4 resolved, 20% breach rate, 19 min average, tables by category and priority, and one ticket overdue now](/img/operations/sla-report.png)
 
 A ticket counts as breached if it was resolved after its deadline, or is
-still open past it. The breach rate turns amber at 10% and red at 25%.
+still open past it. The breach rate turns amber at 10% and red at 25%. A
+ticket closed without being resolved first counts as resolved but adds
+no time to **Avg resolve**.
 
 ## Stay instructions
 
@@ -118,12 +122,27 @@ instructions for the team that does it:
 | Valet parking | Concierge |
 | Early check-in or late check-out requested | Front Desk |
 
-Each instruction is saved on the reservation with a status (**Open** or
-**Done**) and who did it. Kamra's screens don't list stay instructions
-yet; you see them on the reservation record in the Frappe desk. For
-anything that needs a deadline and follow-up, log a guest request as
-well. Housekeepers see a booking's special requests on their task cards
-in the [phone app](/housekeeping#work-from-the-phone-app).
+Each instruction is for one team and is **Open** until someone marks it
+**Done**. You find them in the **Instructions** card on the reservation
+(click the booking in **Reservations**).
+
+1. To add one, pick the team in the list (**Housekeeping**, **Front
+   Desk**, **F&B**, **Concierge**, **Transport**, **Maintenance** or
+   **Security**), write the instruction ("Fruit basket before arrival")
+   and press **Add**.
+2. When it's done, press **Done** on its line. The line is struck
+   through and shows who did it and when. **Reopen** puts it back to
+   **Open**.
+
+![The Instructions card on a reservation: a fruit basket for housekeeping still open, an airport pickup done, and the box to add another](/img/operations/stay-instructions.png)
+
+The card header counts the open instructions. You can't add
+instructions to a stay that is cancelled, checked out or a no-show.
+Front Desk adds them; Front Desk and Housekeeping can mark them done.
+Every change is in the activity log. For anything that needs a deadline
+and follow-up, log a guest request as well. Housekeepers see a booking's
+special requests on their task cards in the
+[phone app](/housekeeping#work-from-the-phone-app).
 
 ## Settings
 
@@ -174,7 +193,9 @@ straight away doesn't create a task.
 ## For developers
 
 Tickets run on `kamra.api.create_ticket`, `tickets_list` and
-`advance_ticket`; the report is `kamra.reports.sla_report`. AI agents use
+`advance_ticket`; the report is `kamra.reports.sla_report`. Stay
+instructions use `kamra.api.stay_instructions`, `add_stay_instruction`
+and `set_stay_instruction_status`. AI agents use
 the same calls as the MCP tools `create_ticket`, `list_tickets` and
 `advance_ticket` — see the [MCP tools](/mcp-tools#ops) and the
 [API reference](/api-reference).

@@ -60,7 +60,7 @@ each step.
 | 11 | Print final reports | The audit pack. |
 | 12 | Finalize | Summary. |
 
-![Step 2, Arrivals not checked in: each arrival with its room, rate and source, and the actions to check in or mark a no-show](/img/night-audit/arrivals.png)
+![Step 2, Arrivals not checked in: each arrival with its room type, room, party and source under the guest's name, the arrival date and nights, the rate, what the no-show policy will do, and the Check in and Mark no-show buttons](/img/night-audit/arrivals.png)
 
 **Mark no-show** applies the property's policy straight away: the stay
 becomes a No Show and the fee is posted on the business date, or waived
@@ -146,7 +146,8 @@ Step 11 lists the final reports on the left. Pick one to read it, then
 - Guest ledger detail
 - City ledger / AR summary
 - Deposit ledger balance
-- Trial balance
+- Trial balance, whose total line says whether the ledgers match the
+  folios: **Agrees with folios** or **Differs from folios by** an amount
 - Occupancy & revenue (Occ %, ADR, RevPAR)
 - No-shows and cancellations
 - Rate variance

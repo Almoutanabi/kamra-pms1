@@ -89,12 +89,22 @@ try {
   await shot(page, "revenue/company-form")
   await closeSheet()
 
-  await open(page, "/settings/revenue", 2500)
-  await shot(page, "revenue/settings")
+  await open(page, "/experiences")
+  await shot(page, "revenue/experiences", { locator: card() })
+
+  // a Deluxe-only demand tier next to the house-wide ones (removed below)
+  const tier = await api(ctx, "kamra.api.save_hurdle_rate", {
+    property: P, occupancy_from: 85, premium_pct: 25, min_rate: 0, room_type: `${P}-DLX` })
+  try {
+    await open(page, "/settings/revenue", 2500)
+    await shot(page, "revenue/settings")
+  } finally {
+    await api(ctx, "kamra.api.delete_hurdle_rate", { name: tier.name })
+  }
 
 
   // the quote on the desk booking form, with the season and meal plan in it
-  await gif("revenue/season-new", async (pg) => {
+  if (!process.env.SKIP_GIFS) await gif("revenue/season-new", async (pg) => {
     await open(pg, "/seasons", 1500)
     await pg.getByRole("button", { name: "New", exact: true }).click()
     await pg.waitForTimeout(700)

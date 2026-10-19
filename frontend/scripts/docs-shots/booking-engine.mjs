@@ -37,6 +37,10 @@ try {
   await open(g, `/stay/entire-property/${CI}/${CO}/2/0`, 3500)
   await shot(g, "booking-engine/stay-villa")
 
+  // with several properties live, /book starts with a chooser
+  await open(g, `/book/${CI}/${CO}/2/0`, 3500)
+  await shot(g, "booking-engine/properties", { clip: { x: 200, y: 40, width: 1040, height: 590 } })
+
   for (const name of VILLAS) {
     const was = (await api(staff, "frappe.client.get_value", {
       doctype: "Property", filters: { name }, fieldname: "booking_engine_enabled" })).booking_engine_enabled

@@ -56,7 +56,10 @@ for one date (pick it in the date box at the top right):
 
 Press **Print** for a paper copy. **Cashier shift report** and
 **Ledgers** at the top open the cashier and ledger screens (see
-[Billing](/billing#count-the-drawer-and-close-the-till)).
+[Billing](/billing#count-the-drawer-and-close-the-till)). Finance and Hotel
+Admin users also get **Voids & Allowances**, the list of every void,
+allowance and cancelled invoice (see
+[Billing](/billing#review-voids-and-allowances)).
 
 The same flash is the first report in each night's
 [audit pack](/night-audit#print-the-audit-pack).
@@ -68,7 +71,15 @@ month to date with your targets: **Room Revenue**, **Occupancy %**, **ADR
 / ARR** and **RevPAR**, each with the variance and how much of the target
 you have reached.
 
-![Budget vs Actual for the month: actual month to date, target, variance and attainment for room revenue, occupancy, ADR and RevPAR](/img/reports/budget-vs-actual.png)
+"Actual" counts room nights posted to folios, and End of Day posts each
+night, so tonight counts after tonight's audit. Occupancy and RevPAR are
+worked out over the days of the month that have passed up to the business
+date, not the whole month, so they compare fairly with a monthly target.
+The note under the table says how many room nights are posted and over
+how many days. If sold nights are still waiting for End of Day, it says
+how many, in amber.
+
+![Budget vs Actual for the month: actual month to date, target, variance and attainment for room revenue, occupancy, ADR and RevPAR, with the note on posted and not-yet-posted room nights below](/img/reports/budget-vs-actual.png)
 
 1. Use the arrows to pick the month.
 2. Press **Set targets** (or **Edit targets** once the month has them).
@@ -113,13 +124,21 @@ Open **Finance → Accounting Export** (Finance and Hotel Admin).
    **ERPNext**.
 3. Check the preview, then press **Download CSV**.
 
-![Accounting Export: the date range, the format, the totals line and a preview row with taxable value, tax split and grand total](/img/reports/accounting-export.png)
+![Accounting Export in Generic CSV: the date range, the format, the totals line, and one preview row per service code with the item, SAC/HSN, GST %, taxable value and the CGST and SGST split](/img/reports/accounting-export.png)
 
-The export lists every invoice closed in the range, one row per invoice:
-number, date, party and their tax ID, place of supply, taxable value, the
-tax split your country pack uses (CGST and SGST in India, a single tax
-column elsewhere) and the grand total. The preview shows the first 12
-rows; the download has them all.
+The export lists every invoice closed in the range: number, date, party
+and their tax ID, place of supply, taxable value, the tax split your
+country pack uses (CGST and SGST in India, a single tax column elsewhere)
+and the total. How the rows are laid out depends on the format:
+
+- **Generic CSV** and **Zoho Books** give one row per service code and
+  tax rate on each invoice, so a bill with a room, a dinner and laundry
+  has a row for each. Generic CSV adds **Item**, **SAC/HSN**, the tax %,
+  **Line Total** and **Invoice Total** columns; Zoho Books uses its own
+  **Item Name**, **HSN/SAC**, **Item Tax %** and **Item Total**.
+- **Tally** and **ERPNext** give one row per invoice.
+
+The preview shows the first 12 rows; the download has them all.
 
 ## Good to know
 
@@ -151,7 +170,8 @@ The numbers come from `kamra.dashboards.property_dashboard` and
 `budget_vs_actual`, `save_budget`, `contribution` and `sla_report`; the
 export is `kamra.accounting.export_invoices`. Finance and Hotel Admin can
 also pull every void, allowance and invoice cancellation with
-`kamra.reports.void_allowance_report` (no screen yet). See
+`kamra.reports.void_allowance_report`, the endpoint behind the **Voids &
+Allowances** screen. See
 [Dashboards](/api-reference#dashboards) and [Reports](/api-reference#reports)
 in the API reference. Agents get the daily picture from the
 `owner_briefing` and `position_briefing` [MCP tools](/mcp-tools#briefings).

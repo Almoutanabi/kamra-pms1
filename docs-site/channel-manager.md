@@ -21,7 +21,10 @@ to them, certified with Booking.com, Agoda, Expedia, Airbnb and more.
    ![The New Channel Manager form with provider Channex, the API key, the Channex property ID, a webhook secret and 90 days to push](/img/channel-manager/new-connection.png)
 
 3. *Revenue → OTA Room Mappings*: one row per room type — your room
-   type against the Channex `room_type_id` and `rate_plan_id`.
+   type against the Channex `room_type_id` and `rate_plan_id`. The
+   **Connection** and **Room type** lists only show the property you are
+   working in. Kamra refuses a mapping whose room type belongs to another
+   property than the connection.
 
    ![The New OTA Room Mapping form: the connection, a room type and the Channex room and rate plan IDs](/img/channel-manager/room-mapping.png)
 

@@ -28,11 +28,15 @@ app. Checking guests in and out is in [Front desk](/front-desk).
    4 stays"). A blacklisted guest shows a red badge.
 3. Add the **Phone**. The country code is filled in; type the local number.
 4. Choose the **Room type**, the **Check-in** date and the number of
-   **Nights**, then **Adults** and **Children**. Pick a **Meal plan** and
-   type a **Voucher** code if the guest has one.
+   **Nights**, then **Adults** and **Children**. Pick a **Meal plan** and a
+   **Rate plan**, and type a **Voucher** code if the guest has one.
 5. Check the **Quote** on the right. It updates as you type: room, tax,
    meals, add-ons and the total, with the cancellation and no-show terms
-   underneath.
+   underneath. The cancellation line is worked out from today, the same
+   way cancelling would charge it. It reads "Free cancellation until" a
+   date and what is charged after that; "Non-refundable from now" with the
+   fee, once the free window has closed; or "Free cancellation." It never
+   shows a date that has passed.
 6. Click **Confirm booking**.
 
 ![Making a booking: type the guest's name and phone, pick Deluxe, set the date and three nights, confirm, and the booking is made with room 201](/img/reservations/booking.gif)

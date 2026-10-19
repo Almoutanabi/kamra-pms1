@@ -56,7 +56,9 @@ const LEELA = { guest: "Leela Menon", phone: "9810011041", type: "DLX", checkIn:
 // ------------------------------------------------- the booking dialog
 if (want("booking-dialog")) {
   await open(page, "/", 2500)
-  const dlg = await fillBooking(page, LEELA, false)
+  // a name with no guest profile, so no returning-guest list covers the form
+  // (Leela Menon has a profile once the booking GIF has run)
+  const dlg = await fillBooking(page, { ...LEELA, guest: "Tara Fernandes", phone: "9810011051" }, false)
   await shot(page, "reservations/booking-dialog", { clip: { x: 480, y: 0, width: 960, height: 900 } })
   // company, add-ons and arrival details
   await dlg.getByRole("button", { name: "Company, add-ons & arrival details" }).click()

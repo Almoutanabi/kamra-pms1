@@ -62,17 +62,26 @@ await api(ctx, "kamra.laundry.request_pickup", { property: PROPERTY, room: room(
 // --- the Room Board ------------------------------------------------------------
 const SHOTS = !process.env.ONLY_GIFS // ONLY_GIFS=1 re-records just the GIFs
 if (SHOTS) {
+// one room out of order and one passed inspection (Ready), put back after
 await api(ctx, "kamra.api.set_housekeeping_status", { room: room("303"), status: "Out of Order" })
+await api(ctx, "kamra.api.set_housekeeping_status", { room: room("103"), status: "Ready" })
 try {
   await open(page, "/housekeeping-board", 2500)
   await shot(page, "housekeeping/room-board")
 } finally {
   await api(ctx, "kamra.api.set_housekeeping_status", { room: room("303"), status: "Clean" })
+  await api(ctx, "kamra.api.set_housekeeping_status", { room: room("103"), status: "Clean" })
 }
 await open(page, "/housekeeping-board", 2500)
 await page.getByRole("button", { name: /^105/ }).click()
 await page.waitForTimeout(400)
-await shot(page, "housekeeping/room-board-menu", { clip: { x: 272, y: 370, width: 1120, height: 290 } })
+// the menu: Mark … options, then (for a supervisor) the assign list
+{
+  const menu = await page.getByRole("menu").boundingBox()
+  await shot(page, "housekeeping/room-board-menu", {
+    clip: { x: 272, y: 370, width: 1120, height: Math.max(290, menu.y + menu.height + 16 - 370) },
+  })
+}
 
 // --- the task list ------------------------------------------------------------
 await open(page, "/housekeeping", 2500)
@@ -89,7 +98,7 @@ await shot(page, "housekeeping/new-task", { clip: { x: 480, y: 0, width: 960, he
 await open(page, "/settings/housekeeping", 2500)
 await page.setViewportSize({ width: 1440, height: 1500 })
 await page.waitForTimeout(400)
-await shot(page, "housekeeping/settings", { clip: { x: 530, y: 80, width: 880, height: 1075 } })
+await shot(page, "housekeeping/settings", { clip: { x: 530, y: 80, width: 880, height: 895 } })
 await page.setViewportSize({ width: 1440, height: 900 })
 
 // --- laundry ----------------------------------------------------------------
@@ -119,6 +128,21 @@ const phone = await session({ viewport: PHONE })
 const p = await phone.newPage()
 await open(p, "/hk", 2500)
 await shot(p, "housekeeping/hk-my-tasks")
+// an inspection card: a supervisor sees Pass inspection (removed again below)
+{
+  const insp = await task("106", "Inspection", "High")
+  try {
+    await api(ctx, "kamra.api.hk_assign_task", { task: insp, user: ME })
+    await api(ctx, "kamra.api.hk_accept_task", { task: insp })
+    await open(p, "/hk", 2500)
+    const card = p.locator("li").filter({ has: p.getByText("106", { exact: true }) })
+    await card.scrollIntoViewIfNeeded()
+    await shot(p, "housekeeping/hk-inspection", { locator: card })
+  } finally {
+    await api(ctx, "frappe.client.delete", { doctype: "Housekeeping Task", name: insp })
+      .catch(() => api(ctx, "frappe.client.set_value", { doctype: "Housekeeping Task", name: insp, fieldname: "status", value: "Done" }))
+  }
+}
 await p.getByRole("button", { name: /^Available/ }).click()
 await p.waitForTimeout(500)
 await shot(p, "housekeeping/hk-available", { clip: { x: 0, y: 0, width: 390, height: 580 } })
@@ -151,6 +175,7 @@ await shot(page, "housekeeping/lost-found", { locator: page.locator("main .round
 }
 
 // a housekeeper takes room 105 from the pool, starts it and finishes it
+if (!process.env.SKIP_GIFS) {
 await gif("housekeeping/hk-take-and-finish", async (g) => {
   await open(g, "/hk", 2000)
   await g.waitForTimeout(600)
@@ -185,5 +210,6 @@ await gif("housekeeping/laundry-collect", async (g) => {
   await g.locator("[role=dialog]").getByRole("button", { name: /^Collect \d/ }).click()
   await g.waitForTimeout(1800)
 }, { width: 960, crop: { x: 250, y: 0, width: 1190, height: 900 } })
+}
 
 await done()

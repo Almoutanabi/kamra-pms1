@@ -16,7 +16,8 @@ Guest laundry runs from the same module.
      **Dirty**.
    - **Housekeeping Supervisor** for supervisors. It includes everything
      Housekeeping can do, plus the **Room Board**, the right to mark rooms
-     **Inspected** or **Out of Order**, and **Settings → Housekeeping**.
+     **Inspected**, **Ready** or **Out of Order**, to pass inspections and
+     to assign tasks, and **Settings → Housekeeping**.
    - The **Front Desk** and **Hotel Admin** roles can also use the Room
      Board and set any status.
 2. **Set the task deadlines** in **Settings → Housekeeping → Task
@@ -55,8 +56,9 @@ from **Task deadlines**.
    and the open task with its type and assignee. A bed icon means the
    room is occupied; an arrow icon means the guest is due out today.
 3. Use the buttons along the top to show only **Dirty**, **Clean**,
-   **Inspected** or **Out of Order** rooms, rooms **Due out** today, or
-   rooms that **Has task**. Each button shows its count.
+   **Inspected**, **Ready** or **Out of Order** rooms, rooms **Due out**
+   today, or rooms that **Has task**. Each button shows its count. The
+   **Ready** button only appears while at least one room is **Ready**.
 4. Use **All Floors** / **Floor 1** … to show one floor.
 
 The board reloads every 30 seconds. Press **Refresh** to reload now.
@@ -64,15 +66,17 @@ The board reloads every 30 seconds. Press **Refresh** to reload now.
 ## Change a room's status
 
 1. On the Room Board, click the room.
-2. Pick **Mark Clean**, **Mark Dirty**, **Mark Inspected** or **Mark Out
-   of Order**.
+2. Pick **Mark Clean**, **Mark Dirty**, **Mark Inspected**, **Mark
+   Ready** or **Mark Out of Order**.
 
-![A room's menu on the Room Board with Mark Clean, Mark Inspected and Mark Out of Order](/img/housekeeping/room-board-menu.png)
+![A room's menu on the Room Board with the Mark options and, below them, the list to assign the room's task to a housekeeper](/img/housekeeping/room-board-menu.png)
 
-Attendants only see **Mark Clean** and **Mark Dirty**. Passing a room
-(**Inspected**) or taking it **Out of Order** is for a supervisor, the
-front desk or a Hotel Admin. Kamra checks this on the server too, and logs
-every change.
+**Ready** means the room passed its inspection, for hotels that inspect
+every checkout clean (see [Settings](#settings)). Attendants only see
+**Mark Clean** and **Mark Dirty**. Passing a room (**Inspected** or
+**Ready**) or taking it **Out of Order** is for a supervisor, the front
+desk or a Hotel Admin. Kamra checks this on the server too, and logs every
+change.
 
 ## Work from the phone app
 
@@ -110,7 +114,8 @@ arriving today, then checkout cleans, then by priority (**Urgent**,
 ![The Available tab with three unassigned rooms, one of them a VIP stayover that is overdue](/img/housekeeping/hk-available.png)
 
 If someone else took the room a moment earlier, Kamra refuses the second
-tap and the card leaves **Available** on the next refresh.
+tap, shows *Already taken by …* at the top, and the card leaves
+**Available**.
 
 ### Accept or decline a room you were given
 
@@ -133,10 +138,24 @@ A task assigned to you shows **assigned to you** with **Accept** and
 
 ![A housekeeper takes room 105 from Available, starts it, marks it done, and the room shows Clean](/img/housekeeping/hk-take-and-finish.gif)
 
-When a task is done, the room turns **Clean** on every screen. If the
+When a clean is done, the room turns **Clean** on every screen. If the
 clean finishes after its deadline, the task is marked as a missed
 deadline. If a guest is arriving today in that room, the front desk gets
 a WhatsApp message that the room is ready.
+
+### Pass an inspection
+
+An **Inspection** card has **Pass inspection ✓** instead of **Done ✓**.
+Only a supervisor (Housekeeping Supervisor, Front Desk or Hotel Admin)
+can tap it; an attendant sees the button greyed out as **Supervisor
+passes**. Passing the inspection marks the room **Ready** when **Inspect
+after every checkout clean** is on, and **Inspected** otherwise. It never
+sets the room back to **Clean**.
+
+![An inspection card for room 106 on the phone app with the Pass inspection button](/img/housekeeping/hk-inspection.png)
+
+If the server refuses a tap, the app says why at the top of the screen,
+for example *Already taken by …* when someone else took the room first.
 
 The front desk sees the photos from the room's latest clean on **Today**
 (the camera button on the room), and on the task in **Housekeeping →
@@ -144,11 +163,20 @@ Tasks**.
 
 ## Assign a room to a housekeeper
 
-Kamra's screens don't have an assign button yet. Staff take rooms from
-the **Available** pool themselves. To hand a task to a named person, use
-an AI agent connected over MCP (the `hk_assign_task` tool) or the API.
+Staff take rooms from the **Available** pool themselves. A supervisor can
+also hand a room's open task to a named person:
+
+1. On the Room Board, click the room.
+2. Under **Assign *task* to** (for example **Assign Checkout Clean to**),
+   pick the person in **Choose a housekeeper…**.
+
 The task then shows on that person's **My Tasks** as **assigned to you**
-until they accept or decline it.
+until they accept or decline it. The list only has enabled users with the
+**Housekeeping** or **Housekeeping Supervisor** role who work at this
+property. Kamra refuses the assignment if you aren't a supervisor (Housekeeping
+Supervisor, Front Desk or Hotel Admin), if the person isn't housekeeping
+staff here, or if the task is already **Done** or **Verified**. AI agents
+connected over MCP use the `hk_assign_task` tool, with the same rules.
 
 ## See all tasks
 
@@ -161,7 +189,10 @@ photos.
 A task's status goes **Pending → In Progress → Done**. **Verified** is
 for an inspection: setting a task to **Verified** marks the room
 **Inspected** (or **Ready** when **Inspect after every checkout clean**
-is on).
+is on). From the phone app, **Done** on an inspection counts as
+**Verified**, and only a supervisor can verify. Setting an inspection to
+**Done** here closes the task without changing the room. Use the
+**Status** filter to show one status.
 
 ## Late tasks and escalation
 
@@ -169,10 +200,12 @@ Every 15 minutes Kamra looks for open tasks past their deadline:
 
 1. As soon as a task is overdue, it is marked as a missed deadline and
    everyone with the **Front Desk** role gets a WhatsApp message: *room,
-   task, priority, minutes past due*.
+   task, priority, minutes past due*, ending *escalated to the front
+   desk*.
 2. If it is still open after another full deadline (for example, a
    **High** clean still open 45 minutes after it was due), everyone with
-   the **Hotel Admin** role gets a second message.
+   the **Hotel Admin** role gets a second message, ending *escalated to
+   the hotel admin*.
 
 Messages go to the mobile number on each user's record, over the
 property's WhatsApp connection. Without a connected WhatsApp number the
@@ -191,7 +224,9 @@ escalation is only written to the activity log.
 The charge goes on the in-house guest's folio. Housekeeping can only post
 **Minibar** or **Laundry**, the amount must be more than zero, and the
 room must have a checked-in guest. Tax on the line is worked out by
-Kamra, not by the housekeeper. For counted laundry bags, use the laundry
+Kamra, not by the housekeeper: laundry at your country's rate for
+services, minibar at its food and drink rate (see
+[Country setup](/country-setup)). For counted laundry bags, use the laundry
 board instead (below): it prices from the rate card.
 
 ## Handle guest laundry
@@ -303,21 +338,17 @@ Report** (see [Billing](/billing)).
 | Setting | Where | Default | What it does |
 | --- | --- | --- | --- |
 | **Urgent** / **High** / **Medium** / **Low** | Task deadlines | 20 / 45 / 90 / 180 min | Minutes from creation until a task of that priority is overdue and escalates |
-| **Inspect after every checkout clean** | Room turnover | Off | When a checkout clean is done, creates a **High** **Inspection** task |
+| **Inspect after every checkout clean** | Room turnover | Off | When a checkout clean is done, creates a **High** **Inspection** task; passing it marks the room **Ready** |
 | **Inspection takes** | Room turnover | 30 min | The deadline of that inspection task |
-| **Checkout clean takes** | Room turnover | 120 min | Saved on the turnover profile; not used by any screen yet |
-| **Buffer before the room is sellable** | Room turnover | 0 min | Saved on the turnover profile; not used by any screen yet |
-| **Allow same-day turns** | Room turnover | On | Saved on the turnover profile; not used by any screen yet |
 | **Express price** | Laundry | 1.5 × regular | Express price for rate card lines with no express rate |
 
 ## Good to know
 
 - A task's deadline is set when it is created. Changing a deadline in
   Settings only affects new tasks.
-- **Done** always sets the room to **Clean**, including for an
-  inspection task. To pass a room after inspection, set the inspection
-  task to **Verified** in **Housekeeping → Tasks**, or mark the room
-  **Inspected** on the Room Board.
+- **Done** on a clean sets the room to **Clean**. An inspection never
+  sets a room back to **Clean**: passing it marks the room **Inspected**,
+  or **Ready** when inspections are on.
 - Photos and videos on a task can be up to 25 MB each.
 - The phone app and the Room Board update by themselves every 20 and 30
   seconds; tap **Refresh** after a change made on another device.
@@ -326,9 +357,16 @@ Report** (see [Billing](/billing)).
 
 ## Troubleshooting
 
-**"Only a housekeeping supervisor can set a room to Inspected."** The
-user has the Housekeeping role only. Give them **Housekeeping
-Supervisor**, or ask a supervisor or the desk to pass the room.
+**"Only a housekeeping supervisor can set a room to Inspected."** (or
+**Ready**, or **Out of Order**) The user has the Housekeeping role only.
+Give them **Housekeeping Supervisor**, or ask a supervisor or the desk to
+pass the room. The same goes for *"Only a housekeeping supervisor can
+pass an inspection or verify a clean."* and *"Only a housekeeping
+supervisor can assign tasks."*
+
+**"… is not housekeeping staff at this property."** The person you picked
+has no Housekeeping role, is disabled, or is limited to other
+properties. Check them in **Settings → Staff & access**.
 
 **"No checked-in guest in that room to bill."** The minibar or laundry
 post needs a guest who is checked in. Check the room on the front desk's
@@ -353,7 +391,7 @@ there until someone takes them.
 
 The phone app, Room Board and tasks run on `kamra.api` endpoints
 (`hk_queue`, `hk_update_task`, `hk_claim_task`, `hk_accept_task`,
-`hk_reject_task`, `hk_assign_task`, `hk_post_consumable`, `hk_log_item`,
+`hk_reject_task`, `hk_assign_task`, `hk_staff`, `hk_post_consumable`, `hk_log_item`,
 `room_board`, `set_housekeeping_status`); laundry runs on `kamra.laundry`.
 Escalation is the scheduled job `kamra.housekeeping.escalate_overdue_tasks`
 (every 15 minutes). AI agents use the same calls as MCP tools — see the

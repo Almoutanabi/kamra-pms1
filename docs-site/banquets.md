@@ -53,8 +53,9 @@ overlap.
    **Company** for corporate business; it decides which folio the bill
    goes to.
 3. Pick the **Event type**, **Date** (and **Ends** for a multi-day
-   function), **Expected pax** and **Session**. Choose **Custom Hours**
-   to give your own **From** and **To**.
+   function), **Expected pax** and **Session**. A session (**Evening**
+   and so on) sets the hours and is saved on the function. Choose
+   **Custom Hours** to give your own **From** and **To**.
 4. Pick where the guest **Came from**.
 5. Under **Which hall**, pick a hall. Halls that are taken can't be
    picked; Kamra warns when a hall is smaller than the pax count.
@@ -135,8 +136,11 @@ list, and Kamra emails the guest a reminder when it has their email.
 ![The Guest response panel on a tentative function: outcome Confirmed, heard via Phone, with the box to also confirm the function](/img/banquets/guest-response.png)
 
 You can also move a function with the buttons at the top: **Tentative**,
-**Confirm**, **Reopen**, **Cancelled**, **Lost**. Cancelled and Lost ask
-why; the reason is kept for the pipeline report.
+**Confirm**, **Cancelled**, **Lost**, and **Reopen** to bring a
+tentative, cancelled or lost function back to an enquiry. Cancelled and
+Lost ask why; the reason is kept for the pipeline report. On a confirmed
+function, **Close out** opens **The night** step (see
+[Close out the night](#close-out-the-night)).
 
 When a function is confirmed, Kamra creates the **Department checklist**
 — Sales, Finance, Housekeeping and F&B tasks with due dates counted back
@@ -158,11 +162,23 @@ A percentage milestone follows the quote when it changes; a fixed amount
 stays put. A security deposit is held money, not payment: it never comes
 off the bill.
 
-To put the function on the same bill as the guests' rooms, the function
-has to be linked to a group booking; then **Post to the bill** posts it to
-the group's master folio (see [Billing](/billing)). The screens don't link
-the two yet: set the function's `group_booking` through the
-[API](/api-reference#banquets-functions-quotations-event-orders).
+### Put the function on the group's bill
+
+To put the function on the same bill as the guests' rooms, tie it to
+their group booking:
+
+1. In **Group booking** (on the **Enquiry** step's billing card, or
+   on the **Money** step next to **Post to the bill**), pick the group.
+2. Click **Tie to group**.
+3. Once the function is confirmed, click **Post to the bill**. It posts
+   to the group's master folio (see [Billing](/billing)).
+
+![The Settlement card on the Money step: the Group booking list with the Sharma-Verma wedding guests picked, Tie to group, and Post to the bill](/img/banquets/group-link.png)
+
+The list shows this hotel's groups, not cancelled, staying within a month
+either side of the event. A group already tied to another function is
+greyed out. Pick **Not tied to a group** and click **Untie** to undo it.
+Once the function is billed or completed, its group can't change.
 
 ## Issue the event order
 
@@ -193,6 +209,21 @@ what has to reach the hall and by when.
 
 The function becomes **Completed**. Damages are kept as a charge on the
 function, and the refund is a line on its ledger.
+
+### Reopen a closed function
+
+A Revenue Manager, Finance or Hotel Admin user can reopen a
+**Completed** function to correct the sheet:
+
+1. Click **Reopen** at the top of the function.
+2. Write **Why reopen it?** (required) and click **Reopen**.
+
+The function goes back to **Confirmed**, and the reason goes on its notes
+and the activity log. Receipts, refunds and damages already recorded stay
+as they are. On **The night**, click **Close it again**: this time it only
+re-counts the covers. Bill anything further as a line on the function.
+A function already posted to a folio can't be reopened; correct the bill
+on the folio instead.
 
 ## Print the registers
 
@@ -247,11 +278,11 @@ leaves sellable inventory.
 - Confirming without a guaranteed pax uses the expected pax as the
   guarantee.
 - Only a confirmed function gets an event order or can be closed out.
-- **Completed** is final: a completed function can't be edited or
-  reopened.
-- The **Close out** button at the top of a confirmed function only marks
-  it completed. To count covers, deduct damages and return the deposit,
-  use **Close out the function** on **The night**.
+- A **Completed** function can't be edited until someone reopens it
+  (see [Reopen a closed function](#reopen-a-closed-function)).
+- The only way to **Completed** is the close-out on **The night**, so
+  the covers and the deposit are always settled. The **Close out**
+  button at the top takes you there.
 - Alcohol never goes on a company or group bill. **Post to the bill**
   leaves those lines out, to be settled separately.
 
@@ -263,8 +294,13 @@ that hall for overlapping hours. Move one of them, or pick another hall.
 **Email to guest is greyed out.** Stamp the quote first, and add the
 customer's email on the Enquiry step.
 
-**Post to the bill is greyed out.** The function isn't linked to a group
-booking, or it's still an enquiry.
+**Post to the bill is greyed out.** The function isn't tied to a group
+booking (pick one in **Group booking** and click **Tie to group**), or
+it's still an enquiry.
+
+**"Only a closed (Completed) function can be reopened …"** or **"This
+function is already billed to …"** when reopening. Only a completed
+function that isn't on a folio yet can be reopened.
 
 **The margin looks too good.** The yellow note on the Margin step lists
 the lines that have no cost yet. Choose the menu's dishes, or add a cost
@@ -276,5 +312,6 @@ Functions live in `kamra/banquet.py` and `kamra/banquet_ops.py` (the
 `Venue Booking` doctype). AI agents use the `banquet_*` tools —
 `banquet_availability`, `banquet_enquiry`, `banquet_add_menu`,
 `banquet_quote`, `banquet_status`, `banquet_record_receipt`,
-`banquet_close_out` and more. See [MCP tools](/mcp-tools) and the
+`banquet_link_group`, `banquet_close_out` and more. Reopening a closed
+function is `kamra.banquet.reopen_function` (no MCP tool). See [MCP tools](/mcp-tools) and the
 [API reference](/api-reference#banquets-functions-quotations-event-orders).

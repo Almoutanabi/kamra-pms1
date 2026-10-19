@@ -68,6 +68,39 @@ await shot(page, "operations/settings", { clip: { x: 530, y: 80, width: 880, hei
 await open(page, "/ops-sla", 3000)
 await shot(page, "operations/sla-report")
 
+// --- stay instructions on a reservation (removed again after the shot) ----------
+if (!process.env.SKIP_INSTRUCTIONS) {
+  const RES = process.env.KAMRA_DOCS_INSTR_RES || "RES-2026-00035"
+  const added = []
+  try {
+    for (const [department, instruction] of [
+      ["Housekeeping", "Fruit basket and a welcome card before arrival"],
+      ["Transport", "Airport pickup, flight 6E 512 lands 14:20"],
+    ]) {
+      const rows = await api(ctx, "kamra.api.add_stay_instruction", { reservation: RES, department, instruction })
+      added.push(rows.at(-1).name)
+    }
+    await api(ctx, "kamra.api.set_stay_instruction_status", { reservation: RES, row: added[1], status: "Done" })
+    await open(page, "/reservations", 2500)
+    await page.getByPlaceholder("Search…").fill(RES)
+    await page.waitForTimeout(1500)
+    await page.locator("tr").filter({ hasText: RES }).first().click()
+    const instr = page.getByPlaceholder("e.g. Fruit basket before arrival")
+      .locator("xpath=ancestor::div[contains(@class,'rounded-xl')][1]")
+    await instr.waitFor()
+    await instr.scrollIntoViewIfNeeded()
+    await page.waitForTimeout(1200)
+    await instr.locator("select").selectOption("F&B")
+    await instr.getByPlaceholder("e.g. Fruit basket before arrival").fill("Gluten-free breakfast every morning")
+    await page.waitForTimeout(300)
+    await shot(page, "operations/stay-instructions", { locator: instr })
+    await page.keyboard.press("Escape")
+  } finally {
+    for (const name of added)
+      await api(ctx, "frappe.client.delete", { doctype: "Stay Instruction", name }).catch(() => {})
+  }
+}
+
 // --- WhatsApp and Channels (whatsapp.md) --------------------------------------
 await open(page, "/whatsapp", 2500)
 await shot(page, "whatsapp/inbox", { clip: { x: 250, y: 70, width: 1170, height: 530 } })

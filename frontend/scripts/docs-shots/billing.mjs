@@ -130,9 +130,16 @@ if (want("currency-desk")) {
   await shot(page, "billing/currency-desk", { clip: { x: 392, y: 95, width: 880, height: 515 } })
 }
 
+if (want("voids-allowances")) {
+  await open(page, "/voids-allowances", 3500)
+  const root = page.getByRole("heading", { name: "Voids & Allowances" }).locator("xpath=ancestor::div[contains(@class,'max-w-5xl')][1]")
+  await shot(page, "billing/voids-allowances", { locator: root })
+}
+
 if (want("ledgers")) {
   await open(page, "/ledgers", 4000)
-  await shot(page, "billing/ledgers", { fullPage: true, clip: { x: 432, y: 75, width: 795, height: 880 } })
+  const root = page.getByRole("heading", { name: "Ledgers", exact: true }).locator("xpath=ancestor::div[contains(@class,'max-w-5xl')][1]")
+  await shot(page, "billing/ledgers", { locator: root })
 }
 
 await done()
