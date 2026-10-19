@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Kamra exposes **98 governed tools** on the hosted MCP
+Kamra exposes **100 governed tools** on the hosted MCP
 endpoint (`/mcp`) and the stdio sidecar (`mcp/kamra_mcp.py`). Every
 call runs as the connected user — **role** permissions apply, tools
 are further filtered by the property's **enabled modules**, prices
@@ -771,6 +771,23 @@ Mutating — logged to the activity ledger.
 Fire a kitchen order ticket (whole check or one course).
 
 Endpoint: `kamra.pos.fire_kot`.
+Mutating — logged to the activity ledger.
+
+### `pos_send_order(outlet, items, table_no, room, reservation, guests, order_type, customer_name, customer_phone, delivery_address, allergy_note, notes)`
+
+Open a new POS check and send it straight to the kitchen in one
+step (create, confirm and fire the KOT). Use this for a normal order;
+pos_create_order is for a check you will fire later. items = [{item,
+qty, notes?}]. Optionally bind table_no and/or a room/reservation.
+
+Endpoint: `kamra.pos.send_order`.
+Mutating — logged to the activity ledger.
+
+### `pos_send_round(order, items)`
+
+Add another round to an open POS check and fire it to the kitchen in one step. items = [{item, qty, notes?}].
+
+Endpoint: `kamra.pos.send_round`.
 Mutating — logged to the activity ledger.
 
 ### `pos_kitchen_queue(outlet)`

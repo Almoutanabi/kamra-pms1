@@ -52,12 +52,25 @@ export function printThermal(title: string, body: string): boolean {
   w.document.close()
   const cleanup = () => { try { iframe.remove() } catch { /* already gone */ } }
   w.onafterprint = cleanup
+  // The ticket is inline HTML + CSS with nothing to load, so print on the
+  // next tick rather than after a fixed delay.
   setTimeout(() => {
-    try { w.focus(); w.print() } catch { cleanup() }
-  }, 200)
+    try {
+      w.focus()
+      const t0 = performance.now()
+      w.print() // blocks while a print dialog is open; returns at once with --kiosk-printing
+      if (performance.now() - t0 > 1500) {
+        window.dispatchEvent(new CustomEvent(PRINT_DIALOG_EVENT))
+      }
+    } catch { cleanup() }
+  }, 0)
   setTimeout(cleanup, 120_000)
   return true
 }
+
+/** Fired when a print looked like it waited on a dialog: the till can tell
+ *  staff how to print silently (Chrome --kiosk-printing). */
+export const PRINT_DIALOG_EVENT = "kamra:print-dialog"
 
 export interface KotLine { item_name: string; qty: number; instructions?: string | null }
 

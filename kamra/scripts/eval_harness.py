@@ -1768,15 +1768,32 @@ def t39():
 
 @check("POS: auto KOT accepts the ticket and tells the till to print")
 def t39b():
-	from kamra import pos
+	from kamra import pos, settings
 	manual = frappe.get_doc({
 		"doctype": "POS Outlet", "property": P, "outlet_name": "Manual Pass",
-		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 0,
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Kitchen presses Start",
 	}).insert(ignore_permissions=True).name
 	auto = frappe.get_doc({
 		"doctype": "POS Outlet", "property": P, "outlet_name": "Auto Pass",
-		"outlet_type": "Restaurant", "gst_rate": 5, "auto_kot": 1,
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Auto-accept and print",
 	}).insert(ignore_permissions=True).name
+	follow = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Follow Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5,
+	}).insert(ignore_permissions=True).name
+
+	# The F&B setting drives outlets left on "Use F&B setting"; the
+	# outlet's own choice beats it in both directions.
+	def _flags():
+		return {o.name: o.auto_kot for o in pos.outlets(P)}
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 0})
+	f = _flags()
+	assert (f[manual], f[auto], f[follow]) == (0, 1, 0), f
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 1})
+	f = _flags()
+	assert (f[manual], f[auto], f[follow]) == (0, 1, 1), f
+	assert pos.outlet_auto_kot(follow) and not pos.outlet_auto_kot(manual)
+	settings.save_settings(P, "fnb", {"pos_auto_kot": 0})
 
 	def _mi(outlet, name):
 		return frappe.get_doc({
@@ -1808,6 +1825,71 @@ def t39b():
 	assert fa2["auto_print"] is True, fa2
 	assert frappe.db.get_value("POS Order", oa["order"], "accepted_at") == stamp, \
 		"second fire reset the accept time"
+
+
+@check("POS: send_order / send_round = the multi-call path in one request and one save")
+def t39c():
+	from kamra import pos
+	outlet = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Speed Pass",
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Kitchen presses Start",
+	}).insert(ignore_permissions=True).name
+	auto = frappe.get_doc({
+		"doctype": "POS Outlet", "property": P, "outlet_name": "Speed Auto",
+		"outlet_type": "Restaurant", "gst_rate": 5, "kot_mode": "Auto-accept and print",
+	}).insert(ignore_permissions=True).name
+
+	def _mi(o, name, price):
+		return frappe.get_doc({
+			"doctype": "Menu Item", "property": P, "outlet": o, "item_name": name,
+			"category": "Food", "price": price, "is_veg": 1, "available": 1,
+			"prep_station": "Kitchen", "course": "Main",
+		}).insert(ignore_permissions=True).name
+	dal, roti = _mi(outlet, "Speed Dal", 100), _mi(outlet, "Speed Roti", 20)
+
+	# the old path: four calls
+	old = pos.create_order(outlet, [{"menu_item": dal, "qty": 2}], table_no="S1")["order"]
+	pos.apply_discount(old, 30, "")
+	pos.confirm_order(old)
+	f_old = pos.fire_kot(old)
+	# the new path: one call
+	r = pos.send_order(outlet, [{"menu_item": dal, "qty": 2}], table_no="S2",
+	                   discount=30)
+	new = frappe.get_doc("POS Order", r["order"])
+	ref = frappe.get_doc("POS Order", old)
+	for f in ("status", "order_total", "discount_amount", "kot_fired", "captain"):
+		assert new.get(f) == ref.get(f), (f, new.get(f), ref.get(f))
+	assert new.status == "Preparing" and new.order_total == 170, (new.status, new.order_total)
+	assert r["kot_no"] == f_old["kot_no"] + 1, (r["kot_no"], f_old["kot_no"])
+	assert r["fired_items"] == f_old["fired_items"], r["fired_items"]
+	assert all(it.kot_status == "Fired" and it.fired_at for it in new.items)
+	assert not new.accepted_at and r["auto_print"] is False, "manual outlet accepted itself"
+	assert frappe.db.count("Version", {"ref_doctype": "POS Order", "docname": new.name}) <= 1, \
+		"send_order saved the order more than once"
+
+	# a round: add + fire in one save, the new line named and fired
+	before = frappe.db.count("Version", {"ref_doctype": "POS Order", "docname": new.name})
+	rr = pos.send_round(new.name, [{"menu_item": roti, "qty": 3}])
+	assert [i["item_name"] for i in rr["fired_items"]] == ["Speed Roti"], rr["fired_items"]
+	assert rr["order_total"] == 230, rr["order_total"]
+	new.reload()
+	roti_row = next(it for it in new.items if it.menu_item == roti)
+	assert roti_row.name and roti_row.kot_status == "Fired" and roti_row.fired_at, roti_row.as_dict()
+	assert frappe.db.count("Version", {"ref_doctype": "POS Order", "docname": new.name}) - before <= 1, \
+		"send_round saved the order more than once"
+	try:
+		pos.send_round(new.name, [])
+		raise AssertionError("an empty round was sent")
+	except frappe.ValidationError:
+		pass
+
+	# auto KOT is honoured on the fast path too
+	ra = pos.send_order(auto, [{"menu_item": _mi(auto, "Speed Auto Dal", 90), "qty": 1}], table_no="A9")
+	assert ra["auto_print"] is True and ra["accepted_at"], ra
+
+	# the speed check is read-only and answers
+	sc = pos.speed_check(P, outlet=outlet)
+	assert "kitchen_display_ms" in sc["server"] and "background_workers" in sc["setup"], sc
 
 
 @check("kitchen stock: fire deducts per outlet, shortage never blocks, ledger reconciles")
@@ -7472,7 +7554,7 @@ def execute():
 		for fn in (t1, t2, t3, t3b, t3c, t3d, t3f, t3g, t3h, t3i, t3j, t4,
 		           t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16,
 		           t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28,
-		           t29, t30, t31, t32, t33, t34, t35, t36, t37, t38, t39, t39b,
+		           t29, t30, t31, t32, t33, t34, t35, t36, t37, t38, t39, t39b, t39c,
 		           t40, t41, t42, t43, t44, t45, t46, t47, t47b, t47c, t47d, t48,
 		           t49, t50, t51, t53, t54, t55, t56, t57, t58, t59, t60, t61,
 		           t62, t63, t64, t65, t66, t67, t68, t69, t70, t71, t72, t73,

@@ -5133,7 +5133,7 @@
         "kamra.pos.outlets"
        ]
       },
-      "description": "",
+      "description": "Open outlets, each with `auto_kot` already resolved against the F&B\nsetting, so the till never has to know where the answer came from.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\"\n}",
@@ -5762,10 +5762,84 @@
         "kamra.pos.fire_kot"
        ]
       },
-      "description": "Send the order to the kitchen: new lines become Fired and show on the\nkitchen display. Stamps the KOT number (a daily sequence per outlet) and\nreturns just-fired lines so the till can print the thermal KOT ticket.\n\nPass a course to send only that course and hold the rest - the table\norders once, the kitchen cooks the mains when the starters are cleared.\nEach line is stamped with the moment it was fired: that, not when the\ncaptain opened the tab, is when the cook's clock starts.\n\nOutlets with auto KOT on also accept the ticket here, so the kitchen\ndoes not press Start, and the response tells the till to print.",
+      "description": "Send the order to the kitchen: new lines become Fired and show on the\nkitchen display. Stamps the KOT number (a daily sequence per outlet) and\nreturns just-fired lines so the till can print the thermal KOT ticket.\n\nPass a course to send only that course and hold the rest - the table\norders once, the kitchen cooks the mains when the starters are cleared.\nEach line is stamped with the moment it was fired: that, not when the\ncaptain opened the tab, is when the cook's clock starts.\n\nWith auto KOT on (the F&B setting, or the outlet's override) this also\naccepts the ticket, so the kitchen does not press Start, and the\nresponse tells the till to print.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"order\": \"ORD-2026-00001\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "send_order",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.pos.send_order",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.pos.send_order"
+       ]
+      },
+      "description": "A captain's new bill straight to the kitchen, in one call: what\ncreate_order, apply_discount, confirm_order and fire_kot do one after\nanother, in one request and one transaction. The till waits for one\nround trip instead of four, and the kitchen gets a single update.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"outlet\": \"Your Property-Restaurant\",\n  \"items\": \"<items>\",\n  \"property\": \"Your Property\",\n  \"room\": \"Your Property-101\",\n  \"reservation\": \"RES-2026-00001\",\n  \"customer_name\": \"A. Customer\",\n  \"discount\": 0,\n  \"discount_reason\": \"\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "send_round",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.pos.send_round",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.pos.send_round"
+       ]
+      },
+      "description": "Another round on a running bill, straight to the kitchen: add_items\nand fire_kot in one call and one save.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"order\": \"ORD-2026-00001\",\n  \"items\": \"<items>\"\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -6210,6 +6284,43 @@
       "body": {
        "mode": "raw",
        "raw": "{\n  \"outlet\": \"Your Property-Restaurant\",\n  \"date\": \"2026-08-01\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "speed_check",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.pos.speed_check",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.pos.speed_check"
+       ]
+      },
+      "description": "Why does the POS feel slow here? Times what a till and a kitchen\ndisplay ask for on every refresh and reports the server's set-up, so\nsupport can tell our code from the hosting in a minute. Read-only.\n\nWith echo=1 it also sends a realtime ping to the caller; the browser\ntimes how long it takes to arrive, which proves live updates work.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"property\": \"Your Property\",\n  \"outlet\": \"Your Property-Restaurant\",\n  \"echo\": 0\n}",
        "options": {
         "raw": {
          "language": "json"
