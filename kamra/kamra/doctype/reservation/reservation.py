@@ -439,7 +439,7 @@ class Reservation(Document):
 			free_children = max(free_children, int(self.infants))
 
 		billable_children = max(0, int(self.children or 0) - free_children)
-		return {
+		inputs = {
 			"property": self.property,
 			"room_type": self.room_type,
 			"check_in_date": str(self.check_in_date),
@@ -451,6 +451,11 @@ class Reservation(Document):
 			"voucher_code": voucher_code,
 			"over_capacity_charge": float(self.get("over_capacity_charge") or 0),
 		}
+		# only when there are pets, so the rate-lock key of every booking
+		# made before pets existed stays the same and nothing re-prices
+		if cint(self.get("pets")) > 0:
+			inputs["pets"] = cint(self.get("pets"))
+		return inputs
 
 	@staticmethod
 	def rate_lock_key_for(inputs: dict) -> str:

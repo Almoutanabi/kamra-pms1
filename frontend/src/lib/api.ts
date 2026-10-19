@@ -303,6 +303,9 @@ export interface BookingOptions {
     no_show_charge: "None" | "First Night" | "Full Stay"
     deposit_pct: number
     country: string
+    pets_allowed: 0 | 1
+    pet_charge: number
+    pet_charge_basis: "Per stay" | "Per night"
   }
 }
 
@@ -315,6 +318,7 @@ export interface Quote {
   meal_total: number
   /** guests above the room's capacity, at the price agreed on the booking */
   over_capacity_total?: number
+  pet_charge?: number
   discount: number
   amount_before_tax: number
   tax_percent: number
@@ -378,6 +382,7 @@ export interface QuoteParams {
   meal_plan?: string
   voucher_code?: string
   over_capacity_charge?: number
+  pets?: number
 }
 
 export const getQuote = (params: QuoteParams) =>

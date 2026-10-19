@@ -6957,6 +6957,68 @@ def t215():
 	assert code.charge_type == "Extra Guests", code.charge_type
 
 
+@check("pets: own quote line at room GST, refused when not allowed, posted once")
+def t216():
+	from kamra import api
+	from kamra.folio import open_folio
+	from kamra.ledger import CHARGE_TYPE_TO_CODE
+	from kamra.pricing import quote
+
+	def set_pets(**v):
+		frappe.db.set_value("Property", P, v)
+		frappe.clear_document_cache("Property", P)
+
+	# a property that doesn't take pets refuses them rather than ignoring them
+	set_pets(pets_allowed=0, pet_charge=1000, pet_charge_basis="Per stay")
+	try:
+		quote(P, RT, "2030-02-01", "2030-02-03", 2, 0, pets=1)
+		raise AssertionError("pets quoted at a property that does not allow them")
+	except frappe.ValidationError:
+		pass
+
+	set_pets(pets_allowed=1)
+	none = quote(P, RT, "2030-02-01", "2030-02-03", 2, 0)
+	q = quote(P, RT, "2030-02-01", "2030-02-03", 2, 0, pets=2)
+	# per stay: 2 pets x 1,000 once, not per night
+	assert q["pet_charge"] == 2000, q["pet_charge"]
+	assert q["room_total"] == none["room_total"], "pets changed the room rate"
+	line = next(li for li in q["line_items"] if li["component"] == "pet_charge")
+	room = next(li for li in q["line_items"] if li["component"] == "accommodation")
+	assert abs(line["tax_amount"] - 2000 * room["tax_rate"] / 100) < 0.01, (line, room)
+	assert abs(q["amount_after_tax"] - none["amount_after_tax"]
+	           - 2000 - line["tax_amount"]) < 0.01
+
+	set_pets(pet_charge_basis="Per night")
+	assert quote(P, RT, "2030-02-01", "2030-02-03", 2, 0, pets=1)["pet_charge"] == 2000
+
+	# the booking carries it to the folio once, at the quoted amount
+	set_pets(pet_charge_basis="Per stay")
+	out = api.create_booking(
+		property=P, room_type=RT, check_in_date="2031-03-10",
+		check_out_date="2031-03-12", guest_name="Eval Pets",
+		phone="+91 70000 00187", pets=2)
+	res = frappe.get_doc("Reservation", out["reservation"])
+	assert res.pets == 2
+	assert abs(res.amount_after_tax - q["amount_after_tax"]) < 0.01, (
+		res.amount_after_tax, q["amount_after_tax"])
+	api.check_in(res.name)
+	open_folio(frappe.get_doc("Reservation", res.name))  # reopening must not re-post
+	folio = frappe.get_doc("Folio", frappe.db.get_value(
+		"Folio", {"reservation": res.name, "folio_type": "Guest"}))
+	pet_lines = [c for c in folio.charges if c.charge_type == "Pet Charge"]
+	assert len(pet_lines) == 1, len(pet_lines)
+	assert pet_lines[0].amount == 2000, pet_lines[0].amount
+	assert abs(pet_lines[0].gst_rate - room["tax_rate"]) < 0.01, pet_lines[0].gst_rate
+
+	# every ledger charge type must be storable on BOTH doctypes - a fresh
+	# site seeds Transaction Codes lazily, so a missing option only shows in CI
+	for dt in ("Folio Charge", "Transaction Code"):
+		opts = frappe.get_meta(dt).get_field("charge_type").options.split("\n")
+		missing = [ct for ct in CHARGE_TYPE_TO_CODE if ct not in opts]
+		assert not missing, f"{dt} cannot store: {missing}"
+	set_pets(pets_allowed=0, pet_charge=0)
+
+
 def execute():
 	global RT, ROOM
 	# frappe.locale.get_locale_value crashes (UnboundLocalError) when no
@@ -6984,7 +7046,7 @@ def execute():
 		           t183, t184, t185, t186, t190, t191, t192, t193, t194,
 		           t200, t201, t202, t203, t204,
 		           t205, t206, t207, t208, t209, t210, t211, t212, t213, t214,
-		           t215):
+		           t215, t216):
 			fn()
 	finally:
 		frappe.db.commit = real_commit

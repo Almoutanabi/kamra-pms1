@@ -4331,9 +4331,13 @@ def _booking_property_policy(property: str) -> dict:
 	prop = frappe.db.get_value(
 		"Property", property,
 		["sell_message", "free_cancel_days", "cancellation_fee",
-		 "no_show_charge", "deposit_pct", "country"],
+		 "no_show_charge", "deposit_pct", "country", "pets_allowed",
+		 "pet_charge", "pet_charge_basis"],
 		as_dict=True,
 	) or {}
+	prop["pets_allowed"] = int(prop.get("pets_allowed") or 0)
+	prop["pet_charge"] = float(prop.get("pet_charge") or 0)
+	prop["pet_charge_basis"] = prop.get("pet_charge_basis") or "Per stay"
 	prop["cancellation_fee"] = prop.get("cancellation_fee") or "None"
 	prop["no_show_charge"] = prop.get("no_show_charge") or "None"
 	prop["free_cancel_days"] = int(prop.get("free_cancel_days") or 0)
@@ -4350,7 +4354,7 @@ def get_quote(property: str, room_type: str, check_in_date: str,
               check_out_date: str, adults: int = 2, children: int = 0,
               meal_plan: str | None = None, rate_plan: str | None = None,
               voucher_code: str | None = None,
-              over_capacity_charge: float = 0):
+              over_capacity_charge: float = 0, pets: int = 0):
 	from kamra.booking_refs import (resolve_meal_plan, resolve_rate_plan,
 	                                resolve_room_type)
 	from kamra.pricing import quote
@@ -4363,7 +4367,8 @@ def get_quote(property: str, room_type: str, check_in_date: str,
 	return quote(property, room_type, check_in_date, check_out_date,
 	             int(adults), int(children), meal_plan or None,
 	             rate_plan or None, voucher_code or None,
-	             over_capacity_charge=float(over_capacity_charge or 0))
+	             over_capacity_charge=float(over_capacity_charge or 0),
+	             pets=int(pets or 0))
 
 
 def _find_or_create_guest(guest_name: str, phone: str | None,
@@ -4598,7 +4603,8 @@ def create_booking(property: str, room_type: str, check_in_date: str,
                    over_capacity_charge: float = 0,
                    check_in_time: str | None = None,
                    check_out_time: str | None = None,
-                   blacklist_override_reason: str | None = None):
+                   blacklist_override_reason: str | None = None,
+                   pets: int = 0):
 	"""One-call booking: attach to an existing guest profile when given,
 	else dedup by phone / create one. Optional auto room assignment,
 	voucher applied, price computed by the engine.
@@ -4717,6 +4723,7 @@ def create_booking(property: str, room_type: str, check_in_date: str,
 		"check_out_date": check_out_date,
 		"adults": int(adults),
 		"children": int(children),
+		"pets": max(0, int(pets or 0)),
 		"meal_plan": meal_plan or None,
 		"rate_plan": rate_plan or None,
 		"voucher": voucher,

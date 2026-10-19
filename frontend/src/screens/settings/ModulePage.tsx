@@ -18,7 +18,7 @@ export const inputCls =
 /** Money amounts carry the property currency instead of a unit. */
 const MONEY_KEYS = new Set([
   "security_deposit_amount", "gst_slab_threshold", "cleaning_fee",
-  "registration_fee", "max_cash_refund",
+  "registration_fee", "max_cash_refund", "pet_charge",
 ])
 
 export interface OptionSources {

@@ -27,6 +27,7 @@ CHARGE_TYPE_TO_CODE = {
 	"Cleaning Fee": ("1300", "Cleaning Fee", "Rooms", "Cleaning Fee"),
 	# extra beds in a let room - room revenue, so it lands in the Rooms group
 	"Extra Guests": ("1320", "Extra Guests", "Rooms", "Extra Guests"),
+	"Pet Charge": ("1330", "Pet Charge", "Rooms", "Pet Charge"),
 	# collected for the municipality / city - a levy, not hotel revenue
 	"Room Levy": ("1310", "Room Levy", "Levies", "Room Levy"),
 	"Discount": ("9000", "Discount", "Adjustment", "Discount"),

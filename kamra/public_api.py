@@ -100,6 +100,9 @@ def _property_payload(prop) -> dict:
 		"advance_percent": float(prop.get("advance_percent") or 0),
 		"registration_fee": float(prop.get("registration_fee") or 0),
 		"cleaning_fee": float(prop.get("cleaning_fee") or 0),
+		"pets_allowed": int(prop.get("pets_allowed") or 0),
+		"pet_charge": float(prop.get("pet_charge") or 0),
+		"pet_charge_basis": prop.get("pet_charge_basis") or "Per stay",
 		"security_deposit_amount": float(prop.get("security_deposit_amount") or 0),
 		"minimum_nights": int(prop.get("minimum_nights") or 1),
 		"free_cancel_days": int(prop.get("free_cancel_days") or 0),
@@ -305,7 +308,7 @@ def showcase(property: str, listing_slug: str | None = None,
 def search_stay(property: str, check_in_date: str, check_out_date: str,
                 adults: int = 2, children: int = 0,
                 listing_slug: str | None = None,
-                location_slug: str | None = None):
+                location_slug: str | None = None, pets: int = 0):
 	"""Availability + real quoted price per room type for the stay."""
 	# available_rooms is staff-only (@require_roles) since it's also an
 	# MCP / Kamra Agent tool; guests need the same availability math without
@@ -341,7 +344,7 @@ def search_stay(property: str, check_in_date: str, check_out_date: str,
 			try:
 				row["quote"] = quote(
 					property, rt, check_in_date, check_out_date,
-					int(adults), int(children),
+					int(adults), int(children), pets=int(pets or 0),
 				)
 				row["quote"].update(_payment_split(
 					prop, row["quote"].get("amount_after_tax")))
@@ -678,7 +681,7 @@ def book(property: str, room_type: str, check_in_date: str,
          check_out_date: str, guest_name: str, phone: str,
          email: str = "", adults: int = 2, children: int = 0,
          meal_plan: str = "", special_requests: str = "", addons=None,
-         voucher_code: str = "", idempotency_key: str = ""):
+         voucher_code: str = "", idempotency_key: str = "", pets: int = 0):
 	"""Create a Website booking. Guest identity is the phone number; staff
 	verify at check-in. The advance owed is computed from the property's
 	current payment policy and snapshotted onto the booking.
@@ -720,7 +723,7 @@ def book(property: str, room_type: str, check_in_date: str,
 	q = price_quote(
 		property, room_type, check_in_date, check_out_date,
 		int(adults), int(children), meal_plan or None,
-		voucher_code=voucher_code or None,
+		voucher_code=voucher_code or None, pets=int(pets or 0),
 	)
 	advance_due, policy = _advance_terms(prop, float(q["amount_after_tax"] or 0))
 
@@ -745,6 +748,7 @@ def book(property: str, room_type: str, check_in_date: str,
 			phone=phone,
 			adults=int(adults),
 			children=int(children),
+			pets=int(pets or 0),
 			meal_plan=meal_plan or None,
 			voucher_code=voucher_code or None,
 			source="Website",
