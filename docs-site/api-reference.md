@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **327 endpoints**, generated from the source
+the UI and the AI use. **331 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -326,6 +326,12 @@ Checkout cleans for rooms with an arrival today jump the queue.
 
 Start or complete a housekeeping task from the phone.
 
+An Inspection is completed by passing it: Done on an inspection is taken
+as Verified, which moves the room to Ready (inspection required by the
+turnover profile) or Inspected - never back to plain Clean. Verifying -
+an inspection or anyone's clean - is a supervisor's call, the same rule
+set_housekeeping_status applies to Inspected / Ready.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `task` | yes |  |
@@ -378,11 +384,24 @@ room is genuinely guest-ready.
 | --- | --- | --- |
 | `room` | yes |  |
 
+### `kamra.api.hk_staff`
+
+**GET/POST** · roles: `Housekeeping Supervisor`, `Front Desk`, `Kamra Agent`
+
+Who a supervisor can hand a housekeeping task to at this property.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
 ### `kamra.api.hk_assign_task`
 
 **POST** · roles: `Front Desk`, `Housekeeping`, `Kamra Agent`
 
 A supervisor hands a task to a specific housekeeper (awaits accept).
+Attendants take work from the pool with hk_claim_task; handing a task to
+someone else is the supervisor's (or desk's) call, and only to a
+housekeeper who can work this property.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -957,6 +976,43 @@ command palette can jump straight from 'INV-KDP-26-00042' to the bill.
 | `property` | yes |  |
 | `query` | no | `None` |
 | `limit` | no | `8` |
+
+### `kamra.api.stay_instructions`
+
+**GET/POST** · roles: `Front Desk`, `Housekeeping`, `Kamra Agent`
+
+The special instructions on a stay (a VIP amenity, a 6am wake-up, a
+no-feather pillow) - each for one department, Open until someone marks
+it Done.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+
+### `kamra.api.add_stay_instruction`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Add an instruction to a stay for one department. Written as its own
+child row so it never re-saves (and re-validates) the whole booking.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `department` | yes |  |
+| `instruction` | yes |  |
+
+### `kamra.api.set_stay_instruction_status`
+
+**POST** · roles: `Front Desk`, `Housekeeping`, `Kamra Agent`
+
+Mark one instruction Done (stamping who and when), or reopen it.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `row` | yes |  |
+| `status` | yes |  |
 
 ### `kamra.api.reservation_detail`
 
@@ -1590,6 +1646,12 @@ logic the double-booking guard enforces, exposed as a query. Confirmed
 group blocks hold their unsold rooms out of general sale; pass the
 group to book against its own block.
 
+A stay may start on another's departure date, so a room whose guest
+departs today is "free" for a booking. Pass ready_now=1 when the guest
+is being put in the room now (check-in, walk-in, allocation for today):
+a room whose occupant is still Checked In is then left out until they
+check out - the same rule Reservation.validate_room_vacant enforces.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -1597,6 +1659,7 @@ group to book against its own block.
 | `check_in_date` | yes |  |
 | `check_out_date` | yes |  |
 | `group_booking` | no | `None` |
+| `ready_now` | no | `0` |
 
 ### `kamra.api.room_blocks`
 
