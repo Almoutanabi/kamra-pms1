@@ -6271,8 +6271,8 @@ def t183():
 		                  lambda: run_night_audit(P))
 		assert frappe.db.get_value("Reservation", late.name, "status") == "Confirmed"
 		assert [h["reservation"] for h in out["held_late_arrivals"]] == [late.name], out
-		out = _audit_eval(nowdate(), f"{nowdate()} 23:30",
-		                  lambda: run_night_audit(P))
+		_audit_eval(nowdate(), f"{nowdate()} 23:30",
+		            lambda: run_night_audit(P))
 		assert frappe.db.get_value("Reservation", late.name, "status") == "No Show"
 	finally:
 		frappe.db.set_value("Property", P, dict(saved))

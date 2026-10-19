@@ -45,6 +45,7 @@ def _as_date(value: str):
 			if d and 1900 < d.year <= now_datetime().year:
 				return d
 		except Exception:
+			# OCR free-text dates often fail getdate; try the next variant
 			pass
 	return None
 

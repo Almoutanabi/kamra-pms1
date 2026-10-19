@@ -145,6 +145,7 @@ def _report_failure(action_type, row, exc, *, fallback=False) -> None:
 			reference_name=row.get("reference_name") or None,
 		)
 	except Exception:
+		# logging itself must not fail the business action this reports on
 		pass
 
 
