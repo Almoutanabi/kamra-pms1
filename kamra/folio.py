@@ -973,7 +973,14 @@ def apply_no_show(res, pol, decision, business_date) -> dict:
 	the business date being closed, or waived for an OTA booking. Used by
 	the night audit and by the End of Day "Mark no-show" action, so both
 	charge the same way. Returns the audit pack's no-show row."""
+	before = res.status
 	frappe.db.set_value("Reservation", res.name, "status", "No Show")
+	# a direct status write skips the Reservation doc events, so tell the
+	# webhook subscribers here
+	from kamra.webhooks import emit, reservation_payload
+	emit("reservation.modified", res.property,
+	     {**reservation_payload(res), "status": "No Show",
+	      "changes": {"status": [before, "No Show"]}})
 	ns = {"reservation": res.name, "guest_name": res.guest_name,
 	      "room_type": (res.room_type or "").split("-")[-1],
 	      "check_in_date": str(res.check_in_date),
@@ -1266,6 +1273,13 @@ def run_night_audit(property: str, business_date: str | None = None,
 			channel="MCP" if frappe.flags.get("kamra_agent_call") else "Desk",
 			after_snapshot=acks,
 		)
+	from kamra.webhooks import emit_night_audit_closed
+	emit_night_audit_closed(property, {
+		"audit": audit.name, "status": audit.status,
+		"business_date": business_date, "next_business_date": new_bd,
+		"room_charges_posted": charges_posted,
+		"amount_posted": float(amount_posted), "no_shows_flagged": no_shows,
+		"exceptions": len(blockers)})
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- persists the completed operation before returning to an external/public caller; reviewed as intentional
 	return {
 		"audit": audit.name,
