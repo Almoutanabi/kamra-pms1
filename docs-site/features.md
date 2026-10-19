@@ -184,6 +184,38 @@ same bill prints its own KOT but doesn't reset the original start time.
 Outlets that had the old per-outlet checkbox ticked are moved to
 **Auto-accept and print** on upgrade, so nothing changes on the floor.
 
+### Fast silent printing
+
+A browser normally shows a print dialog for every KOT, and someone has to
+click Print. On a till, start Chrome with `--kiosk-printing` so tickets go
+straight to the default printer. The POS shows a one-time tip if it sees a
+print waiting on a dialog.
+
+- **Windows:** right-click the Chrome shortcut → *Properties* → at the end
+  of *Target* add ` --kiosk-printing https://your-hotel/kamra/pos`. Close
+  every Chrome window, then start it from that shortcut.
+- **macOS:** in Terminal, `open -a "Google Chrome" --args --kiosk-printing`,
+  with Chrome fully quit first.
+- Set the thermal printer as the system's **default printer**, with 80 mm
+  (or 58 mm) paper and no margins.
+
+### When the POS feels slow
+
+Open **Settings → F&B → POS speed check** on the till that feels slow and
+press **Check speed**. It reports:
+
+| Line | Slow means |
+| --- | --- |
+| Network round trip | Over 300 ms: the server is far from the hotel or the connection is weak. Every POS action waits this long. Host in a region near the hotel. |
+| Server work | Over 300 ms: the server is busy or under-sized. Add CPU or gunicorn workers. |
+| Live updates | Not arriving: the kitchen display and other tills only refresh every few seconds. socket.io isn't running or isn't proxied by nginx (`/socket.io`). |
+| Background workers / developer mode | No workers or developer mode on: fix the bench set-up. |
+
+Sending an order is a single request (create, confirm and fire together),
+so the till is free as soon as the server answers. The kitchen display
+updates live over the socket, and falls back to checking every 5 seconds
+when the socket is down.
+
 ## Housekeeping
 
 A phone app for floor staff: task assignment *and* a self-claim pool,
