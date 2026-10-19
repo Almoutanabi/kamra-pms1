@@ -324,6 +324,19 @@ export interface Quote {
   tax_percent: number
   tax_amount: number
   amount_after_tax: number
+  /** what cancelling would cost, judged from today by the same rules as
+   * cancellation_preview - free_until is never in the past */
+  cancellation?: CancellationOutlook
+}
+
+export interface CancellationOutlook {
+  free_now: boolean
+  /** last free date; null while free_now means free up to arrival */
+  free_until: string | null
+  fee_basis: string
+  /** "the first night", "50% of the stay" */
+  fee_label: string
+  non_refundable_season: string | null
 }
 
 export const DEMO_PROPERTY = "Kamra Demo Palace"
