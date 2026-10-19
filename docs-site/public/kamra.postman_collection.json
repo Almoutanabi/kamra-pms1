@@ -3541,7 +3541,7 @@
         "kamra.api.hurdle_rates"
        ]
       },
-      "description": "The demand tiers: at each occupancy threshold, the premium applied\nand the minimum sell rate enforced.",
+      "description": "The demand tiers: at each occupancy threshold, the premium applied\nand the minimum sell rate enforced. A row with a room type applies to\nthat type only and beats the property-wide row at the same threshold.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\"\n}",
@@ -3985,7 +3985,7 @@
         "kamra.api.get_quote"
        ]
       },
-      "description": "",
+      "description": "Price a stay. With a company and no rate plan, the company's\nnegotiated plan applies - the same plan create_booking stores.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\",\n  \"room_type\": \"Your Property-DLX\",\n  \"check_in_date\": \"2026-08-01\",\n  \"check_out_date\": \"2026-08-03\",\n  \"adults\": 2,\n  \"children\": 0,\n  \"over_capacity_charge\": 0,\n  \"pets\": 0\n}",
@@ -7294,7 +7294,7 @@
         "kamra.banquet.create_enquiry"
        ]
       },
-      "description": "Open a function sheet from an enquiry. The hall's rack rental goes on\nas the first line (that's the number the conversation starts from), and\na follow-up lands in the diary so the enquiry doesn't go quiet.",
+      "description": "Open a function sheet from an enquiry. The hall's rack rental goes on\nas the first line (that's the number the conversation starts from), and\na follow-up lands in the diary so the enquiry doesn't go quiet.\n\nsession is how the hall is sold (Morning / Afternoon / Evening / Full\nDay): a named session sets the clock itself, so times sent alongside it\nare ignored. Custom Hours, or no session with times, keeps the times.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\",\n  \"venue\": \"Your Property-Grand Ballroom\",\n  \"event_date\": \"2026-12-12\",\n  \"customer_name\": \"A. Customer\",\n  \"event_type\": \"Wedding\",\n  \"attendees\": 0,\n  \"end_date\": \"2026-08-31\",\n  \"source\": \"Phone\",\n  \"with_venue_line\": 1\n}",
@@ -7372,6 +7372,80 @@
       "body": {
        "mode": "raw",
        "raw": "{\n  \"function\": \"EVT-2026-0001\",\n  \"fields\": \"<fields>\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "linkable_groups",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.banquet.linkable_groups",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.banquet.linkable_groups"
+       ]
+      },
+      "description": "Group bookings this function could ride: same property, not\ncancelled, staying within a month either side of the event.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"function\": \"EVT-2026-0001\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "link_group",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.banquet.link_group",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.banquet.link_group"
+       ]
+      },
+      "description": "Tie a function to a group booking so its bill can ride the group's\nmaster folio (post_to_folio), or untie it (group_booking empty).",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"function\": \"EVT-2026-0001\"\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -8149,6 +8223,43 @@
       "body": {
        "mode": "raw",
        "raw": "{\n  \"function\": \"EVT-2026-0001\",\n  \"damage_amount\": 0,\n  \"refund_deposit\": 1,\n  \"refund_mode\": \"Bank Transfer\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "reopen_function",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Authorization",
+        "value": "token {{api_key}}:{{api_secret}}"
+       }
+      ],
+      "url": {
+       "raw": "{{base_url}}/api/method/kamra.banquet.reopen_function",
+       "host": [
+        "{{base_url}}"
+       ],
+       "path": [
+        "api",
+        "method",
+        "kamra.banquet.reopen_function"
+       ]
+      },
+      "description": "Reopen a closed (Completed) function so its sheet can be corrected.\nIt goes back to Confirmed; receipts, refunds and the damage line stay\nas they were, and closing it again re-counts covers only. Needs a\nreason, and lands on the activity log.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"function\": \"EVT-2026-0001\",\n  \"reason\": \"<reason>\"\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -10136,7 +10247,7 @@
         "kamra.reports.budget_vs_actual"
        ]
       },
-      "description": "Monthly target vs actual: room revenue, occupancy %, ADR, RevPAR - with\nvariance. period is 'YYYY-MM' (defaults to the current month).",
+      "description": "Monthly target vs actual: room revenue, occupancy %, ADR, RevPAR - with\nvariance. period is 'YYYY-MM' (defaults to the current month).\n\n\"Actual\" is posted money: Room charges on folios, dated inside the month.\nA room night reaches a folio when End of Day (night audit) posts it, so a\nstay in-house tonight counts once its night is audited - not before.\nOccupancy and RevPAR divide by the room nights elapsed so far (to the\nbusiness date), not the whole month, so a month-to-date figure compares\nwith a monthly occupancy target. `on_books_nights` / `unposted_nights`\nsay how many sold nights in the same window are still waiting for End\nof Day, so a zero is explained rather than mysterious.",
       "body": {
        "mode": "raw",
        "raw": "{\n  \"property\": \"Your Property\"\n}",
@@ -12125,7 +12236,7 @@
         "kamra.public_api.catalog_index"
        ]
       },
-      "description": "Entry point for /book \u2014 how many properties, sites, or listings to show."
+      "description": "Entry point for /book \u2014 how many properties, sites, or listings to show.\n\nSeveral properties live: mode \"properties\" lists them, and the guest\npicks one - /book?property=<slug> (or /stay/<slug>) calls back with\nthat property's slug and gets its own sites / listings / catalog."
      }
     },
     {

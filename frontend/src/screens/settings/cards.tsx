@@ -1071,6 +1071,7 @@ export function LaundryRatesCard({ property }: { property: string }) {
 interface HurdleTier {
   name: string
   room_type: string | null
+  room_type_name?: string | null
   occupancy_from: number
   premium_pct: number
   min_rate: number
@@ -1080,13 +1081,34 @@ interface HurdleTier {
  * manual rates can't undercut the hurdle (the minimum sell rate). */
 export function HurdleRatesCard({ property }: { property: string }) {
   const [tiers, setTiers] = useState<HurdleTier[]>([])
-  const [form, setForm] = useState<{ name?: string; from: string; premium: string; min: string } | null>(null)
+  const [form, setForm] = useState<{
+    name?: string
+    from: string
+    premium: string
+    min: string
+    room_type: string
+  } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // a tier can target one room type; blank = every room type
+  const [roomTypes, setRoomTypes] = useState<{ name: string; room_type_name: string }[]>([])
 
   const load = useCallback(() => {
     call<HurdleTier[]>("kamra.api.hurdle_rates", { property }).then(setTiers).catch(() => {})
   }, [property])
   useEffect(load, [load])
+  useEffect(() => {
+    listResource("Room Type", {
+      fields: ["name", "room_type_name"],
+      filters: [
+        ["property", "=", property],
+        ["disabled", "=", 0],
+      ],
+      orderBy: "base_price asc",
+      limit: 200,
+    })
+      .then((rows) => setRoomTypes(rows as { name: string; room_type_name: string }[]))
+      .catch(() => setRoomTypes([]))
+  }, [property])
 
   async function save() {
     if (!form) return
@@ -1095,6 +1117,7 @@ export function HurdleRatesCard({ property }: { property: string }) {
       await call("kamra.api.save_hurdle_rate", {
         property, name: form.name || null, occupancy_from: form.from,
         premium_pct: form.premium || 0, min_rate: form.min || 0,
+        room_type: form.room_type || null,
       })
       setForm(null)
       load()
@@ -1111,10 +1134,13 @@ export function HurdleRatesCard({ property }: { property: string }) {
           <p className="mt-0.5 text-xs text-zinc-400">
             When forecast occupancy for a date crosses a threshold, quotes
             carry the premium automatically and no rate may sell below the
-            hurdle. Guardrails still cap the extremes.
+            hurdle. A room-type tier beats the all-types tier. Guardrails
+            (floor and ceiling) only bound rates set through set_room_rate -
+            Kamra Agent, MCP or the API - not these premiums, staff seasons
+            or quotes.
           </p>
         </div>
-        <Button variant="outline" onClick={() => setForm({ from: "", premium: "", min: "" })}>
+        <Button variant="outline" className="shrink-0" onClick={() => setForm({ from: "", premium: "", min: "", room_type: "" })}>
           Add tier
         </Button>
       </CardHeader>
@@ -1139,6 +1165,23 @@ export function HurdleRatesCard({ property }: { property: string }) {
               <input className="w-24 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" placeholder="min rate" inputMode="numeric"
                 value={form.min} onChange={(e) => setForm({ ...form, min: e.target.value.replace(/[^\d.]/g, "") })} />
             </label>
+            <label className="flex items-center gap-1 text-sm text-zinc-600">
+              For
+              <select
+                aria-label="Room type"
+                className="rounded-lg border border-zinc-300 px-2 py-1.5 text-sm"
+                value={form.room_type}
+                onChange={(e) => setForm({ ...form, room_type: e.target.value })}
+              >
+                <option value="">All room types</option>
+                {roomTypes.map((rt) => (
+                  <option key={rt.name} value={rt.name}>{rt.room_type_name}</option>
+                ))}
+                {form.room_type && !roomTypes.some((rt) => rt.name === form.room_type) && (
+                  <option value={form.room_type}>{form.room_type}</option>
+                )}
+              </select>
+            </label>
             <Button disabled={!form.from} onClick={save}>Save</Button>
             <Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button>
           </div>
@@ -1152,6 +1195,7 @@ export function HurdleRatesCard({ property }: { property: string }) {
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-zinc-400">
                 <th className="py-1.5">When occupancy ≥</th>
+                <th>Room type</th>
                 <th className="text-right">Premium</th>
                 <th className="text-right">Hurdle (min rate)</th><th />
               </tr>
@@ -1160,11 +1204,12 @@ export function HurdleRatesCard({ property }: { property: string }) {
               {tiers.map((t) => (
                 <tr key={t.name} className="border-t border-zinc-100">
                   <td className="py-1.5 font-medium">{t.occupancy_from}%</td>
+                  <td className="text-zinc-600">{t.room_type ? (t.room_type_name || t.room_type) : <span className="text-zinc-400">All</span>}</td>
                   <td className="text-right tabular-nums">{t.premium_pct ? `+${t.premium_pct}%` : "—"}</td>
                   <td className="text-right tabular-nums">{t.min_rate ? `${cur()}${t.min_rate.toLocaleString(moneyLocale())}` : "—"}</td>
                   <td className="text-right">
                     <button className="text-xs font-medium text-brand-700 hover:underline"
-                      onClick={() => setForm({ name: t.name, from: String(t.occupancy_from), premium: String(t.premium_pct || ""), min: String(t.min_rate || "") })}>
+                      onClick={() => setForm({ name: t.name, from: String(t.occupancy_from), premium: String(t.premium_pct || ""), min: String(t.min_rate || ""), room_type: t.room_type || "" })}>
                       Edit
                     </button>
                     <button className="ml-2 text-xs text-zinc-400 hover:text-rose-600"
