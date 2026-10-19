@@ -367,23 +367,37 @@ export default function POS() {
     kot_no: number | null
     nc?: boolean
     ticket?: KotTicket
+    till_ticket?: KotTicket
+    print_jobs?: { printer_name: string }[]
     fired_items: { item_name: string; qty: number; instructions?: string | null }[]
   }, label: string, type: string | null,
                          customer?: string | null, address?: string | null,
                          ncBy?: string | null) {
-    const ticket = kot.ticket ?? {
+    const full = kot.ticket ?? {
       kot_no: kot.kot_no, label, order_type: type, order: "",
       customer, address, nc: !!kot.nc, nc_by: ncBy, items: kot.fired_items,
     }
-    if (!ticket.items?.length) return
-    const kotNo = ticket.kot_no ?? "—"
-    setPrintNote(
-      willPrintKot
-        ? t("KOT {kot} printed and on the kitchen display.", { kot: kotNo })
-        : t("KOT {kot} is on the kitchen display. Turn on Print KOT to send it to the printer.", { kot: kotNo }),
-    )
-    if (!willPrintKot) return
-    printSavedKot(ticket)
+    if (!full.items?.length) return
+    const kotNo = full.kot_no ?? "—"
+    // Kitchen printers took the lines they serve; this till prints the rest.
+    const sentTo = [...new Set((kot.print_jobs ?? []).map((j) => j.printer_name))]
+    const mine = kot.till_ticket ?? full
+    const notes: string[] = []
+    if (sentTo.length) {
+      notes.push(t("KOT {kot} sent to {printers}.", { kot: kotNo, printers: sentTo.join(", ") }))
+    }
+    if (mine.items.length) {
+      notes.push(willPrintKot
+        ? (sentTo.length
+          ? t("The rest printed here.")
+          : t("KOT {kot} printed and on the kitchen display.", { kot: kotNo }))
+        : (sentTo.length
+          ? t("Some items have no kitchen printer; turn on Print KOT to print them here.")
+          : t("KOT {kot} is on the kitchen display. Turn on Print KOT to send it to the printer.", { kot: kotNo })))
+    }
+    setPrintNote(notes.join(" "))
+    if (!willPrintKot || !mine.items.length) return
+    printSavedKot(mine)
   }
 
   function newBillArgs() {

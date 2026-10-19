@@ -249,6 +249,7 @@ MODULES: tuple[Module, ...] = (
 		"fnb", "F&B", "Restaurant outlets, the menu and table reservations.",
 		editors=("Hotel Admin", "Finance"), toggle=True,
 		related=(("Outlets", "/outlets"), ("Menu", "/menu-items"), ("Kitchen inventory", "/inventory"),
+		         ("Kitchen display", "/kitchen"),
 		         ("QR codes", "/qr-codes")),
 		sections=(
 			Section("kot", "Kitchen orders (KOT)", "What happens when a captain sends an order to the kitchen.", (
@@ -256,6 +257,9 @@ MODULES: tuple[Module, ...] = (
 				  hint="On: sending an order prints the KOT and shows it on the kitchen display as "
 				       "started, so nobody presses Start. Off: the kitchen presses Start and each till "
 				       "chooses whether to print. An outlet can override this on its own record."),
+				S("pos_print_void_slips", "Print void slips in the kitchen", "check", 1,
+				  hint="A line voided or an order cancelled after its KOT was sent prints a VOID "
+				       "slip on the kitchen printer that had it, so the cook stops."),
 			)),
 			Section("tables", "Table reservations", "Which bookings show against a table on the POS floor.", (
 				S("pos_reservation_before_min", "Show a reservation from", "number", 60, min=0, max=480, unit="min before"),
