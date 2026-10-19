@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **316 endpoints**, generated from the source
+the UI and the AI use. **320 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -326,6 +326,12 @@ Checkout cleans for rooms with an arrival today jump the queue.
 
 Start or complete a housekeeping task from the phone.
 
+An Inspection is completed by passing it: Done on an inspection is taken
+as Verified, which moves the room to Ready (inspection required by the
+turnover profile) or Inspected - never back to plain Clean. Verifying -
+an inspection or anyone's clean - is a supervisor's call, the same rule
+set_housekeeping_status applies to Inspected / Ready.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `task` | yes |  |
@@ -378,11 +384,24 @@ room is genuinely guest-ready.
 | --- | --- | --- |
 | `room` | yes |  |
 
+### `kamra.api.hk_staff`
+
+**GET/POST** · roles: `Housekeeping Supervisor`, `Front Desk`, `Kamra Agent`
+
+Who a supervisor can hand a housekeeping task to at this property.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property` | yes |  |
+
 ### `kamra.api.hk_assign_task`
 
 **POST** · roles: `Front Desk`, `Housekeeping`, `Kamra Agent`
 
 A supervisor hands a task to a specific housekeeper (awaits accept).
+Attendants take work from the pool with hk_claim_task; handing a task to
+someone else is the supervisor's (or desk's) call, and only to a
+housekeeper who can work this property.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -958,6 +977,43 @@ command palette can jump straight from 'INV-KDP-26-00042' to the bill.
 | `query` | no | `None` |
 | `limit` | no | `8` |
 
+### `kamra.api.stay_instructions`
+
+**GET/POST** · roles: `Front Desk`, `Housekeeping`, `Kamra Agent`
+
+The special instructions on a stay (a VIP amenity, a 6am wake-up, a
+no-feather pillow) - each for one department, Open until someone marks
+it Done.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+
+### `kamra.api.add_stay_instruction`
+
+**POST** · roles: `Front Desk`, `Kamra Agent`
+
+Add an instruction to a stay for one department. Written as its own
+child row so it never re-saves (and re-validates) the whole booking.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `department` | yes |  |
+| `instruction` | yes |  |
+
+### `kamra.api.set_stay_instruction_status`
+
+**POST** · roles: `Front Desk`, `Housekeeping`, `Kamra Agent`
+
+Mark one instruction Done (stamping who and when), or reopen it.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `reservation` | yes |  |
+| `row` | yes |  |
+| `status` | yes |  |
+
 ### `kamra.api.reservation_detail`
 
 **GET/POST** · roles: `Front Desk`, `Kamra Agent`, `Finance`, `Revenue Manager`
@@ -1450,6 +1506,7 @@ Everything the booking form needs to render its dropdowns.
 | `rate_plan` | no | `None` |
 | `voucher_code` | no | `None` |
 | `over_capacity_charge` | no | `0` |
+| `pets` | no | `0` |
 
 ### `kamra.api.create_booking`
 
@@ -1510,6 +1567,7 @@ ETA / ETD.
 | `check_in_time` | no | `None` |
 | `check_out_time` | no | `None` |
 | `blacklist_override_reason` | no | `None` |
+| `pets` | no | `0` |
 
 ### `kamra.api.waitlist`
 
@@ -4169,6 +4227,7 @@ Availability + real quoted price per room type for the stay.
 | `children` | no | `0` |
 | `listing_slug` | no | `None` |
 | `location_slug` | no | `None` |
+| `pets` | no | `0` |
 
 ### `kamra.public_api.precheckin_info` <Badge type='tip' text='public' />
 
@@ -4282,6 +4341,7 @@ inventory) until the host approves.
 | `addons` | no | `None` |
 | `voucher_code` | no | `''` |
 | `idempotency_key` | no | `''` |
+| `pets` | no | `0` |
 
 ### `kamra.public_api.access_info` <Badge type='tip' text='public' />
 
