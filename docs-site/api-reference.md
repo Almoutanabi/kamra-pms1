@@ -5,7 +5,7 @@ outline: 2
 # REST API reference
 
 Every endpoint below is a whitelisted function — the same governed layer
-the UI and the AI use. **316 endpoints**, generated from the source
+the UI and the AI use. **319 endpoints**, generated from the source
 (`docs-site/gen_api.py`), so this page always matches the code.
 
 ## Calling convention
@@ -1071,6 +1071,7 @@ booking, not a walk-in.
 | `voucher_code` | no | `None` |
 | `company` | no | `None` |
 | `id_type` | no | `None` |
+| `rate_plan` | no | `None` |
 | `id_number` | no | `None` |
 | `nationality` | no | `None` |
 | `payment_mode` | no | `None` |
@@ -1269,10 +1270,11 @@ back-to-back conflicts, the demand tier pricing is applying, and a
 
 ### `kamra.api.hurdle_rates`
 
-**GET/POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**GET/POST**
 
 The demand tiers: at each occupancy threshold, the premium applied
-and the minimum sell rate enforced.
+and the minimum sell rate enforced. A row with a room type applies to
+that type only and beats the property-wide row at the same threshold.
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1280,7 +1282,7 @@ and the minimum sell rate enforced.
 
 ### `kamra.api.save_hurdle_rate`
 
-**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**POST**
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1293,7 +1295,7 @@ and the minimum sell rate enforced.
 
 ### `kamra.api.delete_hurdle_rate`
 
-**POST** · roles: `Front Desk`, `Finance`, `Kamra Agent`
+**POST**
 
 | Param | Required | Default |
 | --- | --- | --- |
@@ -1438,6 +1440,9 @@ Everything the booking form needs to render its dropdowns.
 
 **GET/POST** · roles: `Front Desk`, `Kamra Agent`
 
+Price a stay. With a company and no rate plan, the company's
+negotiated plan applies - the same plan create_booking stores.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -1450,6 +1455,8 @@ Everything the booking form needs to render its dropdowns.
 | `rate_plan` | no | `None` |
 | `voucher_code` | no | `None` |
 | `over_capacity_charge` | no | `0` |
+| `pets` | no | `0` |
+| `company` | no | `None` |
 
 ### `kamra.api.create_booking`
 
@@ -1510,6 +1517,7 @@ ETA / ETD.
 | `check_in_time` | no | `None` |
 | `check_out_time` | no | `None` |
 | `blacklist_override_reason` | no | `None` |
+| `pets` | no | `0` |
 
 ### `kamra.api.waitlist`
 
@@ -2543,6 +2551,10 @@ Open a function sheet from an enquiry. The hall's rack rental goes on
 as the first line (that's the number the conversation starts from), and
 a follow-up lands in the diary so the enquiry doesn't go quiet.
 
+session is how the hall is sold (Morning / Afternoon / Evening / Full
+Day): a named session sets the clock itself, so times sent alongside it
+are ignored. Custom Hours, or no session with times, keeps the times.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -2562,6 +2574,7 @@ a follow-up lands in the diary so the enquiry doesn't go quiet.
 | `follow_up_days` | no | `None` |
 | `with_venue_line` | no | `1` |
 | `sales_owner` | no | `None` |
+| `session` | no | `None` |
 
 ### `kamra.banquet.function_sheet`
 
@@ -2585,6 +2598,29 @@ calls, because each one means something different).
 | --- | --- | --- |
 | `function` | yes |  |
 | `fields` | yes |  |
+
+### `kamra.banquet.linkable_groups`
+
+**GET/POST**
+
+Group bookings this function could ride: same property, not
+cancelled, staying within a month either side of the event.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `function` | yes |  |
+
+### `kamra.banquet.link_group`
+
+**POST**
+
+Tie a function to a group booking so its bill can ride the group's
+master folio (post_to_folio), or untie it (group_booking empty).
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `function` | yes |  |
+| `group_booking` | no | `None` |
 
 ### `kamra.banquet.set_status`
 
@@ -2906,6 +2942,20 @@ three people remembering to do three things.
 | `refund_deposit` | no | `1` |
 | `refund_mode` | no | `'Bank Transfer'` |
 | `pax_actual` | no | `None` |
+
+### `kamra.banquet.reopen_function`
+
+**POST**
+
+Reopen a closed (Completed) function so its sheet can be corrected.
+It goes back to Confirmed; receipts, refunds and the damage line stay
+as they were, and closing it again re-counts covers only. Needs a
+reason, and lands on the activity log.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `function` | yes |  |
+| `reason` | yes |  |
 
 ### `kamra.banquet.receipt_document`
 
@@ -3586,6 +3636,15 @@ movement, collections by mode, and the 7-day outlook.
 Monthly target vs actual: room revenue, occupancy %, ADR, RevPAR - with
 variance. period is 'YYYY-MM' (defaults to the current month).
 
+"Actual" is posted money: Room charges on folios, dated inside the month.
+A room night reaches a folio when End of Day (night audit) posts it, so a
+stay in-house tonight counts once its night is audited - not before.
+Occupancy and RevPAR divide by the room nights elapsed so far (to the
+business date), not the whole month, so a month-to-date figure compares
+with a monthly occupancy target. `on_books_nights` / `unposted_nights`
+say how many sold nights in the same window are still waiting for End
+of Day, so a zero is explained rather than mysterious.
+
 | Param | Required | Default |
 | --- | --- | --- |
 | `property` | yes |  |
@@ -4107,6 +4166,14 @@ Per role, the settings pages it may change (admins: all of them).
 
 Entry point for /book — how many properties, sites, or listings to show.
 
+Several properties live: mode "properties" lists them, and the guest
+picks one - /book?property=&lt;slug> (or /stay/&lt;slug>) calls back with
+that property's slug and gets its own sites / listings / catalog.
+
+| Param | Required | Default |
+| --- | --- | --- |
+| `property_slug` | no | `None` |
+
 ### `kamra.public_api.resolve_slug` <Badge type='tip' text='public' />
 
 **GET/POST**
@@ -4169,6 +4236,7 @@ Availability + real quoted price per room type for the stay.
 | `children` | no | `0` |
 | `listing_slug` | no | `None` |
 | `location_slug` | no | `None` |
+| `pets` | no | `0` |
 
 ### `kamra.public_api.precheckin_info` <Badge type='tip' text='public' />
 
@@ -4282,6 +4350,7 @@ inventory) until the host approves.
 | `addons` | no | `None` |
 | `voucher_code` | no | `''` |
 | `idempotency_key` | no | `''` |
+| `pets` | no | `0` |
 
 ### `kamra.public_api.access_info` <Badge type='tip' text='public' />
 
