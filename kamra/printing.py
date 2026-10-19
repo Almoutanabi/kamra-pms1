@@ -120,8 +120,8 @@ def _queue(property: str, printer: dict, kind: str, payload: dict, order=None,
 		frappe.enqueue("kamra.printing.print_direct", queue="short", job=job.name,
 		               enqueue_after_commit=True)
 	else:
-		frappe.publish_realtime("kamra_print", {"printer": printer["name"]},
-		                        after_commit=True)
+		frappe.publish_realtime(  # nosemgrep: frappe-realtime-pick-room -- carries only a printer id; every print-station screen filters for its own printer, as realtime.notify does for change pings
+			"kamra_print", {"printer": printer["name"]}, after_commit=True)
 	return job.name
 
 
